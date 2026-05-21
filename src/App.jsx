@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import RoleSelection from './pages/RoleSelection';
 import CashierLogin from './cashier-pos/pages/CashierLogin';
 import Cashier from './cashier-pos/pages/Cashier';
 import './styles/global.module.css';
@@ -21,7 +22,10 @@ function App() {
   return (
     <Router>
       <Routes>
-        {/* Login Route */}
+        {/* Role Selection Route */}
+        <Route path="/" element={<RoleSelection />} />
+
+        {/* Cashier Login Route */}
         <Route
           path="/login"
           element={
@@ -45,16 +49,10 @@ function App() {
           }
         />
 
-        {/* Default Route */}
-        <Route
-          path="/"
-          element={<Navigate to={isAuthenticated ? '/cashier' : '/login'} replace />}
-        />
-
         {/* 404 Route */}
         <Route
           path="*"
-          element={<Navigate to={isAuthenticated ? '/cashier' : '/login'} replace />}
+          element={<Navigate to="/" replace />}
         />
       </Routes>
     </Router>
