@@ -18,6 +18,12 @@ const Cashier = ({ onLogout, user }) => {
   const [activeTransaction, setActiveTransaction] = useState(1);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [isSplitPayment, setIsSplitPayment] = useState(false);
+  const [splitPayments, setSplitPayments] = useState({
+    cash: '',
+    gcash: '',
+    card: '',
+  });
   const [cashAmount, setCashAmount] = useState('');
   const [barcode, setBarcode] = useState('');
   const [searchProduct, setSearchProduct] = useState('');
@@ -34,6 +40,18 @@ const Cashier = ({ onLogout, user }) => {
   const discountAmount = (subtotal * discount) / 100;
   const total = subtotal - discountAmount;
   const change = paymentMethod === 'cash' ? (parseFloat(cashAmount) || 0) - total : 0;
+
+  const handleSplitPaymentChange = (method, value) => {
+    setSplitPayments({ ...splitPayments, [method]: value });
+  };
+
+  const getTotalSplitPayment = () => {
+    return (parseFloat(splitPayments.cash) || 0) + (parseFloat(splitPayments.gcash) || 0) + (parseFloat(splitPayments.card) || 0);
+  };
+
+  const getRemainingAmount = () => {
+    return Math.max(0, total - getTotalSplitPayment());
+  };
 
   const handleAddToCart = (product) => {
     const existing = cartItems.find((item) => item.id === product.id);
@@ -67,9 +85,19 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleCompleteTransaction = () => {
-    alert('Transaction completed!');
+    if (isSplitPayment) {
+      if (getTotalSplitPayment() < total) {
+        alert('Split payment total is less than the transaction total!');
+        return;
+      }
+      alert('Transaction completed with split payment!');
+    } else {
+      alert('Transaction completed!');
+    }
     setCartItems([]);
     setCashAmount('');
+    setSplitPayments({ cash: '', gcash: '', card: '' });
+    setIsSplitPayment(false);
   };
 
   const handleNewTransaction = () => {
@@ -263,56 +291,135 @@ const Cashier = ({ onLogout, user }) => {
 
             {/* Payment Method */}
             <div className={styles['payment-method']}>
-              <label className={styles['filter-label']}>Payment Method</label>
+              <label className={styles['filter-label']}>Payment Type</label>
               <div className={styles['payment-buttons']}>
                 <button
-                  className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`}
-                  onClick={() => setPaymentMethod('cash')}
+                  className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`}
+                  onClick={() => setIsSplitPayment(false)}
                 >
-                  Cash
+                  Single
                 </button>
                 <button
-                  className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`}
-                  onClick={() => setPaymentMethod('gcash')}
+                  className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`}
+                  onClick={() => setIsSplitPayment(true)}
                 >
-                  GCash
+                  Split
                 </button>
               </div>
             </div>
 
-            {/* Payment Input */}
-            {paymentMethod === 'cash' && (
+            {!isSplitPayment ? (
               <>
-                <Input
-                  label="Cash Amount"
-                  type="number"
-                  placeholder="Enter cash amount"
-                  value={cashAmount}
-                  onChange={(e) => setCashAmount(e.target.value)}
-                />
-                {cashAmount && (
-                  <div className={styles['change-display']}>
-                    <div className={styles['change-row']}>
-                      <span>Cash:</span>
-                      <span>₱{parseFloat(cashAmount).toLocaleString()}</span>
-                    </div>
-                    <div className={`${styles['change-row']} ${change < 0 ? styles.negative : ''}`}>
-                      <span>Change:</span>
-                      <span>₱{change.toLocaleString()}</span>
-                    </div>
+                {/* Single Payment Method */}
+                <div className={styles['payment-method']}>
+                  <label className={styles['filter-label']}>Payment Method</label>
+                  <div className={styles['payment-buttons']}>
+                    <button
+                      className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`}
+                      onClick={() => setPaymentMethod('cash')}
+                    >
+                      Cash
+                    </button>
+                    <button
+                      className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`}
+                      onClick={() => setPaymentMethod('gcash')}
+                    >
+                      GCash
+                    </button>
+                    <button
+                      className={`${styles['payment-btn']} ${paymentMethod === 'card' ? styles.active : ''}`}
+                      onClick={() => setPaymentMethod('card')}
+                    >
+                      Card
+                    </button>
                   </div>
+                </div>
+
+                {/* Payment Input */}
+                {paymentMethod === 'cash' && (
+                  <>
+                    <Input
+                      label="Cash Amount"
+                      type="number"
+                      placeholder="Enter cash amount"
+                      value={cashAmount}
+                      onChange={(e) => setCashAmount(e.target.value)}
+                    />
+                    {cashAmount && (
+                      <div className={styles['change-display']}>
+                        <div className={styles['change-row']}>
+                          <span>Total Payment:</span>
+                          <span>₱{total.toLocaleString()}</span>
+                        </div>
+                        <div className={styles['change-row']}>
+                          <span>Change:</span>
+                          <span style={{ color: change >= 0 ? '#16a34a' : '#dc2626', fontWeight: '600' }}>₱{change.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {paymentMethod === 'gcash' && (
+                  <>
+                    <Input
+                      label="GCash Reference Number"
+                      placeholder="Enter reference number"
+                    />
+                    <div className={styles['total-display']}>
+                      <span>Total amount: ₱{total.toLocaleString()}</span>
+                    </div>
+                  </>
+                )}
+
+                {paymentMethod === 'card' && (
+                  <>
+                    <Input
+                      label="Card Reference Number"
+                      placeholder="Enter card reference number"
+                    />
+                    <div className={styles['total-display']}>
+                      <span>Total amount: ₱{total.toLocaleString()}</span>
+                    </div>
+                  </>
                 )}
               </>
-            )}
-
-            {paymentMethod === 'gcash' && (
+            ) : (
               <>
-                <Input
-                  label="GCash Reference Number"
-                  placeholder="Enter reference number"
-                />
-                <div className={styles['total-display']}>
-                  <span>Total amount: ₱{total.toLocaleString()}</span>
+                {/* Split Payment */}
+                <div className={styles['payment-method']}>
+                  <label className={styles['filter-label']}>Split Payment Breakdown</label>
+                  <Input
+                    label="Cash Amount"
+                    type="number"
+                    placeholder="Enter cash amount"
+                    value={splitPayments.cash}
+                    onChange={(e) => handleSplitPaymentChange('cash', e.target.value)}
+                  />
+                  <Input
+                    label="GCash Amount"
+                    type="number"
+                    placeholder="Enter GCash amount"
+                    value={splitPayments.gcash}
+                    onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)}
+                  />
+                  <Input
+                    label="Card Amount"
+                    type="number"
+                    placeholder="Enter card amount"
+                    value={splitPayments.card}
+                    onChange={(e) => handleSplitPaymentChange('card', e.target.value)}
+                  />
+                  <div className={styles['change-display']}>
+                    <div className={styles['change-row']}>
+                      <span>Total Paid:</span>
+                      <span>₱{getTotalSplitPayment().toLocaleString()}</span>
+                    </div>
+                    <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}>
+                      <span>Remaining:</span>
+                      <span>₱{getRemainingAmount().toLocaleString()}</span>
+                    </div>
+                  </div>
                 </div>
               </>
             )}
