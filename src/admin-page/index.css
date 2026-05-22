@@ -395,8 +395,16 @@ table.data tbody td {
 }
 table.data tbody tr:last-child td { border-bottom: none; }
 table.data tbody tr:hover { background: var(--surface-2); }
+.table-wrap table.data th.t-center,
+.table-wrap table.data td.t-center {
+  text-align: center;
+}
 .t-right { text-align: right; }
 .t-center { text-align: center; }
+.row-actions-center {
+  width: 100%;
+  justify-content: center;
+}
 
 .prod-cell { display: flex; align-items: center; gap: 11px; }
 .prod-thumb {
