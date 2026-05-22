@@ -1,17 +1,16 @@
 import React from 'react';
-import styles from './Badge.module.css';
 
 const Badge = ({
   children,
-  variant = 'default',
+  variant = 'neutral',
   size = 'md',
   className = '',
   ...props
 }) => {
-  const variantClass = styles[`badge-${variant}`] || styles['badge-default'];
-  const sizeClass = styles[`badge-${size}`] || styles['badge-md'];
+  const variantClass = variant ? `badge-${variant}` : 'badge-neutral';
+  
   return (
-    <span className={`${styles.badge} ${variantClass} ${sizeClass} ${className}`} {...props}>
+    <span className={`badge ${variantClass} ${className}`.trim()} {...props}>
       {children}
     </span>
   );

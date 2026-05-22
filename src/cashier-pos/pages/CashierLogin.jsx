@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
 import styles from '../styles/CashierLogin.module.css';
 
 const CashierLogin = ({ onLogin }) => {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -100,6 +102,13 @@ const CashierLogin = ({ onLogin }) => {
           >
             <Cart size={18} />
             {loading ? 'Logging in...' : 'Login'}
+          </button>
+          <button
+            type="button"
+            className={styles['back-button']}
+            onClick={() => navigate('/')}
+          >
+            Back to Role Selection
           </button>
         </form>
       </div>

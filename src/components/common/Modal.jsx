@@ -1,6 +1,5 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { XLg } from 'react-bootstrap-icons';
-import styles from './Modal.module.css';
 
 const Modal = ({
   isOpen,
@@ -30,31 +29,36 @@ const Modal = ({
     window.addEventListener('keydown', handleEscapeKey);
     return () => window.removeEventListener('keydown', handleEscapeKey);
   }, []);
-
-  const sizeClass = styles[`modal-${size}`] || styles['modal-md'];
   
   return (
-    <div className={styles['modal-overlay']} onClick={handleBackdropClick}>
-      <div className={`${styles.modal} ${sizeClass} ${className}`}>
+    <div className="modal-overlay" onClick={handleBackdropClick}>
+      <div className={`modal ${className}`.trim()}>
         {(title || closeButton) && (
-          <div className={styles['modal-header']}>
-            {title && <h2 className={styles['modal-title']}>{title}</h2>}
+          <div className="modal-head">
+            {title && <h3>{title}</h3>}
             {closeButton && (
               <button
-                className={styles['modal-close']}
                 onClick={onClose}
                 aria-label="Close modal"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  display: 'flex',
+                  alignItems: 'center'
+                }}
               >
                 <XLg size={20} />
               </button>
             )}
           </div>
         )}
-        <div className={styles['modal-body']}>
+        <div className="modal-body">
           {children}
         </div>
         {footer && (
-          <div className={styles['modal-footer']}>
+          <div className="modal-foot">
             {footer}
           </div>
         )}

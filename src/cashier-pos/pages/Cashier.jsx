@@ -21,19 +21,33 @@ const Cashier = ({ onLogout, user }) => {
   const [isSplitPayment, setIsSplitPayment] = useState(false);
   const [splitPayments, setSplitPayments] = useState({
     cash: '',
-    gcash: '',
-    card: '',
+    gcash: ''
   });
   const [cashAmount, setCashAmount] = useState('');
+  const [gcashRef, setGcashRef] = useState('');
   const [barcode, setBarcode] = useState('');
   const [searchProduct, setSearchProduct] = useState('');
   const [isAddProductModal, setIsAddProductModal] = useState(false);
+  const [cashRegisterOpen, setCashRegisterOpen] = useState(false);
+  const [notification, setNotification] = useState('');
+  const [showVoidAuth, setShowVoidAuth] = useState(false);
+  const [managerBarcode, setManagerBarcode] = useState('');
+  const [voidError, setVoidError] = useState('');
+  const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [discountApprovalCode, setDiscountApprovalCode] = useState('');
+  const [discountAmountInput, setDiscountAmountInput] = useState('');
+  const [discountError, setDiscountError] = useState('');
+  const [discountApproved, setDiscountApproved] = useState(false);
+
+  const validManagerCodes = ['MANAGER123', 'SUPERVISOR456', 'DISCOUNT789'];
 
   // Mock products for search
   const [mockProducts] = useState([
     { id: 1, name: 'Cigarettes (Marlboro)', barcode: '8901030123456', category: 'Cigarettes', price: 140 },
     { id: 2, name: 'Rice (5kg)', barcode: '8901030123457', category: 'Rice', price: 250 },
     { id: 3, name: 'Coffee (500g)', barcode: '8901030123458', category: 'Coffee', price: 180 },
+    { id: 4, name: 'Bread Loaf', barcode: '8901030123459', category: 'Bakery', price: 75 },
+    { id: 5, name: 'Mineral Water', barcode: '8901030123460', category: 'Beverages', price: 40 },
   ]);
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
@@ -46,11 +60,43 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const getTotalSplitPayment = () => {
-    return (parseFloat(splitPayments.cash) || 0) + (parseFloat(splitPayments.gcash) || 0) + (parseFloat(splitPayments.card) || 0);
+    return (parseFloat(splitPayments.cash) || 0) + (parseFloat(splitPayments.gcash) || 0);
   };
 
   const getRemainingAmount = () => {
     return Math.max(0, total - getTotalSplitPayment());
+  };
+
+  const showNotification = (message) => {
+    setNotification(message);
+    window.setTimeout(() => setNotification(''), 3200);
+  };
+
+  const handleVoidTransaction = () => {
+    setShowVoidAuth(true);
+    setManagerBarcode('');
+    setVoidError('');
+  };
+
+  const confirmVoidTransaction = () => {
+    if (!validManagerCodes.includes(managerBarcode.trim().toUpperCase())) {
+      setVoidError('Manager barcode is not valid.');
+      return;
+    }
+    setCartItems([]);
+    setCashAmount('');
+    setGcashRef('');
+    setSplitPayments({ cash: '', gcash: '' });
+    setIsSplitPayment(false);
+    setShowVoidAuth(false);
+    setManagerBarcode('');
+    setVoidError('');
+    showNotification('Transaction has been voided.');
+  };
+
+  const handleOpenCashRegister = () => {
+    setCashRegisterOpen(true);
+    showNotification('Cash register opened successfully.');
   };
 
   const handleAddToCart = (product) => {
@@ -85,18 +131,36 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleCompleteTransaction = () => {
+    if (cartItems.length === 0) {
+      alert('Add items to the cart before completing the transaction.');
+      return;
+    }
+
     if (isSplitPayment) {
       if (getTotalSplitPayment() < total) {
-        alert('Split payment total is less than the transaction total!');
+        alert('Split payment total is less than the transaction total.');
         return;
       }
-      alert('Transaction completed with split payment!');
-    } else {
-      alert('Transaction completed!');
+      showNotification('Transaction completed with split payment!');
+    } else if (paymentMethod === 'cash') {
+      const paid = parseFloat(cashAmount) || 0;
+      if (!cashAmount || paid < total) {
+        alert('Please enter a cash amount large enough to cover the total.');
+        return;
+      }
+      showNotification('Transaction completed with cash payment!');
+    } else if (paymentMethod === 'gcash') {
+      if (!gcashRef.trim()) {
+        alert('Please enter GCash reference number.');
+        return;
+      }
+      showNotification('Transaction completed with GCash payment!');
     }
+
     setCartItems([]);
     setCashAmount('');
-    setSplitPayments({ cash: '', gcash: '', card: '' });
+    setGcashRef('');
+    setSplitPayments({ cash: '', gcash: '' });
     setIsSplitPayment(false);
   };
 
@@ -181,7 +245,10 @@ const Cashier = ({ onLogout, user }) => {
         <div className={styles['cashier-left']}>
           {/* Add Product */}
           <div className={styles['add-product-section']}>
-            <h3 className={styles['section-title']}>Add Product</h3>
+            <div className={styles['section-title-row']}>
+              <h3 className={styles['section-title']}>Add Product</h3>
+              <span className={styles['transaction-label']}>Transaction #{activeTransaction}</span>
+            </div>
 
             {/* Barcode */}
             <div className={styles['input-group']}>
@@ -201,6 +268,23 @@ const Cashier = ({ onLogout, user }) => {
               value={searchProduct}
               onChange={(e) => setSearchProduct(e.target.value)}
             />
+
+            {/* Sample Items */}
+            <div className={styles['sample-items']}>
+              <div className={styles['sample-items-title']}>Sample Items</div>
+              <div className={styles['sample-items-grid']}>
+                {mockProducts.slice(0, 4).map((product) => (
+                  <button
+                    key={product.id}
+                    type="button"
+                    className={styles['sample-item-button']}
+                    onClick={() => handleAddToCart(product)}
+                  >
+                    {product.name}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Search Results */}
             {searchProduct && (
@@ -271,7 +355,12 @@ const Cashier = ({ onLogout, user }) => {
         {/* Right Panel - Payment */}
         <div className={styles['cashier-right']}>
           <div className={styles['payment-card']}>
-            <h3 className={styles['section-title']}>Payment</h3>
+            <div className={styles['section-title-row']}>
+              <h3 className={styles['section-title']}>Payment</h3>
+              <span className={styles['register-status']}>
+                {cashRegisterOpen ? 'Register Open' : 'Register Closed'}
+              </span>
+            </div>
 
             {/* Summary */}
             <div className={styles['payment-summary']}>
@@ -287,6 +376,19 @@ const Cashier = ({ onLogout, user }) => {
                 <span>Total:</span>
                 <span>₱{total.toLocaleString()}</span>
               </div>
+            </div>
+
+            <div className={styles['discount-row']}>
+              <span>Need manager approval for a discount?</span>
+              <Button variant="outline" onClick={() => {
+                setShowDiscountModal(true);
+                setDiscountApprovalCode('');
+                setDiscountAmountInput('');
+                setDiscountError('');
+                setDiscountApproved(false);
+              }}>
+                Request Discount
+              </Button>
             </div>
 
             {/* Payment Method */}
@@ -326,12 +428,6 @@ const Cashier = ({ onLogout, user }) => {
                     >
                       GCash
                     </button>
-                    <button
-                      className={`${styles['payment-btn']} ${paymentMethod === 'card' ? styles.active : ''}`}
-                      onClick={() => setPaymentMethod('card')}
-                    >
-                      Card
-                    </button>
                   </div>
                 </div>
 
@@ -364,19 +460,9 @@ const Cashier = ({ onLogout, user }) => {
                   <>
                     <Input
                       label="GCash Reference Number"
-                      placeholder="Enter reference number"
-                    />
-                    <div className={styles['total-display']}>
-                      <span>Total amount: ₱{total.toLocaleString()}</span>
-                    </div>
-                  </>
-                )}
-
-                {paymentMethod === 'card' && (
-                  <>
-                    <Input
-                      label="Card Reference Number"
-                      placeholder="Enter card reference number"
+                      placeholder="Enter GCash reference"
+                      value={gcashRef}
+                      onChange={(e) => setGcashRef(e.target.value)}
                     />
                     <div className={styles['total-display']}>
                       <span>Total amount: ₱{total.toLocaleString()}</span>
@@ -403,13 +489,6 @@ const Cashier = ({ onLogout, user }) => {
                     value={splitPayments.gcash}
                     onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)}
                   />
-                  <Input
-                    label="Card Amount"
-                    type="number"
-                    placeholder="Enter card amount"
-                    value={splitPayments.card}
-                    onChange={(e) => handleSplitPaymentChange('card', e.target.value)}
-                  />
                   <div className={styles['change-display']}>
                     <div className={styles['change-row']}>
                       <span>Total Paid:</span>
@@ -424,6 +503,23 @@ const Cashier = ({ onLogout, user }) => {
               </>
             )}
 
+            <div className={styles['action-row']}>
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={handleVoidTransaction}
+              >
+                Void Transaction
+              </Button>
+              <Button
+                variant="success"
+                fullWidth
+                onClick={handleOpenCashRegister}
+              >
+                Open Cash Register
+              </Button>
+            </div>
+
             {/* Complete Button */}
             <Button
               variant="primary"
@@ -436,6 +532,123 @@ const Cashier = ({ onLogout, user }) => {
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={showVoidAuth}
+        onClose={() => {
+          setShowVoidAuth(false);
+          setVoidError('');
+          setManagerBarcode('');
+        }}
+        title="Manager Authorization Required"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={() => {
+              setShowVoidAuth(false);
+              setVoidError('');
+              setManagerBarcode('');
+            }}>
+              Cancel
+            </button>
+            <button className="btn btn-danger" onClick={confirmVoidTransaction}>
+              Void Transaction
+            </button>
+          </div>
+        }
+      >
+        <p>Please scan the manager barcode to confirm the void.</p>
+        <Input
+          label="Manager Barcode"
+          placeholder="Enter manager barcode"
+          value={managerBarcode}
+          onChange={(e) => setManagerBarcode(e.target.value)}
+        />
+        {voidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={showDiscountModal}
+        onClose={() => {
+          setShowDiscountModal(false);
+          setDiscountApproved(false);
+          setDiscountApprovalCode('');
+          setDiscountAmountInput('');
+          setDiscountError('');
+        }}
+        title="Discount Approval"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={() => {
+              setShowDiscountModal(false);
+              setDiscountApproved(false);
+              setDiscountApprovalCode('');
+              setDiscountAmountInput('');
+              setDiscountError('');
+            }}>
+              Cancel
+            </button>
+            {!discountApproved ? (
+              <button className="btn btn-primary" onClick={() => {
+                if (discountApprovalCode.trim().toUpperCase() !== 'MANAGER123') {
+                  setDiscountError('Invalid manager approval code.');
+                  return;
+                }
+                setDiscountApproved(true);
+                setDiscountError('');
+              }}>
+                Verify
+              </button>
+            ) : (
+              <button className="btn btn-success" onClick={() => {
+                const amount = parseFloat(discountAmountInput);
+                if (Number.isNaN(amount) || amount < 0 || amount > 100) {
+                  setDiscountError('Enter a valid discount percentage from 0 to 100.');
+                  return;
+                }
+                setDiscount(amount);
+                setShowDiscountModal(false);
+                setDiscountApproved(false);
+                setDiscountApprovalCode('');
+                setDiscountAmountInput('');
+                setDiscountError('');
+                showNotification(`Discount applied: ${amount}%`);
+              }}>
+                Apply Discount
+              </button>
+            )}
+          </div>
+        }
+      >
+        {!discountApproved ? (
+          <>
+            <p>Please enter manager approval code to permit discount changes.</p>
+            <Input
+              label="Manager Approval Code"
+              placeholder="Enter manager barcode"
+              value={discountApprovalCode}
+              onChange={(e) => setDiscountApprovalCode(e.target.value)}
+            />
+          </>
+        ) : (
+          <>
+            <p>Manager approved. Enter discount percentage to apply.</p>
+            <Input
+              label="Discount (%)"
+              type="number"
+              placeholder="Enter discount percent"
+              value={discountAmountInput}
+              onChange={(e) => setDiscountAmountInput(e.target.value)}
+            />
+          </>
+        )}
+        {discountError && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountError}</div>}
+      </Modal>
+
+      {notification && (
+        <div className={styles['notification-toast']}>
+          {notification}
+        </div>
+      )}
     </div>
   );
 };

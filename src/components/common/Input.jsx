@@ -1,5 +1,4 @@
 import React from 'react';
-import styles from './Input.module.css';
 
 const Input = ({
   label,
@@ -13,21 +12,19 @@ const Input = ({
   className = '',
   ...props
 }) => {
-  const inputClass = `${styles.input} ${Icon ? styles['input-with-icon'] : ''} ${error ? styles['input-error'] : ''}`;
-  
   return (
-    <div className={styles['input-container']}>
+    <div className="field">
       {label && (
-        <label className={styles['input-label']}>
+        <label>
           {label}
-          {props.required && <span className={styles['input-required']}>*</span>}
+          {props.required && <span style={{ color: 'var(--danger)' }}>*</span>}
         </label>
       )}
-      <div className={styles['input-wrapper']}>
-        {Icon && <Icon className={styles['input-icon']} />}
+      <div className="input-search" style={{ display: Icon ? 'block' : 'none' }}>
+        {Icon && <Icon size={18} />}
         <input
           type={type}
-          className={`${inputClass} ${className}`}
+          className={`input ${className}`.trim()}
           placeholder={placeholder}
           value={value}
           onChange={onChange}
@@ -35,7 +32,18 @@ const Input = ({
           {...props}
         />
       </div>
-      {error && <span className={styles['input-error-text']}>{error}</span>}
+      {!Icon && (
+        <input
+          type={type}
+          className={`input ${className}`.trim()}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          {...props}
+        />
+      )}
+      {error && <span style={{ color: 'var(--danger)', fontSize: '12px' }}>{error}</span>}
     </div>
   );
 };

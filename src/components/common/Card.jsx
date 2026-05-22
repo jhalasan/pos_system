@@ -1,5 +1,4 @@
 import React from 'react';
-import styles from './Card.module.css';
 
 const Card = ({
   children,
@@ -10,18 +9,18 @@ const Card = ({
   shadow = true,
   ...props
 }) => {
-  const paddingClass = styles[`card-p-${padding}`] || styles['card-p-lg'];
-  const shadowClass = shadow ? styles['card-shadow'] : '';
+  const paddingClass = padding ? `card-p-${padding}` : 'card-p-lg';
+  const shadowClass = shadow ? 'card-shadow' : '';
   
   return (
-    <div className={`${styles.card} ${paddingClass} ${shadowClass} ${className}`} {...props}>
+    <div className={`card ${paddingClass} ${shadowClass} ${className}`.trim()} {...props}>
       {(title || subtitle) && (
-        <div className={styles['card-header']}>
-          {title && <h3 className={styles['card-title']}>{title}</h3>}
-          {subtitle && <p className={styles['card-subtitle']}>{subtitle}</p>}
+        <div className="card-header">
+          {title && <h3 className="card-title">{title}</h3>}
+          {subtitle && <p className="card-subtitle">{subtitle}</p>}
         </div>
       )}
-      <div className={styles['card-content']}>
+      <div className="card-content">
         {children}
       </div>
     </div>
