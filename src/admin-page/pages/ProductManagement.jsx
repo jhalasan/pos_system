@@ -89,11 +89,11 @@ export default function ProductManagement() {
                 <th>Product</th>
                 <th>Barcode</th>
                 <th>Category</th>
-                <th className="t-right">Quantity</th>
+                <th className="t-center">Quantity</th>
                 <th>Base Unit</th>
                 <th>Price</th>
                 <th>Status</th>
-                <th className="t-right">Actions</th>
+                <th className="t-center">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -123,12 +123,12 @@ export default function ProductManagement() {
                     </td>
                     <td className="mono">{p.barcode}</td>
                     <td>{p.category}</td>
-                    <td className="t-right">{p.qty}</td>
+                    <td className="t-center">{p.qty}</td>
                     <td>{p.unit}</td>
                     <td>{peso(p.price)}</td>
                     <td><span className={`badge ${st.badge}`}>{st.text}</span></td>
-                    <td>
-                      <div className="row-actions">
+                    <td className="t-center">
+                      <div className="row-actions row-actions-center">
                         <button
                           className="icon-btn"
                           title="Edit"
