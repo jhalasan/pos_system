@@ -20,19 +20,20 @@ const Input = ({
           {props.required && <span style={{ color: 'var(--danger)' }}>*</span>}
         </label>
       )}
-      <div className="input-search" style={{ display: Icon ? 'block' : 'none' }}>
-        {Icon && <Icon size={18} />}
-        <input
-          type={type}
-          className={`input ${className}`.trim()}
-          placeholder={placeholder}
-          value={value}
-          onChange={onChange}
-          disabled={disabled}
-          {...props}
-        />
-      </div>
-      {!Icon && (
+      {Icon ? (
+        <div className="input-search">
+          <Icon size={18} />
+          <input
+            type={type}
+            className={`input ${className}`.trim()}
+            placeholder={placeholder}
+            value={value}
+            onChange={onChange}
+            disabled={disabled}
+            {...props}
+          />
+        </div>
+      ) : (
         <input
           type={type}
           className={`input ${className}`.trim()}

@@ -587,10 +587,154 @@ table.data tbody tr:hover { background: var(--surface-2); }
   animation: pop .18s ease;
 }
 
+/* ============================================================
+   FSN INVENTORY ANALYSIS
+   ============================================================ */
+.fsn-card-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.fsn-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fsn-panel-head h3 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.fsn-grid-wrap {
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fsn-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.fsn-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+
+.fsn-card:hover {
+  border-color: var(--primary);
+  box-shadow: var(--shadow-sm);
+}
+
+.fsn-card.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: var(--shadow);
+}
+
+.fsn-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fsn-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.fsn-card.active .fsn-label {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.fsn-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.fsn-value {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+  color: var(--text);
+}
+
+.fsn-card.active .fsn-value {
+  color: var(--primary);
+}
+
+.fsn-foot {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.fsn-card.active .fsn-foot {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.fsn-product-list {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fsn-product-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.fsn-product-list-head span {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.fsn-product-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  transition: background .13s;
+}
+
+.fsn-product-row:hover {
+  background: var(--primary-soft);
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 1100px) {
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .grid-2, .grid-2-wide { grid-template-columns: 1fr; }
+  .fsn-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 760px) {
   .sidebar { display: none; }
@@ -598,5 +742,6 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .stat-grid, .stat-grid.cols-3 { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .scan-grid { grid-template-columns: 1fr; }
+  .fsn-grid { grid-template-columns: 1fr; }
   .content, .topbar { padding-left: 16px; padding-right: 16px; }
 }
