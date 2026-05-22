@@ -1,5 +1,4 @@
 import React from 'react';
-import styles from './Button.module.css';
 
 const Button = ({
   children,
@@ -13,19 +12,19 @@ const Button = ({
   type = 'button',
   ...props
 }) => {
-  const variantClass = styles[`btn-${variant}`] || styles['btn-primary'];
-  const sizeClass = styles[`btn-${size}`] || styles['btn-md'];
-  const fullWidthClass = fullWidth ? styles['btn-full-width'] : '';
+  const variantClass = variant ? `btn-${variant}` : 'btn-primary';
+  const sizeClass = size ? `btn-${size}` : 'btn-md';
+  const fullWidthClass = fullWidth ? 'btn-block' : '';
   
   return (
     <button
       type={type}
-      className={`${styles.btn} ${variantClass} ${sizeClass} ${fullWidthClass} ${className}`}
+      className={`btn ${variantClass} ${sizeClass} ${fullWidthClass} ${className}`.trim()}
       disabled={disabled}
       onClick={onClick}
       {...props}
     >
-      {Icon && <Icon className={styles['btn-icon']} />}
+      {Icon && <Icon className="btn-icon" style={{ marginRight: '4px' }} />}
       {children}
     </button>
   );
