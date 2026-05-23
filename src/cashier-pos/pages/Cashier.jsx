@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
+import { products as seedProducts } from '../../admin-page/data/mockData';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
@@ -10,6 +11,12 @@ import styles from '../styles/Cashier.module.css';
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const [cartItems, setCartItems] = useState([]);
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const [transactions, setTransactions] = useState([
     { id: 1, name: 'Transaction 1' },
@@ -41,14 +48,19 @@ const Cashier = ({ onLogout, user }) => {
 
   const validManagerCodes = ['MANAGER123', 'SUPERVISOR456', 'DISCOUNT789'];
 
-  // Mock products for search
-  const [mockProducts] = useState([
-    { id: 1, name: 'Cigarettes (Marlboro)', barcode: '8901030123456', category: 'Cigarettes', price: 140 },
-    { id: 2, name: 'Rice (5kg)', barcode: '8901030123457', category: 'Rice', price: 250 },
-    { id: 3, name: 'Coffee (500g)', barcode: '8901030123458', category: 'Coffee', price: 180 },
-    { id: 4, name: 'Bread Loaf', barcode: '8901030123459', category: 'Bakery', price: 75 },
-    { id: 5, name: 'Mineral Water', barcode: '8901030123460', category: 'Beverages', price: 40 },
-  ]);
+  // Use products from mockData
+  const [allProducts] = useState(seedProducts);
+
+  // Filter products based on search term
+  const searchResults = useMemo(() => {
+    if (!searchProduct.trim()) return [];
+    const query = searchProduct.toLowerCase();
+    return allProducts.filter((p) =>
+      p.name.toLowerCase().includes(query) ||
+      p.barcode.includes(searchProduct) ||
+      p.id.toLowerCase().includes(query)
+    );
+  }, [searchProduct, allProducts]);
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const discountAmount = (subtotal * discount) / 100;
@@ -202,13 +214,27 @@ const Cashier = ({ onLogout, user }) => {
           <h2 className={styles['header-title']}>Cashier POS</h2>
           {user && <span className={styles['cashier-name']}>({user.username})</span>}
         </div>
-        <button
-          className={styles['logout-button']}
-          onClick={handleLogout}
-        >
-          <XLg size={18} />
-          Logout
-        </button>
+        <div className={styles['header-right']}>
+          <span className={styles['clock']}>
+            {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}
+            {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+          <div className={styles['user-chip']}>
+            <div className={styles['user-avatar']}>C</div>
+            <div className={styles['user-info']}>
+              <div className={styles['user-name']}>Cashier</div>
+              <div className={styles['user-role']}>POS Operator</div>
+            </div>
+          </div>
+          <button
+            className={styles['logout-button']}
+            onClick={handleLogout}
+          >
+            <XLg size={18} />
+            Logout
+          </button>
+        </div>
       </div>
 
       {/* Transaction Tabs */}
@@ -262,18 +288,47 @@ const Cashier = ({ onLogout, user }) => {
             </div>
 
             {/* Search */}
-            <Input
-              label="Search Product"
-              placeholder="Search by product name or barcode"
-              value={searchProduct}
-              onChange={(e) => setSearchProduct(e.target.value)}
-            />
+            <div className={styles['search-container']}>
+              <Input
+                label="Search Product"
+                placeholder="Search by product name or barcode"
+                value={searchProduct}
+                onChange={(e) => setSearchProduct(e.target.value)}
+              />
 
-            {/* Sample Items */}
+              {/* Search Results */}
+              {searchProduct && (
+                <div className={styles['search-results']}>
+                  {searchResults.length > 0 ? (
+                    searchResults.map((product) => (
+                      <button
+                        key={product.id}
+                        className={styles['search-result-item']}
+                        onClick={() => handleAddToCart(product)}
+                      >
+                        <div>
+                          <div className={styles['product-name']}>{product.name}</div>
+                          <div className={styles['product-meta']}>
+                            {product.barcode} • {product.category} • ₱{product.price}
+                          </div>
+                          <div className={styles['product-stock']}>
+                            Stock: {product.qty} {product.unit}
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles['no-results']}>
+                      No products found matching "{searchProduct}"
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className={styles['sample-items']}>
               <div className={styles['sample-items-title']}>Sample Items</div>
               <div className={styles['sample-items-grid']}>
-                {mockProducts.slice(0, 4).map((product) => (
+                {allProducts.slice(0, 4).map((product) => (
                   <button
                     key={product.id}
                     type="button"
@@ -285,31 +340,6 @@ const Cashier = ({ onLogout, user }) => {
                 ))}
               </div>
             </div>
-
-            {/* Search Results */}
-            {searchProduct && (
-              <div className={styles['search-results']}>
-                {mockProducts
-                  .filter((p) =>
-                    p.name.toLowerCase().includes(searchProduct.toLowerCase()) ||
-                    p.barcode.includes(searchProduct)
-                  )
-                  .map((product) => (
-                    <button
-                      key={product.id}
-                      className={styles['search-result-item']}
-                      onClick={() => handleAddToCart(product)}
-                    >
-                      <div>
-                        <div className={styles['product-name']}>{product.name}</div>
-                        <div className={styles['product-meta']}>
-                          {product.barcode} • {product.category}
-                        </div>
-                      </div>
-                    </button>
-                  ))}
-              </div>
-            )}
           </div>
 
           {/* Cart */}
@@ -512,7 +542,7 @@ const Cashier = ({ onLogout, user }) => {
                 Void Transaction
               </Button>
               <Button
-                variant="success"
+                variant="secondary"
                 fullWidth
                 onClick={handleOpenCashRegister}
               >
@@ -522,7 +552,7 @@ const Cashier = ({ onLogout, user }) => {
 
             {/* Complete Button */}
             <Button
-              variant="primary"
+              variant="success"
               fullWidth
               onClick={handleCompleteTransaction}
               disabled={cartItems.length === 0}

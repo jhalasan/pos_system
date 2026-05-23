@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
-import styles from '../styles/CashierLogin.module.css';
+import { Cart } from 'react-bootstrap-icons';
 
 const CashierLogin = ({ onLogin }) => {
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -40,77 +38,70 @@ const CashierLogin = ({ onLogin }) => {
   };
 
   return (
-    <div className={styles['login-container']}>
-      <div className={styles['login-card']}>
-        {/* Logo */}
-        <div className={styles['logo-container']}>
-          <div className={styles['logo-icon']}>
-            <Envelope size={40} />
-          </div>
-        </div>
+    <div className="auth-wrap">
+      <div className="login-card">
+        <div className="brand-mark">N</div>
+        <h2>Cashier Login</h2>
+        <p className="tag">Enter your credentials to access the POS system</p>
 
-        {/* Heading */}
-        <h1 className={styles['login-title']}>Cashier Login</h1>
-        <p className={styles['login-subtitle']}>Enter your credentials to access the POS</p>
+        <form className="login-form" onSubmit={handleSubmit}>
+          {error && <div className="login-error">{error}</div>}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className={styles['login-form']}>
-          {/* Username Field */}
-          <div className={styles['form-group']}>
-            <label className={styles['form-label']}>Username</label>
+          <div className="field">
+            <label htmlFor="username">Username</label>
             <input
+              id="username"
               type="text"
-              className={styles['form-input']}
-              placeholder="Enter Username Label"
+              className="input"
+              placeholder="Enter your username"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              onChange={(e) => {
+                setUsername(e.target.value);
+                setError('');
+              }}
+              disabled={loading}
+              autoFocus
+            />
+          </div>
+
+          <div className="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              className="input"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setError('');
+              }}
               disabled={loading}
             />
           </div>
 
-          {/* Password Field */}
-          <div className={styles['form-group']}>
-            <label className={styles['form-label']}>Password</label>
-            <div className={styles['password-wrapper']}>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                className={styles['form-input']}
-                placeholder="Enter Password Label"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-              />
-              <button
-                type="button"
-                className={styles['password-toggle']}
-                onClick={() => setShowPassword(!showPassword)}
-                tabIndex="-1"
-              >
-                {showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}
-              </button>
-            </div>
-          </div>
-
-          {/* Error Message */}
-          {error && <div className={styles['error-message']}>{error}</div>}
-
-          {/* Login Button */}
           <button
             type="submit"
-            className={styles['login-button']}
+            className="btn btn-primary btn-block"
             disabled={loading}
           >
-            <Cart size={18} />
-            {loading ? 'Logging in...' : 'Login'}
+            <Cart size={16} /> Login
           </button>
-          <button
-            type="button"
-            className={styles['back-button']}
-            onClick={() => navigate('/')}
-          >
-            Back to Role Selection
-          </button>
+
+          <div className="text-center">
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => navigate('/')}
+            >
+              Back to Role Selection
+            </button>
+          </div>
         </form>
+
+        <div className="login-hint">
+          Demo credentials: <strong>cashier / cashier123</strong>
+        </div>
       </div>
     </div>
   );
