@@ -12,11 +12,22 @@ const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const [cartItems, setCartItems] = useState([]);
   const [now, setNow] = useState(new Date());
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (isUserMenuOpen && !e.target.closest('[data-user-menu]')) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isUserMenuOpen]);
 
   const [transactions, setTransactions] = useState([
     { id: 1, name: 'Transaction 1' },
@@ -212,7 +223,6 @@ const Cashier = ({ onLogout, user }) => {
       <div className={styles['cashier-header']}>
         <div className={styles['header-left']}>
           <h2 className={styles['header-title']}>Cashier POS</h2>
-          {user && <span className={styles['cashier-name']}>({user.username})</span>}
         </div>
         <div className={styles['header-right']}>
           <span className={styles['clock']}>
@@ -220,20 +230,29 @@ const Cashier = ({ onLogout, user }) => {
             {' · '}
             {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
           </span>
-          <div className={styles['user-chip']}>
-            <div className={styles['user-avatar']}>C</div>
-            <div className={styles['user-info']}>
-              <div className={styles['user-name']}>Cashier</div>
-              <div className={styles['user-role']}>POS Operator</div>
-            </div>
+          <div className={styles['user-menu-container']} data-user-menu>
+            <button 
+              className={styles['user-chip']}
+              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            >
+              <div className={styles['user-avatar']}>C</div>
+              <div className={styles['user-info']}>
+                <div className={styles['user-name']}>Cashier</div>
+                <div className={styles['user-role']}>POS Operator</div>
+              </div>
+            </button>
+            {isUserMenuOpen && (
+              <div className={styles['user-dropdown-menu']}>
+                <button
+                  className={styles['dropdown-logout-button']}
+                  onClick={handleLogout}
+                >
+                  <XLg size={16} />
+                  Logout
+                </button>
+              </div>
+            )}
           </div>
-          <button
-            className={styles['logout-button']}
-            onClick={handleLogout}
-          >
-            <XLg size={18} />
-            Logout
-          </button>
         </div>
       </div>
 

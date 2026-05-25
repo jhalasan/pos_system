@@ -48,6 +48,10 @@
   color: #6b7280;
 }
 
+.user-menu-container {
+  position: relative;
+}
+
 .user-chip {
   display: flex;
   align-items: center;
@@ -55,6 +59,18 @@
   padding: 5px 10px 5px 5px;
   border: 1px solid #e5e7eb;
   border-radius: 999px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.user-chip:hover {
+  background-color: #f9fafb;
+  border-color: #d1d5db;
+}
+
+.user-chip:active {
+  background-color: #f3f4f6;
 }
 
 .user-avatar {
@@ -85,6 +101,44 @@
 .user-role {
   font-size: 11px;
   color: #6b7280;
+}
+
+.user-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 8px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  min-width: 160px;
+  padding: 8px 0;
+}
+
+.dropdown-logout-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 16px;
+  background-color: transparent;
+  color: #dc2626;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.dropdown-logout-button:hover {
+  background-color: #fee2e2;
+}
+
+.dropdown-logout-button:active {
+  background-color: #fecaca;
 }
 
 .logout-button {
@@ -193,7 +247,6 @@
   flex: 1;
   gap: 24px;
   padding: 24px 48px;
-  overflow-y: auto;
 }
 
 .cashier-left {
@@ -201,7 +254,7 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  overflow-y: auto;
+  min-height: 0;
 }
 
 .cashier-right {
@@ -209,6 +262,7 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  min-height: 0;
 }
 
 @media (max-width: 1200px) {
@@ -432,7 +486,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 300px;
+  min-height: 0;
 }
 
 .cart-header {
@@ -462,6 +516,7 @@
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
+  flex: 1;
 }
 
 .cart-item {
@@ -522,8 +577,8 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
-  position: sticky;
-  top: 0;
+  flex: 1;
+  min-height: 0;
 }
 
 .payment-summary {
