@@ -12,8 +12,7 @@ import ProductManagement from './admin-page/pages/ProductManagement';
 import CashierManagement from './admin-page/pages/CashierManagement';
 import Analytics from './admin-page/pages/Analytics';
 import ActivityLogs from './admin-page/pages/ActivityLogs';
-import './admin-page/index.css';
-import './styles/global.module.css';
+import './global.css';
 
 function RequireAdminAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/admin-login" replace />;
