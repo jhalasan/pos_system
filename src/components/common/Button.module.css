@@ -70,6 +70,36 @@
   background-color: #1d4ed8;
 }
 
+.btn-secondary:active:not(:disabled) {
+  background-color: #1e40af;
+}
+
+.btn-success {
+  background-color: #16a34a;
+  color: #ffffff;
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: #15803d;
+}
+
+.btn-success:active:not(:disabled) {
+  background-color: #146a34;
+}
+
+.btn-danger {
+  background-color: #dc2626;
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background-color: #b91c1c;
+}
+
+.btn-danger:active:not(:disabled) {
+  background-color: #991b1b;
+}
+
 .btn-outline {
   background-color: #ffffff;
   color: #030213;

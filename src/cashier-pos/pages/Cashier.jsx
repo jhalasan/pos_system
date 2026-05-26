@@ -1,28 +1,51 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
+import { products as seedProducts } from '../../admin-page/data/mockData';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
-import { cashierApi, money } from '../services/api';
 import styles from '../styles/Cashier.module.css';
-
-const firstTransaction = { id: 1, name: 'Transaction 1' };
 
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const [cartItems, setCartItems] = useState([]);
-  const [transactions, setTransactions] = useState([firstTransaction]);
+  const [now, setNow] = useState(new Date());
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (isUserMenuOpen && !e.target.closest('[data-user-menu]')) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isUserMenuOpen]);
+
+  const [transactions, setTransactions] = useState([
+    { id: 1, name: 'Transaction 1' },
+  ]);
+
   const [activeTransaction, setActiveTransaction] = useState(1);
   const [discount, setDiscount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [isSplitPayment, setIsSplitPayment] = useState(false);
-  const [splitPayments, setSplitPayments] = useState({ cash: '', gcash: '' });
+  const [splitPayments, setSplitPayments] = useState({
+    cash: '',
+    gcash: ''
+  });
   const [cashAmount, setCashAmount] = useState('');
   const [gcashRef, setGcashRef] = useState('');
   const [barcode, setBarcode] = useState('');
   const [searchProduct, setSearchProduct] = useState('');
+  const [isAddProductModal, setIsAddProductModal] = useState(false);
   const [cashRegisterOpen, setCashRegisterOpen] = useState(false);
   const [notification, setNotification] = useState('');
   const [showVoidAuth, setShowVoidAuth] = useState(false);
@@ -33,45 +56,27 @@ const Cashier = ({ onLogout, user }) => {
   const [discountAmountInput, setDiscountAmountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
-  const [products, setProducts] = useState([]);
-  const [productsLoading, setProductsLoading] = useState(true);
-  const [productsError, setProductsError] = useState('');
+
+  const validManagerCodes = ['MANAGER123', 'SUPERVISOR456', 'DISCOUNT789'];
+
+  // Use products from mockData
+  const [allProducts] = useState(seedProducts);
+
+  // Filter products based on search term
+  const searchResults = useMemo(() => {
+    if (!searchProduct.trim()) return [];
+    const query = searchProduct.toLowerCase();
+    return allProducts.filter((p) =>
+      p.name.toLowerCase().includes(query) ||
+      p.barcode.includes(searchProduct) ||
+      p.id.toLowerCase().includes(query)
+    );
+  }, [searchProduct, allProducts]);
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const discountAmount = (subtotal * discount) / 100;
   const total = subtotal - discountAmount;
   const change = paymentMethod === 'cash' ? (parseFloat(cashAmount) || 0) - total : 0;
-
-  const filteredProducts = useMemo(() => {
-    const query = searchProduct.trim().toLowerCase();
-    if (!query) return [];
-    return products.filter((product) =>
-      product.name.toLowerCase().includes(query) ||
-      String(product.barcode || '').includes(query)
-    ).slice(0, 8);
-  }, [products, searchProduct]);
-
-  async function loadProducts() {
-    setProductsLoading(true);
-    setProductsError('');
-    try {
-      setProducts(await cashierApi.products());
-    } catch (err) {
-      setProductsError(err.message || 'Unable to load products.');
-    } finally {
-      setProductsLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadProducts();
-  }, []);
-
-  const showNotification = (message) => {
-    setNotification(message);
-    window.setTimeout(() => setNotification(''), 3200);
-  };
 
   const handleSplitPaymentChange = (method, value) => {
     setSplitPayments({ ...splitPayments, [method]: value });
@@ -85,11 +90,9 @@ const Cashier = ({ onLogout, user }) => {
     return Math.max(0, total - getTotalSplitPayment());
   };
 
-  const resetPaymentState = () => {
-    setCashAmount('');
-    setGcashRef('');
-    setSplitPayments({ cash: '', gcash: '' });
-    setIsSplitPayment(false);
+  const showNotification = (message) => {
+    setNotification(message);
+    window.setTimeout(() => setNotification(''), 3200);
   };
 
   const handleVoidTransaction = () => {
@@ -98,16 +101,16 @@ const Cashier = ({ onLogout, user }) => {
     setVoidError('');
   };
 
-  const confirmVoidTransaction = async () => {
-    try {
-      await cashierApi.authorizeVoid(managerBarcode);
-    } catch (err) {
-      setVoidError(err.message || 'Manager barcode is not valid.');
+  const confirmVoidTransaction = () => {
+    if (!validManagerCodes.includes(managerBarcode.trim().toUpperCase())) {
+      setVoidError('Manager barcode is not valid.');
       return;
     }
-
     setCartItems([]);
-    resetPaymentState();
+    setCashAmount('');
+    setGcashRef('');
+    setSplitPayments({ cash: '', gcash: '' });
+    setIsSplitPayment(false);
     setShowVoidAuth(false);
     setManagerBarcode('');
     setVoidError('');
@@ -122,24 +125,21 @@ const Cashier = ({ onLogout, user }) => {
   const handleAddToCart = (product) => {
     const existing = cartItems.find((item) => item.id === product.id);
     if (existing) {
-      if (existing.quantity + 1 > product.qty) {
-        showNotification(`Only ${product.qty} item(s) available for ${product.name}.`);
-        return;
-      }
-      setCartItems(cartItems.map((item) =>
-        item.id === product.id
-          ? { ...item, quantity: item.quantity + 1, total: item.price * (item.quantity + 1) }
-          : item
-      ));
+      setCartItems(
+        cartItems.map((item) =>
+          item.id === product.id
+            ? { ...item, quantity: item.quantity + 1, total: item.price * (item.quantity + 1) }
+            : item
+        )
+      );
     } else {
       setCartItems([
         ...cartItems,
         {
           id: product.id,
-          productId: product.id,
           name: product.name,
           quantity: 1,
-          unit: product.unit,
+          unit: 'pack',
           price: product.price,
           total: product.price,
         },
@@ -149,79 +149,48 @@ const Cashier = ({ onLogout, user }) => {
     setBarcode('');
   };
 
-  const handleScan = async () => {
-    const code = barcode.trim();
-    if (!code) return;
-
-    try {
-      handleAddToCart(await cashierApi.productByBarcode(code));
-    } catch (err) {
-      showNotification(err.message || 'Product not found.');
-    }
-  };
-
   const handleRemoveItem = (id) => {
     setCartItems(cartItems.filter((item) => item.id !== id));
   };
 
-  const validatePayment = () => {
+  const handleCompleteTransaction = () => {
     if (cartItems.length === 0) {
       alert('Add items to the cart before completing the transaction.');
-      return false;
+      return;
     }
 
     if (isSplitPayment) {
       if (getTotalSplitPayment() < total) {
         alert('Split payment total is less than the transaction total.');
-        return false;
+        return;
       }
-      return true;
-    }
-
-    if (paymentMethod === 'cash') {
+      showNotification('Transaction completed with split payment!');
+    } else if (paymentMethod === 'cash') {
       const paid = parseFloat(cashAmount) || 0;
       if (!cashAmount || paid < total) {
         alert('Please enter a cash amount large enough to cover the total.');
-        return false;
+        return;
       }
+      showNotification('Transaction completed with cash payment!');
+    } else if (paymentMethod === 'gcash') {
+      if (!gcashRef.trim()) {
+        alert('Please enter GCash reference number.');
+        return;
+      }
+      showNotification('Transaction completed with GCash payment!');
     }
 
-    if (paymentMethod === 'gcash' && !gcashRef.trim()) {
-      alert('Please enter GCash reference number.');
-      return false;
-    }
-
-    return true;
-  };
-
-  const handleCompleteTransaction = async () => {
-    if (!validatePayment()) return;
-
-    try {
-      const sale = await cashierApi.completeSale({
-        cashierId: user?.id,
-        totalAmount: total,
-        paymentMethod: isSplitPayment ? 'cash' : paymentMethod,
-        refNumber: isSplitPayment ? `split:${JSON.stringify(splitPayments)}` : gcashRef,
-        items: cartItems.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-          price: item.price,
-        })),
-      });
-
-      await loadProducts();
-      setCartItems([]);
-      resetPaymentState();
-      showNotification(`Transaction #${sale.transactionNo || sale.id} completed successfully.`);
-    } catch (err) {
-      showNotification(err.message || 'Unable to complete transaction.');
-    }
+    setCartItems([]);
+    setCashAmount('');
+    setGcashRef('');
+    setSplitPayments({ cash: '', gcash: '' });
+    setIsSplitPayment(false);
   };
 
   const handleNewTransaction = () => {
-    const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
-    setTransactions([...transactions, { id: newId, name: `Transaction ${newId}` }]);
+    const newId = Math.max(...transactions.map(t => t.id), 0) + 1;
+    const newTransaction = { id: newId, name: `Transaction ${newId}` };
+    setTransactions([...transactions, newTransaction]);
     setActiveTransaction(newId);
     setCartItems([]);
     setCashAmount('');
@@ -229,9 +198,11 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleDeleteTransaction = (txnId) => {
-    const remaining = transactions.filter((t) => t.id !== txnId);
+    const remaining = transactions.filter(t => t.id !== txnId);
     setTransactions(remaining);
-    if (activeTransaction === txnId && remaining.length > 0) setActiveTransaction(remaining[0].id);
+    if (activeTransaction === txnId && remaining.length > 0) {
+      setActiveTransaction(remaining[0].id);
+    }
     if (remaining.length === 0) {
       setCartItems([]);
       setCashAmount('');
@@ -248,17 +219,44 @@ const Cashier = ({ onLogout, user }) => {
 
   return (
     <div className={styles['cashier-layout']}>
+      {/* Header */}
       <div className={styles['cashier-header']}>
         <div className={styles['header-left']}>
           <h2 className={styles['header-title']}>Cashier POS</h2>
-          {user && <span className={styles['cashier-name']}>({user.name || user.email})</span>}
         </div>
-        <button className={styles['logout-button']} onClick={handleLogout}>
-          <XLg size={18} />
-          Logout
-        </button>
+        <div className={styles['header-right']}>
+          <span className={styles['clock']}>
+            {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+            {' · '}
+            {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+          <div className={styles['user-menu-container']} data-user-menu>
+            <button 
+              className={styles['user-chip']}
+              onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            >
+              <div className={styles['user-avatar']}>C</div>
+              <div className={styles['user-info']}>
+                <div className={styles['user-name']}>Cashier</div>
+                <div className={styles['user-role']}>POS Operator</div>
+              </div>
+            </button>
+            {isUserMenuOpen && (
+              <div className={styles['user-dropdown-menu']}>
+                <button
+                  className={styles['dropdown-logout-button']}
+                  onClick={handleLogout}
+                >
+                  <XLg size={16} />
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
+      {/* Transaction Tabs */}
       <div className={styles['transaction-tabs-bar']}>
         <div className={styles['transaction-tabs']}>
           {transactions.map((txn) => (
@@ -286,43 +284,70 @@ const Cashier = ({ onLogout, user }) => {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className={styles['cashier-content']}>
+        {/* Left Panel - Cart */}
         <div className={styles['cashier-left']}>
+          {/* Add Product */}
           <div className={styles['add-product-section']}>
             <div className={styles['section-title-row']}>
               <h3 className={styles['section-title']}>Add Product</h3>
               <span className={styles['transaction-label']}>Transaction #{activeTransaction}</span>
             </div>
 
+            {/* Barcode */}
             <div className={styles['input-group']}>
               <Input
                 label="Scan Barcode"
                 placeholder="Scan or enter barcode"
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleScan();
-                  }
-                }}
               />
-              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan}>Scan</Button>
+              <Button variant="primary" className={styles['btn-scan']}>Scan</Button>
             </div>
 
-            <Input
-              label="Search Product"
-              placeholder="Search by product name or barcode"
-              value={searchProduct}
-              onChange={(e) => setSearchProduct(e.target.value)}
-            />
+            {/* Search */}
+            <div className={styles['search-container']}>
+              <Input
+                label="Search Product"
+                placeholder="Search by product name or barcode"
+                value={searchProduct}
+                onChange={(e) => setSearchProduct(e.target.value)}
+              />
 
+              {/* Search Results */}
+              {searchProduct && (
+                <div className={styles['search-results']}>
+                  {searchResults.length > 0 ? (
+                    searchResults.map((product) => (
+                      <button
+                        key={product.id}
+                        className={styles['search-result-item']}
+                        onClick={() => handleAddToCart(product)}
+                      >
+                        <div>
+                          <div className={styles['product-name']}>{product.name}</div>
+                          <div className={styles['product-meta']}>
+                            {product.barcode} • {product.category} • ₱{product.price}
+                          </div>
+                          <div className={styles['product-stock']}>
+                            Stock: {product.qty} {product.unit}
+                          </div>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <div className={styles['no-results']}>
+                      No products found matching "{searchProduct}"
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className={styles['sample-items']}>
-              <div className={styles['sample-items-title']}>
-                {productsLoading ? 'Loading Items' : productsError || 'Available Items'}
-              </div>
+              <div className={styles['sample-items-title']}>Sample Items</div>
               <div className={styles['sample-items-grid']}>
-                {products.slice(0, 8).map((product) => (
+                {allProducts.slice(0, 4).map((product) => (
                   <button
                     key={product.id}
                     type="button"
@@ -334,32 +359,16 @@ const Cashier = ({ onLogout, user }) => {
                 ))}
               </div>
             </div>
-
-            {searchProduct && (
-              <div className={styles['search-results']}>
-                {filteredProducts.map((product) => (
-                  <button
-                    key={product.id}
-                    className={styles['search-result-item']}
-                    onClick={() => handleAddToCart(product)}
-                  >
-                    <div>
-                      <div className={styles['product-name']}>{product.name}</div>
-                      <div className={styles['product-meta']}>
-                        {product.barcode} | {product.category} | {money(product.price)} | {product.qty} left
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
+          {/* Cart */}
           <div className={styles['cart-section']}>
             <div className={styles['cart-header']}>
               <h3 className={styles['section-title']}>
                 Cart
-                <Badge variant="info" size="sm">{cartItems.length} Items</Badge>
+                <Badge variant="info" size="sm">
+                  {cartItems.length} Items
+                </Badge>
               </h3>
             </div>
 
@@ -375,11 +384,14 @@ const Cashier = ({ onLogout, user }) => {
                     <div className={styles['cart-item-content']}>
                       <div className={styles['cart-item-name']}>{item.name}</div>
                       <div className={styles['cart-item-meta']}>
-                        {item.quantity} x {item.unit} @ {money(item.price)}
+                        {item.quantity} × {item.unit} @ ₱{item.price.toLocaleString()}
                       </div>
                     </div>
-                    <div className={styles['cart-item-total']}>{money(item.total)}</div>
-                    <button className={styles['cart-item-remove']} onClick={() => handleRemoveItem(item.id)}>
+                    <div className={styles['cart-item-total']}>₱{item.total.toLocaleString()}</div>
+                    <button
+                      className={styles['cart-item-remove']}
+                      onClick={() => handleRemoveItem(item.id)}
+                    >
                       <Trash size={16} />
                     </button>
                   </div>
@@ -389,6 +401,7 @@ const Cashier = ({ onLogout, user }) => {
           </div>
         </div>
 
+        {/* Right Panel - Payment */}
         <div className={styles['cashier-right']}>
           <div className={styles['payment-card']}>
             <div className={styles['section-title-row']}>
@@ -398,10 +411,20 @@ const Cashier = ({ onLogout, user }) => {
               </span>
             </div>
 
+            {/* Summary */}
             <div className={styles['payment-summary']}>
-              <div className={styles['summary-row']}><span>Subtotal:</span><span>{money(subtotal)}</span></div>
-              <div className={styles['summary-row']}><span>Discount ({discount}%):</span><span>-{money(discountAmount)}</span></div>
-              <div className={`${styles['summary-row']} ${styles['summary-total']}`}><span>Total:</span><span>{money(total)}</span></div>
+              <div className={styles['summary-row']}>
+                <span>Subtotal:</span>
+                <span>₱{subtotal.toLocaleString()}</span>
+              </div>
+              <div className={styles['summary-row']}>
+                <span>Discount ({discount}%):</span>
+                <span>-₱{discountAmount.toLocaleString()}</span>
+              </div>
+              <div className={`${styles['summary-row']} ${styles['summary-total']}`}>
+                <span>Total:</span>
+                <span>₱{total.toLocaleString()}</span>
+              </div>
             </div>
 
             <div className={styles['discount-row']}>
@@ -417,33 +440,65 @@ const Cashier = ({ onLogout, user }) => {
               </Button>
             </div>
 
+            {/* Payment Method */}
             <div className={styles['payment-method']}>
               <label className={styles['filter-label']}>Payment Type</label>
               <div className={styles['payment-buttons']}>
-                <button className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`} onClick={() => setIsSplitPayment(false)}>Single</button>
-                <button className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`} onClick={() => setIsSplitPayment(true)}>Split</button>
+                <button
+                  className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`}
+                  onClick={() => setIsSplitPayment(false)}
+                >
+                  Single
+                </button>
+                <button
+                  className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`}
+                  onClick={() => setIsSplitPayment(true)}
+                >
+                  Split
+                </button>
               </div>
             </div>
 
             {!isSplitPayment ? (
               <>
+                {/* Single Payment Method */}
                 <div className={styles['payment-method']}>
                   <label className={styles['filter-label']}>Payment Method</label>
                   <div className={styles['payment-buttons']}>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => setPaymentMethod('cash')}>Cash</button>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => setPaymentMethod('gcash')}>GCash</button>
+                    <button
+                      className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`}
+                      onClick={() => setPaymentMethod('cash')}
+                    >
+                      Cash
+                    </button>
+                    <button
+                      className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`}
+                      onClick={() => setPaymentMethod('gcash')}
+                    >
+                      GCash
+                    </button>
                   </div>
                 </div>
 
+                {/* Payment Input */}
                 {paymentMethod === 'cash' && (
                   <>
-                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => setCashAmount(e.target.value)} />
+                    <Input
+                      label="Cash Amount"
+                      type="number"
+                      placeholder="Enter cash amount"
+                      value={cashAmount}
+                      onChange={(e) => setCashAmount(e.target.value)}
+                    />
                     {cashAmount && (
                       <div className={styles['change-display']}>
-                        <div className={styles['change-row']}><span>Total Payment:</span><span>{money(total)}</span></div>
+                        <div className={styles['change-row']}>
+                          <span>Total Payment:</span>
+                          <span>₱{total.toLocaleString()}</span>
+                        </div>
                         <div className={styles['change-row']}>
                           <span>Change:</span>
-                          <span style={{ color: change >= 0 ? '#16a34a' : '#dc2626', fontWeight: '600' }}>{money(change)}</span>
+                          <span style={{ color: change >= 0 ? '#16a34a' : '#dc2626', fontWeight: '600' }}>₱{change.toLocaleString()}</span>
                         </div>
                       </div>
                     )}
@@ -452,29 +507,75 @@ const Cashier = ({ onLogout, user }) => {
 
                 {paymentMethod === 'gcash' && (
                   <>
-                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => setGcashRef(e.target.value)} />
-                    <div className={styles['total-display']}><span>Total amount: {money(total)}</span></div>
+                    <Input
+                      label="GCash Reference Number"
+                      placeholder="Enter GCash reference"
+                      value={gcashRef}
+                      onChange={(e) => setGcashRef(e.target.value)}
+                    />
+                    <div className={styles['total-display']}>
+                      <span>Total amount: ₱{total.toLocaleString()}</span>
+                    </div>
                   </>
                 )}
               </>
             ) : (
-              <div className={styles['payment-method']}>
-                <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} />
-                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} />
-                <div className={styles['change-display']}>
-                  <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
-                  <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
+              <>
+                {/* Split Payment */}
+                <div className={styles['payment-method']}>
+                  <label className={styles['filter-label']}>Split Payment Breakdown</label>
+                  <Input
+                    label="Cash Amount"
+                    type="number"
+                    placeholder="Enter cash amount"
+                    value={splitPayments.cash}
+                    onChange={(e) => handleSplitPaymentChange('cash', e.target.value)}
+                  />
+                  <Input
+                    label="GCash Amount"
+                    type="number"
+                    placeholder="Enter GCash amount"
+                    value={splitPayments.gcash}
+                    onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)}
+                  />
+                  <div className={styles['change-display']}>
+                    <div className={styles['change-row']}>
+                      <span>Total Paid:</span>
+                      <span>₱{getTotalSplitPayment().toLocaleString()}</span>
+                    </div>
+                    <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}>
+                      <span>Remaining:</span>
+                      <span>₱{getRemainingAmount().toLocaleString()}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </>
             )}
 
             <div className={styles['action-row']}>
-              <Button variant="danger" fullWidth onClick={handleVoidTransaction}>Void Transaction</Button>
-              <Button variant="success" fullWidth onClick={handleOpenCashRegister}>Open Cash Register</Button>
+              <Button
+                variant="danger"
+                fullWidth
+                onClick={handleVoidTransaction}
+              >
+                Void Transaction
+              </Button>
+              <Button
+                variant="secondary"
+                fullWidth
+                onClick={handleOpenCashRegister}
+              >
+                Open Cash Register
+              </Button>
             </div>
 
-            <Button variant="primary" fullWidth onClick={handleCompleteTransaction} disabled={cartItems.length === 0}>
+            {/* Complete Button */}
+            <Button
+              variant="success"
+              fullWidth
+              onClick={handleCompleteTransaction}
+              disabled={cartItems.length === 0}
+            >
               Complete Transaction
             </Button>
           </div>
@@ -498,12 +599,19 @@ const Cashier = ({ onLogout, user }) => {
             }}>
               Cancel
             </button>
-            <button className="btn btn-danger" onClick={confirmVoidTransaction}>Void Transaction</button>
+            <button className="btn btn-danger" onClick={confirmVoidTransaction}>
+              Void Transaction
+            </button>
           </div>
         }
       >
         <p>Please scan the manager barcode to confirm the void.</p>
-        <Input label="Manager Barcode" placeholder="Enter manager barcode" value={managerBarcode} onChange={(e) => setManagerBarcode(e.target.value)} />
+        <Input
+          label="Manager Barcode"
+          placeholder="Enter manager barcode"
+          value={managerBarcode}
+          onChange={(e) => setManagerBarcode(e.target.value)}
+        />
         {voidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidError}</div>}
       </Modal>
 
@@ -529,14 +637,13 @@ const Cashier = ({ onLogout, user }) => {
               Cancel
             </button>
             {!discountApproved ? (
-              <button className="btn btn-primary" onClick={async () => {
-                try {
-                  await cashierApi.authorizeVoid(discountApprovalCode);
-                  setDiscountApproved(true);
-                  setDiscountError('');
-                } catch (err) {
-                  setDiscountError(err.message || 'Invalid manager approval code.');
+              <button className="btn btn-primary" onClick={() => {
+                if (discountApprovalCode.trim().toUpperCase() !== 'MANAGER123') {
+                  setDiscountError('Invalid manager approval code.');
+                  return;
                 }
+                setDiscountApproved(true);
+                setDiscountError('');
               }}>
                 Verify
               </button>
@@ -564,18 +671,33 @@ const Cashier = ({ onLogout, user }) => {
         {!discountApproved ? (
           <>
             <p>Please enter manager approval code to permit discount changes.</p>
-            <Input label="Manager Approval Code" placeholder="Enter manager barcode" value={discountApprovalCode} onChange={(e) => setDiscountApprovalCode(e.target.value)} />
+            <Input
+              label="Manager Approval Code"
+              placeholder="Enter manager barcode"
+              value={discountApprovalCode}
+              onChange={(e) => setDiscountApprovalCode(e.target.value)}
+            />
           </>
         ) : (
           <>
             <p>Manager approved. Enter discount percentage to apply.</p>
-            <Input label="Discount (%)" type="number" placeholder="Enter discount percent" value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
+            <Input
+              label="Discount (%)"
+              type="number"
+              placeholder="Enter discount percent"
+              value={discountAmountInput}
+              onChange={(e) => setDiscountAmountInput(e.target.value)}
+            />
           </>
         )}
         {discountError && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountError}</div>}
       </Modal>
 
-      {notification && <div className={styles['notification-toast']}>{notification}</div>}
+      {notification && (
+        <div className={styles['notification-toast']}>
+          {notification}
+        </div>
+      )}
     </div>
   );
 };

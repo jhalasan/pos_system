@@ -17,17 +17,42 @@ export default function AdminLayout() {
   const { pathname } = useLocation()
   const section = pathname.split('/')[2] || 'dashboard'
   const [now, setNow] = useState(new Date())
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
     return () => clearInterval(t)
   }, [])
 
+  // Close sidebar when route changes
+  useEffect(() => {
+    setSidebarOpen(false)
+  }, [pathname])
+
+  // Close sidebar when clicking on overlay
+  const handleOverlayClick = () => {
+    setSidebarOpen(false)
+  }
+
   return (
     <div className="admin-shell">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
+      <div className={`sidebar-overlay ${sidebarOpen ? 'active' : ''}`} onClick={handleOverlayClick} />
       <div className="main">
+        <div className="phone-status-bar"></div>
         <header className="topbar">
+          <button
+            className="mobile-menu-btn"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            title="Toggle menu"
+            aria-label="Toggle navigation menu"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
+          </button>
           <div className="crumb">
             Admin <span>/</span> <b>{titles[section] || 'Dashboard'}</b>
           </div>
