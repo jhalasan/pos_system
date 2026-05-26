@@ -6,18 +6,17 @@ export default function DonutChart({ data, centerLabel = 'Total Units', size = 1
   const cy = 70
   const circ = 2 * Math.PI * r
 
-  let offset = 0
-  const segments = data.map((d) => {
+  const segments = data.reduce((items, d) => {
     const frac = total ? d.value / total : 0
+    const offset = items.reduce((sum, item) => sum + item.dash, 0)
     const seg = {
       color: d.color,
       dash: frac * circ,
       gap: circ - frac * circ,
       rotation: (offset / circ) * 360,
     }
-    offset += frac * circ
-    return seg
-  })
+    return [...items, seg]
+  }, [])
 
   return (
     <div className="donut-wrap">

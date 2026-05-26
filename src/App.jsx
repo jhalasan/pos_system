@@ -12,24 +12,33 @@ import ProductManagement from './admin-page/pages/ProductManagement';
 import CashierManagement from './admin-page/pages/CashierManagement';
 import Analytics from './admin-page/pages/Analytics';
 import ActivityLogs from './admin-page/pages/ActivityLogs';
+import Settings from './admin-page/pages/Settings';
 import './admin-page/index.css';
 import './styles/global.module.css';
+
+const CASHIER_AUTH_KEY = 'nexa_cashier_auth';
 
 function RequireAdminAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/admin-login" replace />;
 }
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [cashierUser, setCashierUser] = useState(null);
+  const [cashierUser, setCashierUser] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(CASHIER_AUTH_KEY) || 'null');
+    } catch {
+      return null;
+    }
+  });
+  const isAuthenticated = Boolean(cashierUser);
 
   const handleLogin = (user) => {
+    sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(user));
     setCashierUser(user);
-    setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    setIsAuthenticated(false);
+    sessionStorage.removeItem(CASHIER_AUTH_KEY);
     setCashierUser(null);
   };
 
@@ -67,6 +76,7 @@ function App() {
           <Route path="cashiers" element={<CashierManagement />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="logs" element={<ActivityLogs />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         {/* Cashier Login Route */}

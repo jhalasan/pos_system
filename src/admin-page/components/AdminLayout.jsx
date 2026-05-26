@@ -10,6 +10,7 @@ const titles = {
   cashiers: 'Cashier Management',
   analytics: 'Analytics',
   logs: 'Activity Logs',
+  settings: 'Settings',
 }
 
 export default function AdminLayout() {

@@ -64,6 +64,78 @@
   gap: 20px;
 }
 
+.quick-login-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.quick-login-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.quick-login-list {
+  display: grid;
+  gap: 8px;
+}
+
+.quick-login-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+
+.quick-login-account:hover,
+.quick-login-account.active {
+  border-color: #16a34a;
+  background: #f0fdf4;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .08);
+}
+
+.quick-login-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #16a34a;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.quick-login-account strong,
+.quick-login-account small {
+  display: block;
+}
+
+.quick-login-account strong {
+  font-size: 13px;
+}
+
+.quick-login-account small {
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .form-group {
   display: flex;
   flex-direction: column;

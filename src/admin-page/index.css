@@ -210,6 +210,73 @@ ul { list-style: none; }
   font-size: 12px; font-weight: 600;
   padding: 8px 11px; border-radius: var(--radius-sm);
 }
+.quick-login-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.quick-login-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+.quick-login-list {
+  display: grid;
+  gap: 8px;
+}
+.quick-login-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.quick-login-account:hover,
+.quick-login-account.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, .08);
+}
+.quick-login-account:disabled {
+  cursor: not-allowed;
+  opacity: .7;
+}
+.quick-login-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.quick-login-account strong,
+.quick-login-account small {
+  display: block;
+}
+.quick-login-account strong {
+  font-size: 13px;
+}
+.quick-login-account small {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
 .login-hint {
   margin-top: 18px; padding: 10px 12px;
   background: var(--surface-2); border: 1px dashed var(--border-strong);
@@ -412,7 +479,9 @@ table.data tbody tr:hover { background: var(--surface-2); }
   background: var(--surface-2); border: 1px solid var(--border);
   display: flex; align-items: center; justify-content: center;
   color: var(--text-faint); flex-shrink: 0;
+  overflow: hidden;
 }
+.prod-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .prod-name { font-weight: 600; }
 .prod-id { font-size: 11px; color: var(--text-faint); }
 .mono { font-family: 'Consolas', monospace; font-size: 12px; }
@@ -591,11 +660,38 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .form-grid .span-2 { grid-column: 1 / -1; }
 
 .img-drop {
+  width: 100%;
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-sm);
   padding: 22px; text-align: center;
   color: var(--text-muted); font-size: 12.5px;
   background: var(--surface-2);
+  display: block;
+  min-height: 120px;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.img-drop:hover,
+.img-drop.dragging {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, .08);
+}
+.img-drop.has-image {
+  padding: 12px;
+}
+.img-drop img {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  display: block;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+.img-drop span {
+  display: block;
+  overflow-wrap: anywhere;
 }
 .img-drop .di {
   width: 40px; height: 40px; border-radius: 9px;
@@ -624,6 +720,49 @@ table.data tbody tr:hover { background: var(--surface-2); }
   box-shadow: var(--shadow-lg);
   display: flex; align-items: center; gap: 9px;
   animation: pop .18s ease;
+}
+
+.switch {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 24px;
+  vertical-align: middle;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch span {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background .15s;
+}
+.switch span::before {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: var(--shadow-sm);
+  transition: transform .15s;
+}
+.switch input:checked + span {
+  background: var(--primary);
+}
+.switch input:checked + span::before {
+  transform: translateX(20px);
+}
+.switch input:disabled + span {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 /* ---- Responsive ---- */

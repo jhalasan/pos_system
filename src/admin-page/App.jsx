@@ -9,6 +9,7 @@ import ProductManagement from './pages/ProductManagement'
 import CashierManagement from './pages/CashierManagement'
 import Analytics from './pages/Analytics'
 import ActivityLogs from './pages/ActivityLogs'
+import Settings from './pages/Settings'
 
 function RequireAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/login" replace />
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="cashiers" element={<CashierManagement />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="logs" element={<ActivityLogs />} />
+        <Route path="settings" element={<Settings />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

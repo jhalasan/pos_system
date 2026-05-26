@@ -1,23 +1,40 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
+import { cashierApi } from '../services/api';
 import styles from '../styles/CashierLogin.module.css';
 
 const CashierLogin = ({ onLogin }) => {
   const navigate = useNavigate();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [quickAccounts, setQuickAccounts] = useState([]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadQuickAccounts() {
+      try {
+        const accounts = await cashierApi.quickLoginAccounts();
+        if (!ignore) setQuickAccounts(accounts);
+      } catch {
+        if (!ignore) setQuickAccounts([]);
+      }
+    }
+
+    loadQuickAccounts();
+    return () => { ignore = true; };
+  }, []);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Validation
-    if (!username.trim()) {
-      setError('Username is required');
+    if (!email.trim()) {
+      setError('Email is required');
       return;
     }
     if (!password.trim()) {
@@ -25,18 +42,16 @@ const CashierLogin = ({ onLogin }) => {
       return;
     }
 
-    // Simulate API call
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const session = await cashierApi.login(email, password);
+      onLogin(session.user);
+      navigate('/cashier', { replace: true });
+    } catch (err) {
+      setError(err.message || 'Invalid email or password');
+    } finally {
       setLoading(false);
-      // TODO: Replace with database authentication after integration
-      // Temporary demo credentials - username: cashier, password: cashier123
-      if (username.toLowerCase() === 'cashier' && password === 'cashier123') {
-        onLogin({ username });
-      } else {
-        setError('Invalid username or password');
-      }
-    }, 500);
+    }
   };
 
   return (
@@ -55,15 +70,43 @@ const CashierLogin = ({ onLogin }) => {
 
         {/* Form */}
         <form onSubmit={handleSubmit} className={styles['login-form']}>
-          {/* Username Field */}
+          {quickAccounts.length > 0 && (
+            <div className={styles['quick-login-section']}>
+              <div className={styles['quick-login-title']}>Quick Login</div>
+              <div className={styles['quick-login-list']}>
+                {quickAccounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className={`${styles['quick-login-account']} ${email === account.email ? styles.active : ''}`}
+                    onClick={() => {
+                      setEmail(account.email);
+                      setError('');
+                    }}
+                    disabled={loading}
+                  >
+                    <span className={styles['quick-login-avatar']}>
+                      {account.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}
+                    </span>
+                    <span>
+                      <strong>{account.name}</strong>
+                      <small>{account.email}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Email Field */}
           <div className={styles['form-group']}>
-            <label className={styles['form-label']}>Username</label>
+            <label className={styles['form-label']}>Email</label>
             <input
-              type="text"
+              type="email"
               className={styles['form-input']}
-              placeholder="Enter Username Label"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Enter cashier email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
             />
           </div>
@@ -75,7 +118,7 @@ const CashierLogin = ({ onLogin }) => {
               <input
                 type={showPassword ? 'text' : 'password'}
                 className={styles['form-input']}
-                placeholder="Enter Password Label"
+                placeholder="Enter password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 disabled={loading}
