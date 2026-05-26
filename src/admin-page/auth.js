@@ -1,21 +1,18 @@
-/* Minimal client-side auth stub for the admin dashboard demo.
-   No real security — wire to a backend before production use. */
+import { api } from './services/api'
 
 const KEY = 'nexa_admin_auth'
+const USER_KEY = 'nexa_admin_user'
 
-/* Demo credential. Replace with a real auth call. */
-const DEMO_PASSWORD = 'admin123'
-
-export function login(password) {
-  if (password === DEMO_PASSWORD) {
-    sessionStorage.setItem(KEY, '1')
-    return true
-  }
-  return false
+export async function login(email, password) {
+  const session = await api.login(email, password)
+  sessionStorage.setItem(KEY, '1')
+  sessionStorage.setItem(USER_KEY, JSON.stringify(session.user))
+  return true
 }
 
 export function logout() {
   sessionStorage.removeItem(KEY)
+  sessionStorage.removeItem(USER_KEY)
 }
 
 export function isAuthed() {

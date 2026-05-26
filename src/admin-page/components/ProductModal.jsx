@@ -1,30 +1,68 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Modal from './Modal'
 import { IconImage, IconPlus, IconTrash } from './Icons'
-import { categories } from '../data/mockData'
+import { defaultCategories } from '../services/api'
 
 const blank = {
-  name: '', barcode: '', category: categories[0], unit: 'Piece',
+  name: '', barcode: '', category: defaultCategories[0], unit: 'Piece',
   qty: 0, lowStock: 10, price: 0,
 }
 
-export default function ProductModal({ mode, product, onClose, onSave }) {
-  const [form, setForm] = useState(product ? { ...product } : { ...blank })
+export default function ProductModal({ mode, product, categories = defaultCategories, onClose, onSave }) {
+  const [form, setForm] = useState(product ? { ...product } : { ...blank, category: categories[0] || '' })
   const [tiers, setTiers] = useState(
     product?.tiers || [{ label: 'Retail', price: product?.price || 0 }]
   )
+  const [imageFile, setImageFile] = useState(null)
+  const [imagePreview, setImagePreview] = useState(product?.imageUrl || '')
+  const [isDragging, setIsDragging] = useState(false)
+  const fileInputRef = useRef(null)
+  const objectUrlRef = useRef('')
 
   const isEdit = mode === 'edit'
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    }
+  }, [])
 
   function setTier(i, key, val) {
     setTiers(tiers.map((t, idx) => (idx === i ? { ...t, [key]: val } : t)))
   }
   function addTier() {
-    setTiers([...tiers, { label: '', price: 0 }])
+    setTiers([...tiers, { label: '', price: '0.00' }])
   }
   function removeTier(i) {
     setTiers(tiers.filter((_, idx) => idx !== i))
+  }
+
+  function formatPriceInput(value) {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00'
+  }
+
+  function selectImage(file) {
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      alert('Please upload a JPEG, PNG, or WEBP image.')
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Product image must be 5MB or smaller.')
+      return
+    }
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    objectUrlRef.current = URL.createObjectURL(file)
+    setImageFile(file)
+    setImagePreview(objectUrlRef.current)
+  }
+
+  function handleDrop(e) {
+    e.preventDefault()
+    setIsDragging(false)
+    selectImage(e.dataTransfer.files?.[0])
   }
 
   function submit() {
@@ -35,6 +73,7 @@ export default function ProductModal({ mode, product, onClose, onSave }) {
       lowStock: Number(form.lowStock) || 0,
       price: Number(tiers[0]?.price) || 0,
       tiers,
+      imageFile,
     })
   }
 
@@ -54,10 +93,33 @@ export default function ProductModal({ mode, product, onClose, onSave }) {
       <div className="form-grid">
         <div className="field span-2">
           <label>Product Image</label>
-          <div className="img-drop">
-            <div className="di"><IconImage size={20} /></div>
-            Drag an image here, or click to upload
-          </div>
+          <button
+            type="button"
+            className={`img-drop ${isDragging ? 'dragging' : ''} ${imagePreview ? 'has-image' : ''}`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+          >
+            {imagePreview ? (
+              <>
+                <img src={imagePreview} alt={`${form.name || 'Product'} preview`} />
+                <span>{imageFile ? imageFile.name : 'Click or drop to replace image'}</span>
+              </>
+            ) : (
+              <>
+                <div className="di"><IconImage size={20} /></div>
+                Drag an image here, or click to upload
+              </>
+            )}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            hidden
+            onChange={(e) => selectImage(e.target.files?.[0])}
+          />
         </div>
 
         <div className="field">
@@ -105,9 +167,11 @@ export default function ProductModal({ mode, product, onClose, onSave }) {
                 className="input"
                 type="number"
                 min="0"
+                step="0.01"
                 placeholder="Price"
                 value={t.price}
                 onChange={(e) => setTier(i, 'price', e.target.value)}
+                onBlur={(e) => setTier(i, 'price', formatPriceInput(e.target.value))}
               />
               <button
                 className="icon-btn del"

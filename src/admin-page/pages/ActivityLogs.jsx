@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import { IconDownload, IconList } from '../components/Icons'
-import { activityLogs } from '../data/mockData'
+import { api } from '../services/api'
+import { useApi } from '../hooks/useApi'
 
 const actionBadge = {
   Login: 'badge-info',
@@ -9,6 +10,7 @@ const actionBadge = {
   Sale: 'badge-success',
   Product: 'badge-neutral',
   Inventory: 'badge-warning',
+  Cashier: 'badge-info',
   Sync: 'badge-info',
   'Transaction Void': 'badge-danger',
   Discount: 'badge-success',
@@ -17,52 +19,71 @@ const actionBadge = {
   'Cloud Sync': 'badge-info',
 }
 
+function getDateRange(range) {
+  const now = new Date()
+  const end = new Date(now)
+  end.setHours(23, 59, 59, 999)
+
+  if (range === 'Today') {
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    return { start, end }
+  }
+
+  if (range === 'Last 7 Days') {
+    const start = new Date(now)
+    start.setDate(start.getDate() - 6)
+    start.setHours(0, 0, 0, 0)
+    return { start, end }
+  }
+
+  if (range === 'Last 30 Days') {
+    const start = new Date(now)
+    start.setDate(start.getDate() - 29)
+    start.setHours(0, 0, 0, 0)
+    return { start, end }
+  }
+
+  return { start: null, end: null }
+}
+
 export default function ActivityLogs() {
+  const { data: activityLogs, loading, error } = useApi(api.activityLogs, [])
   const [userType, setUserType] = useState('All')
   const [action, setAction] = useState('All')
   const [dateRange, setDateRange] = useState('Today')
 
-  const actionTypes = [...new Set(activityLogs.map((l) => l.action))]
+  const actionTypes = [...new Set(activityLogs.map((l) => l.action).filter(Boolean))]
 
-  const getDateRange = (range) => {
-    const now = new Date()
-    const end = new Date(now)
-    end.setHours(23, 59, 59, 999)
-
-    if (range === 'Today') {
-      const start = new Date(now)
-      start.setHours(0, 0, 0, 0)
-      return { start, end }
-    }
-
-    if (range === 'Last 7 Days') {
-      const start = new Date(now)
-      start.setDate(start.getDate() - 6)
-      start.setHours(0, 0, 0, 0)
-      return { start, end }
-    }
-
-    if (range === 'Last 30 Days') {
-      const start = new Date(now)
-      start.setDate(start.getDate() - 29)
-      start.setHours(0, 0, 0, 0)
-      return { start, end }
-    }
-
-    return { start: null, end: null }
-  }
-
-  const selectedRange = getDateRange(dateRange)
+  const selectedRange = useMemo(() => getDateRange(dateRange), [dateRange])
 
   const filtered = useMemo(() => {
     return activityLogs.filter((l) => {
       const mu = userType === 'All' || l.userType === userType
       const ma = action === 'All' || l.action === action
-      const dt = new Date(l.time.replace(' ', 'T'))
+      const dt = new Date(l.time)
       const md = !selectedRange.start || (dt >= selectedRange.start && dt <= selectedRange.end)
       return mu && ma && md
     })
-  }, [userType, action, selectedRange, dateRange])
+  }, [activityLogs, userType, action, selectedRange])
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Activity Logs" subtitle="Loading activity logs..." />
+        <div className="card"><div className="empty"><h4>Loading logs</h4></div></div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Activity Logs" subtitle="Real-time audit trail of all system activities." />
+        <div className="card"><div className="empty"><h4>Unable to load logs</h4><p>{error}</p></div></div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -70,7 +91,7 @@ export default function ActivityLogs() {
         title="Activity Logs"
         subtitle="Real-time audit trail of all system activities."
       >
-        <button className="btn btn-outline" onClick={() => alert('Exporting activity logs…')}>
+        <button className="btn btn-outline" onClick={() => alert('Exporting activity logs...')}>
           <IconDownload size={16} /> Export Logs
         </button>
       </PageHeader>
@@ -122,7 +143,7 @@ export default function ActivityLogs() {
               <tbody>
                 {filtered.map((l) => (
                   <tr key={l.id}>
-                    <td className="mono">{l.time}</td>
+                    <td className="mono">{new Date(l.time).toLocaleString()}</td>
                     <td className="prod-name">{l.user}</td>
                     <td>
                       <span className={'badge ' + (l.userType === 'Admin' ? 'badge-info' : 'badge-neutral')}>

@@ -2,12 +2,46 @@ import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import DonutChart from '../components/charts/DonutChart'
 import { IconDollar, IconCalendar, IconRevenue, IconAlert } from '../components/Icons'
-import {
-  dashboardStats, criticalAlerts, productInOut, topProducts, peso,
-} from '../data/mockData'
+import { api, peso } from '../services/api'
+import { useApi } from '../hooks/useApi'
+
+const emptyDashboard = {
+  stats: {
+    dailySales: 0,
+    dailySalesTrend: 0,
+    monthlySales: 0,
+    monthlySalesTrend: 0,
+    totalRevenue: 0,
+    totalRevenueTrend: 0,
+    criticalStock: 0,
+  },
+  criticalAlerts: [],
+  productInOut: [],
+  topProducts: [],
+}
 
 export default function Dashboard() {
-  const maxUnits = Math.max(...topProducts.map((p) => p.units))
+  const { data, loading, error } = useApi(api.dashboard, emptyDashboard)
+  const dashboardStats = data.stats
+  const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Dashboard" subtitle="Loading dashboard data..." />
+        <div className="card"><div className="empty"><h4>Loading dashboard</h4></div></div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Dashboard" subtitle="Overview of today's sales, revenue, and stock health." />
+        <div className="card"><div className="empty"><h4>Unable to load dashboard</h4><p>{error}</p></div></div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -44,9 +78,11 @@ export default function Dashboard() {
         <div>
           <h4>Critical Stock Alerts</h4>
           <div className="ab-list">
-            {criticalAlerts.map((a) => (
+            {data.criticalAlerts.length === 0 ? (
+              <span className="alert-pill">No critical stock items</span>
+            ) : data.criticalAlerts.map((a) => (
               <span className="alert-pill" key={a.name}>
-                {a.name} — <b>{a.left} left</b>
+                {a.name} - <b>{a.left} left</b>
               </span>
             ))}
           </div>
@@ -60,7 +96,7 @@ export default function Dashboard() {
             <span className="sub">Stock movement this month</span>
           </div>
           <div className="panel-body">
-            <DonutChart data={productInOut} centerLabel="Total Units" />
+            <DonutChart data={data.productInOut} centerLabel="Total Units" />
           </div>
         </div>
 
@@ -70,21 +106,25 @@ export default function Dashboard() {
             <span className="sub">By units sold</span>
           </div>
           <div className="panel-body">
-            <div className="rank-list">
-              {topProducts.map((p, i) => (
-                <div className="rank-row" key={p.name}>
-                  <span className="rank-no">{i + 1}</span>
-                  <div className="rank-info">
-                    <div className="rn">{p.name}</div>
-                    <div className="rc">{p.category}</div>
-                    <div className="rank-bar">
-                      <i style={{ width: `${(p.units / maxUnits) * 100}%` }} />
+            {data.topProducts.length === 0 ? (
+              <div className="empty"><h4>No sales data yet</h4><p>Top products will appear after sales are recorded.</p></div>
+            ) : (
+              <div className="rank-list">
+                {data.topProducts.map((p, i) => (
+                  <div className="rank-row" key={p.name}>
+                    <span className="rank-no">{i + 1}</span>
+                    <div className="rank-info">
+                      <div className="rn">{p.name}</div>
+                      <div className="rc">{p.category}</div>
+                      <div className="rank-bar">
+                        <i style={{ width: `${(p.units / maxUnits) * 100}%` }} />
+                      </div>
                     </div>
+                    <span className="rank-val">{p.units}</span>
                   </div>
-                  <span className="rank-val">{p.units}</span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

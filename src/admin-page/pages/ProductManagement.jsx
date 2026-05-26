@@ -2,26 +2,26 @@ import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
 import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage } from '../components/Icons'
-import { products as seed, categories, statusLabel, peso } from '../data/mockData'
-
-function deriveStatus(p) {
-  if (p.qty <= 5) return 'critical'
-  if (p.qty <= (p.lowStock ?? 10)) return 'low'
-  return 'in-stock'
-}
+import { api, defaultCategories, statusLabel, peso } from '../services/api'
+import { useApi } from '../hooks/useApi'
 
 export default function ProductManagement() {
-  const [list, setList] = useState(seed)
+  const { data: list, setData: setList, loading, error } = useApi(api.products, [])
   const [query, setQuery] = useState('')
   const [cat, setCat] = useState('All')
-  const [modal, setModal] = useState(null) // { mode, product }
+  const [modal, setModal] = useState(null)
   const [toast, setToast] = useState('')
+
+  const categories = useMemo(() => {
+    return [...new Set([...defaultCategories, ...list.map((p) => p.category).filter(Boolean)])]
+  }, [list])
 
   const filtered = useMemo(() => {
     return list.filter((p) => {
       const q = query.trim().toLowerCase()
       const matchQ = !q || p.name.toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q) || p.barcode.includes(q)
+        p.id.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) ||
+        (p.barcode || '').includes(q)
       const matchC = cat === 'All' || p.category === cat
       return matchQ && matchC
     })
@@ -32,23 +32,51 @@ export default function ProductManagement() {
     setTimeout(() => setToast(''), 2200)
   }
 
-  function handleSave(data) {
-    if (modal.mode === 'edit') {
-      setList(list.map((p) => (p.id === modal.product.id ? { ...p, ...data, status: deriveStatus(data) } : p)))
-      flash('Product updated.')
-    } else {
-      const id = 'PRD-' + (1000 + list.length + 1)
-      setList([{ ...data, id, status: deriveStatus(data) }, ...list])
-      flash('Product added.')
+  async function handleSave(data) {
+    try {
+      if (modal.mode === 'edit') {
+        const updated = await api.updateProduct(modal.product.id, data)
+        setList(list.map((p) => (p.id === modal.product.id ? updated : p)))
+        flash('Product updated.')
+      } else {
+        const created = await api.createProduct(data)
+        setList([created, ...list])
+        flash('Product added.')
+      }
+      setModal(null)
+    } catch (err) {
+      flash(err.message || 'Unable to save product.')
     }
-    setModal(null)
   }
 
-  function handleDelete(p) {
+  async function handleDelete(p) {
     if (confirm(`Delete "${p.name}"? This cannot be undone.`)) {
-      setList(list.filter((x) => x.id !== p.id))
-      flash('Product deleted.')
+      try {
+        await api.deleteProduct(p.id)
+        setList(list.filter((x) => x.id !== p.id))
+        flash('Product deleted.')
+      } catch (err) {
+        flash(err.message || 'Unable to delete product.')
+      }
     }
+  }
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Product Management" subtitle="Loading product catalog..." />
+        <div className="card"><div className="empty"><h4>Loading products</h4></div></div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Product Management" subtitle="Add, edit, and organize products in your catalog." />
+        <div className="card"><div className="empty"><h4>Unable to load products</h4><p>{error}</p></div></div>
+      </>
+    )
   }
 
   return (
@@ -68,7 +96,7 @@ export default function ProductManagement() {
             <IconSearch size={16} />
             <input
               className="input"
-              placeholder="Search by name, ID, or barcode…"
+              placeholder="Search by name, ID, or barcode..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
@@ -114,10 +142,16 @@ export default function ProductManagement() {
                   <tr key={p.id}>
                     <td>
                       <div className="prod-cell">
-                        <div className="prod-thumb"><IconImage size={18} /></div>
+                        <div className="prod-thumb">
+                          {p.imageUrl ? (
+                            <img src={p.imageUrl} alt={p.name} />
+                          ) : (
+                            <IconImage size={18} />
+                          )}
+                        </div>
                         <div>
                           <div className="prod-name">{p.name}</div>
-                          <div className="prod-id">{p.id}</div>
+                          <div className="prod-id">{p.sku || p.id}</div>
                         </div>
                       </div>
                     </td>
@@ -157,6 +191,7 @@ export default function ProductManagement() {
         <ProductModal
           mode={modal.mode}
           product={modal.product}
+          categories={categories}
           onClose={() => setModal(null)}
           onSave={handleSave}
         />

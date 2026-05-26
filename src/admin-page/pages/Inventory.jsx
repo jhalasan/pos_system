@@ -2,13 +2,16 @@ import { useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTag, IconChart } from '../components/Icons'
-import { products, peso } from '../data/mockData'
+import { api, peso } from '../services/api'
+import { useApi } from '../hooks/useApi'
 
 export default function Inventory() {
+  const { data: products, setData: setProducts, loading, error } = useApi(api.products, [])
   const [barcode, setBarcode] = useState('')
   const [qty, setQty] = useState(1)
   const [feed, setFeed] = useState([])
-  const [error, setError] = useState('')
+  const [scanError, setScanError] = useState('')
+  const [selectedFsn, setSelectedFsn] = useState('Fast-moving')
 
   const totalProducts = products.length
   const lowItems = products.filter((p) => p.status !== 'in-stock').length
@@ -17,27 +20,46 @@ export default function Inventory() {
   const fastProducts = products.filter((p) => p.qty >= 80)
   const slowProducts = products.filter((p) => p.qty >= 20 && p.qty < 80)
   const nonMovingProducts = products.filter((p) => p.qty < 20)
-  const [selectedFsn, setSelectedFsn] = useState('Fast-moving')
 
-  function scan(e) {
+  async function scan(e) {
     e.preventDefault()
     const code = barcode.trim()
     if (!code) return
-    const match = products.find((p) => p.barcode === code)
-    if (!match) {
-      setError(`No product found for barcode "${code}".`)
-      return
+
+    try {
+      const updated = await api.scanInventory({ barcode: code, qty: Number(qty) || 1 })
+      setProducts(products.map((p) => (p.id === updated.id ? updated : p)))
+      setFeed((f) => [
+        { key: Date.now(), name: updated.name, id: updated.sku || updated.id, qty: Number(qty) || 1, time: new Date() },
+        ...f,
+      ])
+      setBarcode('')
+      setQty(1)
+      setScanError('')
+    } catch (err) {
+      setScanError(err.message || `No product found for barcode "${code}".`)
     }
-    setFeed((f) => [
-      { key: Date.now(), name: match.name, id: match.id, qty: Number(qty) || 1, time: new Date() },
-      ...f,
-    ])
-    setBarcode('')
-    setQty(1)
-    setError('')
   }
 
   const scannedUnits = feed.reduce((s, f) => s + f.qty, 0)
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Inventory Scanner" subtitle="Loading inventory..." />
+        <div className="card"><div className="empty"><h4>Loading inventory</h4></div></div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Inventory Scanner" subtitle="Scan barcodes to add stock and monitor inventory health." />
+        <div className="card"><div className="empty"><h4>Unable to load inventory</h4><p>{error}</p></div></div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -61,11 +83,7 @@ export default function Inventory() {
         </div>
         <div className="panel-body fsn-grid-wrap">
           <div className="fsn-grid">
-            <button
-              type="button"
-              className={`fsn-card ${selectedFsn === 'Fast-moving' ? 'active' : ''}`}
-              onClick={() => setSelectedFsn('Fast-moving')}
-            >
+            <button type="button" className={`fsn-card ${selectedFsn === 'Fast-moving' ? 'active' : ''}`} onClick={() => setSelectedFsn('Fast-moving')}>
               <div className="fsn-card-top">
                 <div className="fsn-label">Fast-moving</div>
                 <div className="fsn-icon ic-green"><IconChart size={18} /></div>
@@ -73,11 +91,7 @@ export default function Inventory() {
               <div className="fsn-value">{fastProducts.length}</div>
               <div className="fsn-foot">{fastProducts.slice(0, 3).map((p) => p.name).join(', ') || 'No fast items'}</div>
             </button>
-            <button
-              type="button"
-              className={`fsn-card ${selectedFsn === 'Slow-moving' ? 'active' : ''}`}
-              onClick={() => setSelectedFsn('Slow-moving')}
-            >
+            <button type="button" className={`fsn-card ${selectedFsn === 'Slow-moving' ? 'active' : ''}`} onClick={() => setSelectedFsn('Slow-moving')}>
               <div className="fsn-card-top">
                 <div className="fsn-label">Slow-moving</div>
                 <div className="fsn-icon ic-amber"><IconTag size={18} /></div>
@@ -85,11 +99,7 @@ export default function Inventory() {
               <div className="fsn-value">{slowProducts.length}</div>
               <div className="fsn-foot">{slowProducts.slice(0, 3).map((p) => p.name).join(', ') || 'No slow items'}</div>
             </button>
-            <button
-              type="button"
-              className={`fsn-card ${selectedFsn === 'Non-moving' ? 'active' : ''}`}
-              onClick={() => setSelectedFsn('Non-moving')}
-            >
+            <button type="button" className={`fsn-card ${selectedFsn === 'Non-moving' ? 'active' : ''}`} onClick={() => setSelectedFsn('Non-moving')}>
               <div className="fsn-card-top">
                 <div className="fsn-label">Non-moving</div>
                 <div className="fsn-icon ic-red"><IconAlert size={18} /></div>
@@ -124,9 +134,7 @@ export default function Inventory() {
         <div className="panel-body">
           <div className="scan-flow">
             <IconScan size={16} />
-            <span>
-              Workflow: <b>1.</b> Scan barcode → <b>2.</b> Enter quantity → <b>3.</b> Press Enter to add to stock.
-            </span>
+            <span>Workflow: <b>1.</b> Scan barcode - <b>2.</b> Enter quantity - <b>3.</b> Press Enter to add to stock.</span>
           </div>
 
           <form className="scan-grid" onSubmit={scan}>
@@ -134,21 +142,15 @@ export default function Inventory() {
               <label><span className="scan-step-no">1</span>Scan Barcode</label>
               <input
                 className="input"
-                placeholder="Scan or type barcode (e.g. 4800101234567)"
+                placeholder="Scan or type barcode"
                 value={barcode}
-                onChange={(e) => { setBarcode(e.target.value); setError('') }}
+                onChange={(e) => { setBarcode(e.target.value); setScanError('') }}
                 autoFocus
               />
             </div>
             <div className="field">
               <label><span className="scan-step-no">2</span>Quantity</label>
-              <input
-                className="input"
-                type="number"
-                min="1"
-                value={qty}
-                onChange={(e) => setQty(e.target.value)}
-              />
+              <input className="input" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
             </div>
             <button type="submit" className="btn btn-primary" style={{ height: 38 }}>
               <span className="scan-step-no" style={{ background: 'rgba(255,255,255,.3)' }}>3</span>
@@ -156,9 +158,9 @@ export default function Inventory() {
             </button>
           </form>
 
-          {error && (
+          {scanError && (
             <p style={{ color: 'var(--danger)', fontSize: 12, fontWeight: 600, marginTop: 10 }}>
-              {error}
+              {scanError}
             </p>
           )}
 

@@ -3,35 +3,72 @@ import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
 import { IconUsers, IconUserPlus, IconScan, IconTrash, IconEdit } from '../components/Icons'
-import { cashiers as seed, peso } from '../data/mockData'
+import { api, peso } from '../services/api'
+import { useApi } from '../hooks/useApi'
 
 const blank = { name: '', email: '', shift: 'Morning', status: 'active' }
 
 export default function CashierManagement() {
-  const [list, setList] = useState(seed)
+  const { data: list, setData: setList, loading, error } = useApi(api.cashiers, [])
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(blank)
+  const [toast, setToast] = useState('')
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
 
-  function addCashier() {
+  function flash(msg) {
+    setToast(msg)
+    setTimeout(() => setToast(''), 2200)
+  }
+
+  async function addCashier() {
     if (!form.name.trim() || !form.email.trim()) {
       alert('Name and email are required.')
       return
     }
-    const id = 'CSH-' + String(list.length + 1).padStart(2, '0')
-    setList([...list, { ...form, id, sales: 0 }])
-    setForm(blank)
-    setOpen(false)
+
+    try {
+      const created = await api.createCashier(form)
+      setList([...list, created])
+      setForm(blank)
+      setOpen(false)
+      flash('Cashier added.')
+    } catch (err) {
+      flash(err.message || 'Unable to add cashier.')
+    }
   }
 
-  function removeCashier(c) {
+  async function removeCashier(c) {
     if (confirm(`Remove cashier "${c.name}"?`)) {
-      setList(list.filter((x) => x.id !== c.id))
+      try {
+        await api.deleteCashier(c.id)
+        setList(list.filter((x) => x.id !== c.id))
+        flash('Cashier removed.')
+      } catch (err) {
+        flash(err.message || 'Unable to remove cashier.')
+      }
     }
   }
 
   const active = list.filter((c) => c.status === 'active').length
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Cashier Management" subtitle="Loading cashier accounts..." />
+        <div className="card"><div className="empty"><h4>Loading cashiers</h4></div></div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <PageHeader title="Cashier Management" subtitle="Manage cashier accounts, shifts, and access." />
+        <div className="card"><div className="empty"><h4>Unable to load cashiers</h4><p>{error}</p></div></div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -95,7 +132,7 @@ export default function CashierManagement() {
                         </div>
                       </div>
                     </td>
-                    <td className="mono">{c.id}</td>
+                    <td className="mono">{c.cashierId || c.id}</td>
                     <td>{c.shift}</td>
                     <td>{peso(c.sales)}</td>
                     <td>
@@ -105,7 +142,7 @@ export default function CashierManagement() {
                     </td>
                     <td>
                       <div className="row-actions">
-                        <button className="icon-btn" title="Edit" onClick={() => alert('Edit cashier — form would open here.')}>
+                        <button className="icon-btn" title="Edit" onClick={() => alert('Edit cashier form will use the API next.')}>
                           <IconEdit size={15} />
                         </button>
                         <button className="icon-btn del" title="Remove" onClick={() => removeCashier(c)}>
@@ -139,7 +176,7 @@ export default function CashierManagement() {
             </div>
             <div className="field span-2">
               <label>Email Address</label>
-              <input className="input" type="email" placeholder="name@nexapos.com" value={form.email} onChange={set('email')} />
+              <input className="input" type="email" placeholder="name@example.com" value={form.email} onChange={set('email')} />
             </div>
             <div className="field">
               <label>Shift</label>
@@ -157,6 +194,8 @@ export default function CashierManagement() {
           </div>
         </Modal>
       )}
+
+      {toast && <div className="toast"><IconUserPlus size={15} /> {toast}</div>}
     </>
   )
 }

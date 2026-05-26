@@ -2,7 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { logout } from '../auth'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
-  IconCloud, IconUserPlus, IconLogout,
+  IconCloud, IconUserPlus, IconLogout, IconSettings,
 } from './Icons'
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { to: '/admin/cashiers', label: 'Cashier Management', icon: IconUsers },
   { to: '/admin/analytics', label: 'Analytics', icon: IconChart },
   { to: '/admin/logs', label: 'Activity Logs', icon: IconList },
+  { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]
 
 export default function Sidebar({ isOpen = false, onNavigate = () => {} }) {
