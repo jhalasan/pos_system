@@ -1,21 +1,40 @@
-import React, { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Cart } from 'react-bootstrap-icons';
+import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
+import { cashierApi } from '../services/api';
+import styles from '../styles/CashierLogin.module.css';
 
 const CashierLogin = ({ onLogin }) => {
   const navigate = useNavigate();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [quickAccounts, setQuickAccounts] = useState([]);
 
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    let ignore = false;
+
+    async function loadQuickAccounts() {
+      try {
+        const accounts = await cashierApi.quickLoginAccounts();
+        if (!ignore) setQuickAccounts(accounts);
+      } catch {
+        if (!ignore) setQuickAccounts([]);
+      }
+    }
+
+    loadQuickAccounts();
+    return () => { ignore = true; };
+  }, []);
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    // Validation
-    if (!username.trim()) {
-      setError('Username is required');
+    if (!email.trim()) {
+      setError('Email is required');
       return;
     }
     if (!password.trim()) {
@@ -23,85 +42,118 @@ const CashierLogin = ({ onLogin }) => {
       return;
     }
 
-    // Simulate API call
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const session = await cashierApi.login(email, password);
+      onLogin(session.user);
+      navigate('/cashier', { replace: true });
+    } catch (err) {
+      setError(err.message || 'Invalid email or password');
+    } finally {
       setLoading(false);
-      // TODO: Replace with database authentication after integration
-      // Temporary demo credentials - username: cashier, password: cashier123
-      if (username.toLowerCase() === 'cashier' && password === 'cashier123') {
-        onLogin({ username });
-      } else {
-        setError('Invalid username or password');
-      }
-    }, 500);
+    }
   };
 
   return (
-    <div className="auth-wrap">
-      <div className="login-card">
-        <div className="brand-mark">N</div>
-        <h2>Cashier Login</h2>
-        <p className="tag">Enter your credentials to access the POS system</p>
+    <div className={styles['login-container']}>
+      <div className={styles['login-card']}>
+        {/* Logo */}
+        <div className={styles['logo-container']}>
+          <div className={styles['logo-icon']}>
+            <Envelope size={40} />
+          </div>
+        </div>
 
-        <form className="login-form" onSubmit={handleSubmit}>
-          {error && <div className="login-error">{error}</div>}
+        {/* Heading */}
+        <h1 className={styles['login-title']}>Cashier Login</h1>
+        <p className={styles['login-subtitle']}>Enter your credentials to access the POS</p>
 
-          <div className="field">
-            <label htmlFor="username">Username</label>
+        {/* Form */}
+        <form onSubmit={handleSubmit} className={styles['login-form']}>
+          {quickAccounts.length > 0 && (
+            <div className={styles['quick-login-section']}>
+              <div className={styles['quick-login-title']}>Quick Login</div>
+              <div className={styles['quick-login-list']}>
+                {quickAccounts.map((account) => (
+                  <button
+                    key={account.id}
+                    type="button"
+                    className={`${styles['quick-login-account']} ${email === account.email ? styles.active : ''}`}
+                    onClick={() => {
+                      setEmail(account.email);
+                      setError('');
+                    }}
+                    disabled={loading}
+                  >
+                    <span className={styles['quick-login-avatar']}>
+                      {account.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}
+                    </span>
+                    <span>
+                      <strong>{account.name}</strong>
+                      <small>{account.email}</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Email Field */}
+          <div className={styles['form-group']}>
+            <label className={styles['form-label']}>Email</label>
             <input
-              id="username"
-              type="text"
-              className="input"
-              placeholder="Enter your username"
-              value={username}
-              onChange={(e) => {
-                setUsername(e.target.value);
-                setError('');
-              }}
+              type="email"
+              className={styles['form-input']}
+              placeholder="Enter cashier email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
-              autoFocus
             />
           </div>
 
-          <div className="field">
-            <label htmlFor="password">Password</label>
-            <input
-              id="password"
-              type="password"
-              className="input"
-              placeholder="Enter your password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setError('');
-              }}
-              disabled={loading}
-            />
+          {/* Password Field */}
+          <div className={styles['form-group']}>
+            <label className={styles['form-label']}>Password</label>
+            <div className={styles['password-wrapper']}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className={styles['form-input']}
+                placeholder="Enter password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+              />
+              <button
+                type="button"
+                className={styles['password-toggle']}
+                onClick={() => setShowPassword(!showPassword)}
+                tabIndex="-1"
+              >
+                {showPassword ? <EyeSlash size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
           </div>
 
+          {/* Error Message */}
+          {error && <div className={styles['error-message']}>{error}</div>}
+
+          {/* Login Button */}
           <button
             type="submit"
-            className="btn btn-primary btn-block"
+            className={styles['login-button']}
             disabled={loading}
           >
-            <Cart size={16} /> Login
+            <Cart size={18} />
+            {loading ? 'Logging in...' : 'Login'}
           </button>
-
-          <div className="text-center">
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => navigate('/')}
-            >
-              Back to Role Selection
-            </button>
-          </div>
+          <button
+            type="button"
+            className={styles['back-button']}
+            onClick={() => navigate('/')}
+          >
+            Back to Role Selection
+          </button>
         </form>
-
-        <div className="login-hint">
-          Demo credentials: <strong>cashier / cashier123</strong>
-        </div>
       </div>
     </div>
   );

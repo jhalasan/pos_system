@@ -10,6 +10,7 @@ const Input = ({
   error,
   icon: Icon,
   className = '',
+  inputRef,
   ...props
 }) => {
   return (
@@ -24,6 +25,7 @@ const Input = ({
         <div className="input-search">
           <Icon size={18} />
           <input
+            ref={inputRef}
             type={type}
             className={`input ${className}`.trim()}
             placeholder={placeholder}
@@ -35,6 +37,7 @@ const Input = ({
         </div>
       ) : (
         <input
+          ref={inputRef}
           type={type}
           className={`input ${className}`.trim()}
           placeholder={placeholder}

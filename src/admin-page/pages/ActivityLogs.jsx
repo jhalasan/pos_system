@@ -98,20 +98,20 @@ export default function ActivityLogs() {
 
       <div className="card activity-card">
         <div className="toolbar activity-toolbar">
-          <div className="field" style={{ width: 180 }}>
+          <div className="field">
             <select className="select" value={userType} onChange={(e) => setUserType(e.target.value)}>
               <option value="All">All User Types</option>
               <option value="Admin">Admin</option>
               <option value="Cashier">Cashier</option>
             </select>
           </div>
-          <div className="field" style={{ width: 180 }}>
+          <div className="field">
             <select className="select" value={action} onChange={(e) => setAction(e.target.value)}>
               <option value="All">All Action Types</option>
               {actionTypes.map((a) => <option key={a}>{a}</option>)}
             </select>
           </div>
-          <div className="field" style={{ width: 180 }}>
+          <div className="field">
             <select className="select" value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
               <option value="Today">Today</option>
               <option value="Last 7 Days">Last 7 Days</option>

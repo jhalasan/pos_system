@@ -22,6 +22,10 @@ import {
 
 const app = express()
 const PORT = Number(process.env.API_PORT || 3001)
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173,http://localhost:5174')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -34,7 +38,15 @@ const upload = multer({
   },
 })
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173' }))
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+      return
+    }
+    callback(new Error(`Origin ${origin} is not allowed by CORS.`))
+  },
+}))
 app.use(express.json())
 
 function asyncRoute(handler) {
@@ -97,21 +109,36 @@ function productRequestBody(req) {
   return req.body || {}
 }
 
-function transactionNumber() {
+async function nextTransactionNumber() {
   const now = new Date()
-  const datePart = [
+  const datePrefix = [
     now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
     String(now.getDate()).padStart(2, '0'),
   ].join('')
-  const timePart = [
-    String(now.getHours()).padStart(2, '0'),
-    String(now.getMinutes()).padStart(2, '0'),
-    String(now.getSeconds()).padStart(2, '0'),
-  ].join('')
-  const suffix = String(now.getMilliseconds()).padStart(3, '0')
 
-  return `${datePart}${timePart}${suffix}`
+  const sales = await pbCollection('sales')
+  const records = await sales.getFullList({
+    filter: pb.filter('transaction_no ~ {:prefix}', { prefix: datePrefix }),
+    fields: 'transaction_no',
+  }).catch((error) => {
+    if (error.status === 400) {
+      const setupError = new Error('PocketBase is missing the sales.transaction_no field. Import pocketbase/pb_schema.json before completing cashier transactions.')
+      setupError.status = 500
+      throw setupError
+    }
+    throw error
+  })
+  const maxSequence = records.reduce((max, record) => {
+    const value = String(record.transaction_no || '')
+    if (!value.startsWith(datePrefix)) return max
+
+    const sequence = Number(value.slice(datePrefix.length))
+    return Number.isFinite(sequence) ? Math.max(max, sequence) : max
+  }, 0)
+  const nextSequence = String(maxSequence + 1).padStart(4, '0')
+
+  return `${datePrefix}${nextSequence}`
 }
 
 app.get('/api/health', asyncRoute(async (_req, res) => {
@@ -152,7 +179,7 @@ app.get('/api/products', asyncRoute(async (_req, res) => {
 
 app.get('/api/cashier/products', asyncRoute(async (_req, res) => {
   const records = await listRecords('products', '?sort=name&expand=category&perPage=500')
-  res.json(records.map(toProduct).filter((product) => product.qty > 0))
+  res.json(records.map(toProduct))
 }))
 
 app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) => {
@@ -187,13 +214,73 @@ app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
   res.json({ ok: true })
 }))
 
+app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
+  const cashierId = String(req.query?.cashierId || '').trim()
+  const search = String(req.query?.q || '').trim().toLowerCase()
+  if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
+
+  const todayStart = new Date()
+  todayStart.setHours(0, 0, 0, 0)
+
+  const sales = await (await pbCollection('sales')).getFullList({
+    sort: '-created_at,-created',
+    filter: pb.filter('cashier_id = {:cashierId} && status != "voided"', { cashierId }),
+  })
+
+  const todaysSales = sales
+    .filter((sale) => new Date(sale.created_at || sale.created) >= todayStart)
+    .filter((sale) => {
+      if (!search) return true
+      return String(sale.transaction_no || sale.id).toLowerCase().includes(search)
+    })
+    .slice(0, 50)
+
+  const saleItems = await pbCollection('sale_items')
+  const history = []
+
+  for (const sale of todaysSales) {
+    const items = await saleItems.getFullList({
+      sort: 'created',
+      filter: pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
+      expand: 'product_id',
+    })
+
+    history.push({
+      id: sale.id,
+      transactionNo: sale.transaction_no || sale.id,
+      totalAmount: Number(sale.total_amount) || 0,
+      paymentMethod: sale.payment_method || '',
+      status: sale.status || 'completed',
+      createdAt: sale.created_at || sale.created,
+      itemCount: items.reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0),
+      items: items.map((item) => {
+        const product = Array.isArray(item.expand?.product_id)
+          ? item.expand.product_id[0]
+          : item.expand?.product_id
+        return {
+          id: item.id,
+          name: product?.name || item.product_id || 'Product',
+          quantity: Number(item.quantity_sold) || 0,
+          price: Number(item.price_at_sale) || 0,
+        }
+      }),
+    })
+  }
+
+  res.json(history)
+}))
+
+app.get('/api/cashier/next-transaction-number', asyncRoute(async (_req, res) => {
+  res.json({ transactionNo: await nextTransactionNumber() })
+}))
+
 app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : []
   const cashierId = String(req.body?.cashierId || '').trim()
   const paymentMethod = req.body?.paymentMethod === 'gcash' ? 'gcash' : 'cash'
   const refNumber = String(req.body?.refNumber || '').trim()
   const totalAmount = Number(req.body?.totalAmount) || 0
-  const transactionNo = transactionNumber()
+  const transactionNo = await nextTransactionNumber()
 
   if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
   if (items.length === 0) return res.status(400).json({ error: 'Sale must have at least one item.' })

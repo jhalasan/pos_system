@@ -31,6 +31,10 @@ export const cashierApi = {
   quickLoginAccounts: () => request('/cashier/quick-login-accounts'),
   products: () => request('/cashier/products'),
   productByBarcode: (barcode) => request(`/cashier/products/barcode/${encodeURIComponent(barcode)}`),
+  nextTransactionNumber: () => request('/cashier/next-transaction-number'),
+  salesHistory: ({ cashierId, q = '' }) => request(
+    `/cashier/sales?cashierId=${encodeURIComponent(cashierId || '')}&q=${encodeURIComponent(q)}`
+  ),
   authorizeVoid: (code) => request('/cashier/authorize-void', {
     method: 'POST',
     body: JSON.stringify({ code }),

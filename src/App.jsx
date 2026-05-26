@@ -14,6 +14,7 @@ import Analytics from './admin-page/pages/Analytics';
 import ActivityLogs from './admin-page/pages/ActivityLogs';
 import Settings from './admin-page/pages/Settings';
 import './global.css';
+import './admin-page/index.css';
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth';
 

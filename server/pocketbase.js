@@ -11,7 +11,11 @@ pb.autoCancellation(false)
 let authPromise = null
 
 export async function ensurePocketBaseAuth() {
-  if (!PB_SUPERUSER_EMAIL || !PB_SUPERUSER_PASSWORD) return
+  if (!PB_SUPERUSER_EMAIL || !PB_SUPERUSER_PASSWORD) {
+    const error = new Error('PocketBase superuser credentials are missing. Set POCKETBASE_SUPERUSER_EMAIL and POCKETBASE_SUPERUSER_PASSWORD in .env.')
+    error.status = 500
+    throw error
+  }
   if (pb.authStore.isValid) return
 
   authPromise ||= pb.collection('_superusers').authWithPassword(

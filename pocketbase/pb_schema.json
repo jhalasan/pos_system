@@ -488,7 +488,7 @@
       },
       {
         "autogeneratePattern": "",
-        "help": "Digit-only transaction number used by the POS for easier tracking.",
+        "help": "Daily POS transaction number in YYYYMMDD0001 format.",
         "hidden": false,
         "id": "text100000001",
         "max": 32,
@@ -622,6 +622,7 @@
     ],
     "indexes": [
       "CREATE INDEX `idx_sales_cashier` ON `sales` (`cashier_id`)",
+      "CREATE UNIQUE INDEX `idx_sales_transaction_no` ON `sales` (`transaction_no`) WHERE `transaction_no` != ''",
       "CREATE INDEX `idx_sales_status_created_at` ON `sales` (`status`, `created_at`)",
       "CREATE INDEX `idx_sales_created_at` ON `sales` (`created_at`)"
     ],

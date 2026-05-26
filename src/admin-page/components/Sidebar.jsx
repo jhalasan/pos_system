@@ -1,4 +1,4 @@
-import { useNavigate, useLocation } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { logout } from '../auth'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
@@ -15,24 +15,16 @@ const navItems = [
   { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]
 
-export default function Sidebar({ isOpen = false, onNavigate = () => {} }) {
+export default function Sidebar({ open = false, onNavigate = () => {} }) {
   const nav = useNavigate()
-  const location = useLocation()
 
   function handleLogout() {
     logout()
     nav('/', { replace: true })
   }
 
-  const handleNavClick = (to) => {
-    nav(to)
-    onNavigate()
-  }
-
-  const isActive = (to) => location.pathname === to
-
   return (
-    <aside className={`sidebar ${isOpen ? 'active' : ''}`}>
+    <aside className={'sidebar' + (open ? ' active' : '')}>
       <div className="sidebar-brand">
         <div className="mk">N</div>
         <div>
@@ -44,33 +36,32 @@ export default function Sidebar({ isOpen = false, onNavigate = () => {} }) {
       <nav className="nav-section">
         <div className="nav-label">Main Menu</div>
         {navItems.map(({ to, label, icon: Icon }) => (
-          <button
+          <NavLink
             key={to}
-            className={`nav-item ${isActive(to) ? 'active' : ''}`}
-            onClick={() => handleNavClick(to)}
+            to={to}
+            onClick={onNavigate}
+            className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
           >
             <Icon size={18} />
             <span>{label}</span>
-          </button>
+          </NavLink>
         ))}
       </nav>
 
       <div className="sidebar-foot">
         <button
           className="nav-item"
-          onClick={() => alert('Syncing local data to the cloud…')}
+          style={{ width: '100%' }}
+          onClick={() => alert('Syncing local data to the cloud...')}
         >
           <IconCloud size={18} />
           <span>Sync to Cloud</span>
         </button>
-        <button 
-          className="nav-item"
-          onClick={() => handleNavClick('/admin/cashiers')}
-        >
+        <NavLink to="/admin/cashiers" className="nav-item" onClick={onNavigate}>
           <IconUserPlus size={18} />
           <span>Add Cashier</span>
-        </button>
-        <button className="nav-item danger" onClick={handleLogout}>
+        </NavLink>
+        <button className="nav-item danger" style={{ width: '100%' }} onClick={handleLogout}>
           <IconLogout size={18} />
           <span>Logout</span>
         </button>

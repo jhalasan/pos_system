@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
-import { IconBell } from './Icons'
+import { IconBell, IconMenu } from './Icons'
 
 const titles = {
   dashboard: 'Dashboard',
@@ -24,34 +24,22 @@ export default function AdminLayout() {
     return () => clearInterval(t)
   }, [])
 
-  // Close sidebar when route changes
-  useEffect(() => {
-    setSidebarOpen(false)
-  }, [pathname])
-
-  // Close sidebar when clicking on overlay
-  const handleOverlayClick = () => {
-    setSidebarOpen(false)
-  }
-
   return (
     <div className="admin-shell">
-      <Sidebar isOpen={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
-      <div className={`sidebar-overlay ${sidebarOpen ? 'active' : ''}`} onClick={handleOverlayClick} />
+      <div
+        className={'sidebar-overlay' + (sidebarOpen ? ' active' : '')}
+        onClick={() => setSidebarOpen(false)}
+      />
+      <Sidebar open={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
       <div className="main">
-        <div className="phone-status-bar"></div>
         <header className="topbar">
           <button
+            type="button"
             className="mobile-menu-btn"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title="Toggle menu"
-            aria-label="Toggle navigation menu"
+            aria-label="Open menu"
+            onClick={() => setSidebarOpen(true)}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <line x1="3" y1="12" x2="21" y2="12" />
-              <line x1="3" y1="18" x2="21" y2="18" />
-            </svg>
+            <IconMenu size={22} />
           </button>
           <div className="crumb">
             Admin <span>/</span> <b>{titles[section] || 'Dashboard'}</b>
@@ -59,7 +47,7 @@ export default function AdminLayout() {
           <div className="topbar-right">
             <span className="clock">
               {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-              {' · '}
+              {' - '}
               {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
             <button className="icon-btn" title="Notifications"><IconBell size={17} /></button>
