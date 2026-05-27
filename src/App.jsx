@@ -9,6 +9,7 @@ import AdminLogin from './admin-page/pages/Login';
 import Dashboard from './admin-page/pages/Dashboard';
 import Inventory from './admin-page/pages/Inventory';
 import ProductManagement from './admin-page/pages/ProductManagement';
+import BarcodeTools from './admin-page/pages/BarcodeTools';
 import CashierManagement from './admin-page/pages/CashierManagement';
 import Analytics from './admin-page/pages/Analytics';
 import ActivityLogs from './admin-page/pages/ActivityLogs';
@@ -73,6 +74,7 @@ function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="products" element={<ProductManagement />} />
+          <Route path="barcodes" element={<BarcodeTools />} />
           <Route path="cashiers" element={<CashierManagement />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="logs" element={<ActivityLogs />} />

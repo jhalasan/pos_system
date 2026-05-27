@@ -141,6 +141,148 @@ async function nextTransactionNumber() {
   return `${datePrefix}${nextSequence}`
 }
 
+async function nextAuthorizationBarcode() {
+  const authorizationBarcodes = await pbCollection('authorization_barcodes').catch((error) => {
+    if (error.status === 404) {
+      const setupError = new Error('PocketBase is missing the authorization_barcodes collection. Import pocketbase/pb_schema.json before generating authorization barcodes.')
+      setupError.status = 500
+      throw setupError
+    }
+    throw error
+  })
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const barcode = `90${String(Date.now()).slice(-10)}${String(Math.floor(Math.random() * 100)).padStart(2, '0')}`
+    const existing = await authorizationBarcodes.getFirstListItem(
+      pb.filter('code = {:barcode}', { barcode }),
+      { fields: 'id' },
+    ).catch((error) => {
+      if (error.status === 404) return null
+      throw error
+    })
+    if (!existing) return barcode
+  }
+
+  const error = new Error('Could not generate a unique authorization barcode. Please try again.')
+  error.status = 409
+  throw error
+}
+
+async function nextProductBarcode() {
+  const products = await pbCollection('products')
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const barcode = `29${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 10)}`
+    const existing = await products.getFirstListItem(
+      pb.filter('barcode = {:barcode}', { barcode }),
+      { fields: 'id' },
+    ).catch((error) => {
+      if (error.status === 404) return null
+      throw error
+    })
+    if (!existing) return barcode
+  }
+
+  const error = new Error('Could not generate a unique product barcode. Please try again.')
+  error.status = 409
+  throw error
+}
+
+function saleDate(sale) {
+  return new Date(sale.created_at || sale.created)
+}
+
+function productRelationId(value) {
+  return Array.isArray(value) ? value[0] : value
+}
+
+function buildSalesMetrics(products, sales, saleItems, now = new Date()) {
+  const salesById = new Map(sales.map((sale) => [sale.id, sale]))
+  const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
+  const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
+  const ninetyDaysAgo = new Date(now)
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+
+  const metricsByProduct = new Map(products.map((product) => [product.id, {
+    units90: 0,
+    totalUnits: 0,
+    lastSoldAt: null,
+  }]))
+
+  for (const item of saleItems) {
+    const saleId = productRelationId(item.sale_id)
+    if (!completedSaleIds.has(saleId)) continue
+    const sale = salesById.get(saleId)
+    if (!sale) continue
+
+    const soldAt = saleDate(sale)
+    const productId = productRelationId(item.product_id)
+    if (!productId) continue
+
+    const metric = metricsByProduct.get(productId) || { units90: 0, totalUnits: 0, lastSoldAt: null }
+    const quantity = Number(item.quantity_sold) || 0
+    metric.totalUnits += quantity
+    if (soldAt >= ninetyDaysAgo) metric.units90 += quantity
+    if (!metric.lastSoldAt || soldAt > metric.lastSoldAt) metric.lastSoldAt = soldAt
+    metricsByProduct.set(productId, metric)
+  }
+
+  return metricsByProduct
+}
+
+function classifyFsnProduct(product, metric, now = new Date()) {
+  const lastSoldAt = metric?.lastSoldAt || null
+  const daysSinceLastSale = lastSoldAt
+    ? Math.floor((now - lastSoldAt) / (1000 * 60 * 60 * 24))
+    : null
+  const units90 = Number(metric?.units90) || 0
+  const averageMonthlyUnits = units90 / 3
+
+  if (units90 >= 15 || (units90 >= 6 && daysSinceLastSale !== null && daysSinceLastSale <= 30)) {
+    return {
+      ...product,
+      fsn: 'Fast-moving',
+      fsnReason: `${units90} unit(s) sold in the last 90 days`,
+      units90,
+      averageMonthlyUnits,
+      lastSoldAt,
+      daysSinceLastSale,
+    }
+  }
+
+  if (units90 > 0 && daysSinceLastSale !== null && daysSinceLastSale <= 90) {
+    return {
+      ...product,
+      fsn: 'Slow-moving',
+      fsnReason: `${units90} unit(s) sold in the last 90 days`,
+      units90,
+      averageMonthlyUnits,
+      lastSoldAt,
+      daysSinceLastSale,
+    }
+  }
+
+  return {
+    ...product,
+    fsn: 'Non-moving',
+    fsnReason: lastSoldAt ? `No sales in the last ${daysSinceLastSale} days` : 'No recorded sales yet',
+    units90,
+    averageMonthlyUnits,
+    lastSoldAt,
+    daysSinceLastSale,
+  }
+}
+
+function lastMonths(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (count - 1 - index), 1)
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      label: date.toLocaleString('en-US', { month: 'short' }),
+      value: 0,
+    }
+  })
+}
+
 app.get('/api/health', asyncRoute(async (_req, res) => {
   await pb.health.check()
   res.json({ ok: true })
@@ -201,16 +343,31 @@ app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) =>
 
 app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
   const code = String(req.body?.code || '').trim()
-  if (!code) return res.status(400).json({ error: 'Manager barcode is required.' })
+  if (!code) return res.status(400).json({ error: 'Authorization barcode is required.' })
 
-  const manager = await (await pbCollection('users')).getFirstListItem(
+  const authorization = await pbCollection('authorization_barcodes')
+    .then((collection) => collection.getFirstListItem(
+      pb.filter('code = {:code} && status = "active"', { code }),
+      { expand: 'generated_by' },
+    ))
+    .catch((error) => {
+      if (error.status === 404) return null
+      throw error
+    })
+
+  if (authorization) {
+    res.json({ ok: true, authorizedBy: authorization.expand?.generated_by?.email || 'Authorization barcode' })
+    return
+  }
+
+  const legacyManager = await (await pbCollection('users')).getFirstListItem(
     pb.filter('void_barcode = {:code} && role = "admin"', { code }),
   ).catch((error) => {
     if (error.status === 404) return null
     throw error
   })
 
-  if (!manager) return res.status(403).json({ error: 'Manager barcode is not valid.' })
+  if (!legacyManager) return res.status(403).json({ error: 'Authorization barcode is not valid.' })
   res.json({ ok: true })
 }))
 
@@ -379,6 +536,16 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   res.json(toProduct(updated))
 }))
 
+app.get('/api/inventory/fsn', asyncRoute(async (_req, res) => {
+  const now = new Date()
+  const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
+  const sales = await listRecords('sales', '?filter=status!="voided"&perPage=500')
+  const saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
+  const metrics = buildSalesMetrics(products, sales, saleItems, now)
+  const classified = products.map((product) => classifyFsnProduct(product, metrics.get(product.id), now))
+  res.json(classified)
+}))
+
 app.get('/api/cashiers', asyncRoute(async (_req, res) => {
   const records = await listRecords('users', '?filter=role="cashier"&sort=email&perPage=500')
   const salesByCashier = await getSalesByCashier()
@@ -440,6 +607,135 @@ app.patch('/api/settings/admins/:id/quick-login', asyncRoute(async (req, res) =>
   res.json(toUserAccount(updated))
 }))
 
+app.patch('/api/settings/admins/:id/authorization-barcode', asyncRoute(async (req, res) => {
+  const barcode = String(req.body?.barcode || '').trim()
+  if (!barcode) return res.status(400).json({ error: 'Authorization barcode is required.' })
+
+  const created = await (await pbCollection('authorization_barcodes')).create({
+    code: barcode,
+    label: 'Void and Discount Approval',
+    purpose: 'void_discount',
+    status: 'active',
+    generated_by: req.params.id,
+  })
+  await createLog({
+    action: 'Settings',
+    detail: 'Generated authorization barcode for void and discount approvals',
+  })
+  res.json(created)
+}))
+
+app.get('/api/barcodes/product/next', asyncRoute(async (_req, res) => {
+  res.json({ barcode: await nextProductBarcode() })
+}))
+
+app.get('/api/barcodes/authorization/latest', asyncRoute(async (_req, res) => {
+  const records = await (await pbCollection('authorization_barcodes')).getFullList({
+    sort: '-created',
+    filter: 'status = "active"',
+    expand: 'generated_by',
+  })
+  const latest = records[0]
+  if (!latest) return res.status(204).end()
+
+  const generatedBy = Array.isArray(latest.expand?.generated_by)
+    ? latest.expand.generated_by[0]
+    : latest.expand?.generated_by
+
+  res.json({
+    id: latest.id,
+    barcode: latest.code,
+    label: latest.label,
+    status: latest.status,
+    generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
+    createdAt: latest.created,
+  })
+}))
+
+app.get('/api/barcodes/authorization', asyncRoute(async (_req, res) => {
+  const records = await (await pbCollection('authorization_barcodes')).getFullList({
+    sort: '-created',
+    expand: 'generated_by',
+  })
+
+  res.json(records.map((record) => {
+    const generatedBy = Array.isArray(record.expand?.generated_by)
+      ? record.expand.generated_by[0]
+      : record.expand?.generated_by
+
+    return {
+      id: record.id,
+      barcode: record.code,
+      label: record.label,
+      status: record.status,
+      generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
+      createdAt: record.created,
+    }
+  }))
+}))
+
+app.patch('/api/barcodes/authorization/:id/status', asyncRoute(async (req, res) => {
+  const status = req.body?.status === 'revoked' ? 'revoked' : 'active'
+  const updated = await (await pbCollection('authorization_barcodes')).update(req.params.id, { status }, {
+    expand: 'generated_by',
+  })
+  const generatedBy = Array.isArray(updated.expand?.generated_by)
+    ? updated.expand.generated_by[0]
+    : updated.expand?.generated_by
+
+  await createLog({
+    action: 'Settings',
+    detail: `${status === 'active' ? 'Enabled' : 'Disabled'} authorization barcode ${updated.code}`,
+  })
+
+  res.json({
+    id: updated.id,
+    barcode: updated.code,
+    label: updated.label,
+    status: updated.status,
+    generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
+    createdAt: updated.created,
+  })
+}))
+
+app.delete('/api/barcodes/authorization/:id', asyncRoute(async (req, res) => {
+  await (await pbCollection('authorization_barcodes')).delete(req.params.id)
+  await createLog({
+    action: 'Settings',
+    detail: `Deleted authorization barcode ${req.params.id}`,
+  })
+  res.status(204).end()
+}))
+
+app.post('/api/barcodes/authorization', asyncRoute(async (req, res) => {
+  const email = String(req.body?.email || '').trim()
+  const password = String(req.body?.password || '')
+  if (!email || !password) return res.status(400).json({ error: 'Admin password is required.' })
+
+  const user = await authenticateAdminUser(email, password)
+  const barcode = await nextAuthorizationBarcode()
+  const created = await (await pbCollection('authorization_barcodes')).create({
+    code: barcode,
+    label: 'Void and Discount Approval',
+    purpose: 'void_discount',
+    status: 'active',
+    generated_by: user.id,
+  })
+  await createLog({
+    userId: user.id,
+    action: 'Settings',
+    detail: 'Generated authorization barcode for void and discount approvals',
+  })
+  res.status(201).json({
+    id: created.id,
+    barcode: created.code,
+    label: created.label,
+    status: created.status,
+    generatedBy: user.name || user.email,
+    createdAt: created.created,
+  })
+}))
+
 app.get('/api/auth/quick-login-accounts', asyncRoute(async (_req, res) => {
   const records = await (await pbCollection('users')).getFullList({
     sort: 'email',
@@ -475,21 +771,47 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
   const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const yesterdayStart = new Date(todayStart)
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
 
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const dailySales = completedSales
     .filter((sale) => new Date(sale.created_at || sale.created) >= todayStart)
     .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+  const yesterdaySales = completedSales
+    .filter((sale) => {
+      const created = saleDate(sale)
+      return created >= yesterdayStart && created < todayStart
+    })
+    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
   const monthlySales = completedSales
     .filter((sale) => new Date(sale.created_at || sale.created) >= monthStart)
     .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+  const lastMonthSales = completedSales
+    .filter((sale) => {
+      const created = saleDate(sale)
+      return created >= lastMonthStart && created < monthStart
+    })
+    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
   const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+  const monthlySaleIds = new Set(completedSales
+    .filter((sale) => new Date(sale.created_at || sale.created) >= monthStart)
+    .map((sale) => sale.id))
+  const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+  const monthlyStockOut = saleItems
+    .filter((item) => {
+      const saleId = Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id
+      return monthlySaleIds.has(saleId)
+    })
+    .reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0)
 
   const criticalAlerts = products
     .filter((product) => deriveStatus(product) === 'critical')
     .slice(0, 5)
     .map((product) => ({ name: product.name, left: product.qty }))
 
+  const productsById = new Map(products.map((product) => [product.id, product]))
   const productSales = new Map()
   for (const item of saleItems) {
     const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
@@ -498,8 +820,8 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
       ? item.expand.product_id[0]
       : item.expand?.product_id
     const current = productSales.get(productId) || {
-      name: expandedProduct?.name || productId,
-      category: '',
+      name: expandedProduct?.name || productsById.get(productId)?.name || productId,
+      category: productsById.get(productId)?.category || expandedProduct?.category || '',
       units: 0,
     }
     current.units += Number(item.quantity_sold) || 0
@@ -510,26 +832,47 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     .filter((product) => product.units > 0)
     .sort((a, b) => b.units - a.units)
     .slice(0, 5)
+  const hourlySales = Array.from({ length: 24 }, (_, hour) => ({
+    label: `${String(hour).padStart(2, '0')}:00`,
+    value: 0,
+  }))
+  for (const sale of completedSales) {
+    const created = saleDate(sale)
+    if (created < todayStart) continue
+    hourlySales[created.getHours()].value += Number(sale.total_amount) || 0
+  }
+  const monthlyTrend = lastMonths(8, now)
+  const monthlyTrendByKey = new Map(monthlyTrend.map((item) => [item.key, item]))
+  for (const sale of completedSales) {
+    const created = saleDate(sale)
+    const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`
+    const month = monthlyTrendByKey.get(key)
+    if (month) month.value += Number(sale.total_amount) || 0
+  }
+  const trend = (current, previous) => {
+    if (!previous) return current > 0 ? 100 : 0
+    return Math.round(((current - previous) / previous) * 100)
+  }
 
   res.json({
     stats: {
       dailySales,
-      dailySalesTrend: 0,
+      dailySalesTrend: trend(dailySales, yesterdaySales),
       monthlySales,
-      monthlySalesTrend: 0,
+      monthlySalesTrend: trend(monthlySales, lastMonthSales),
       totalRevenue,
       totalRevenueTrend: 0,
       criticalStock: criticalAlerts.length,
     },
     criticalAlerts,
     productInOut: [
-      { label: 'Stock In', value: 0, color: '#4f46e5' },
-      { label: 'Stock Out', value: 0, color: '#16a34a' },
+      { label: 'Stock In', value: currentStockUnits, color: '#4f46e5' },
+      { label: 'Stock Out', value: monthlyStockOut, color: '#16a34a' },
       { label: 'Adjustments', value: 0, color: '#f59e0b' },
     ],
     topProducts,
-    hourlySales: [],
-    monthlySales: [],
+    hourlySales,
+    monthlySales: monthlyTrend,
   })
 }))
 

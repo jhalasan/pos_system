@@ -7,6 +7,7 @@ const titles = {
   dashboard: 'Dashboard',
   inventory: 'Inventory',
   products: 'Product Management',
+  barcodes: 'Barcode Tools',
   cashiers: 'Cashier Management',
   analytics: 'Analytics',
   logs: 'Activity Logs',

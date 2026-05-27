@@ -1,7 +1,7 @@
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import DonutChart from '../components/charts/DonutChart'
-import { IconDollar, IconCalendar, IconRevenue, IconAlert } from '../components/Icons'
+import { IconPeso, IconRevenue, IconAlert } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 
@@ -52,12 +52,12 @@ export default function Dashboard() {
 
       <div className="stat-grid">
         <StatCard
-          label="Daily Sales" tone="indigo" icon={IconDollar}
+          label="Daily Sales" tone="indigo" icon={IconPeso}
           value={peso(dashboardStats.dailySales)}
           trend={dashboardStats.dailySalesTrend} foot="vs. yesterday"
         />
         <StatCard
-          label="Monthly Sales" tone="blue" icon={IconCalendar}
+          label="Monthly Sales" tone="blue" icon={IconPeso}
           value={peso(dashboardStats.monthlySales)}
           trend={dashboardStats.monthlySalesTrend} foot="vs. last month"
         />

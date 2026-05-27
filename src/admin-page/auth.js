@@ -18,3 +18,11 @@ export function logout() {
 export function isAuthed() {
   return sessionStorage.getItem(KEY) === '1'
 }
+
+export function currentAdminUser() {
+  try {
+    return JSON.parse(sessionStorage.getItem(USER_KEY) || 'null')
+  } catch {
+    return null
+  }
+}

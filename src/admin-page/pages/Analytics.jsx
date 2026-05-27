@@ -100,7 +100,7 @@ export default function Analytics() {
       <div className="card">
         <div className="panel-head">
           <h3>Monthly Sales</h3>
-          <span className="sub">Revenue trend - last 8 months (PHP thousands)</span>
+          <span className="sub">Revenue trend - last 8 months (PHP)</span>
         </div>
         <div className="panel-body">
           {data.monthlySales.length === 0 ? (

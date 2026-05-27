@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import ProductManagement from './pages/ProductManagement'
+import BarcodeTools from './pages/BarcodeTools'
 import CashierManagement from './pages/CashierManagement'
 import Analytics from './pages/Analytics'
 import ActivityLogs from './pages/ActivityLogs'
@@ -33,6 +34,7 @@ export default function App() {
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="inventory" element={<Inventory />} />
         <Route path="products" element={<ProductManagement />} />
+        <Route path="barcodes" element={<BarcodeTools />} />
         <Route path="cashiers" element={<CashierManagement />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="logs" element={<ActivityLogs />} />

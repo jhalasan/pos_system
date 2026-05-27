@@ -17,6 +17,7 @@ export const IconCloud = (p) => <Svg {...p}><path d="M17 18a4 4 0 0 0 0-8 6 6 0 
 export const IconUserPlus = (p) => <Svg {...p}><path d="M14 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="7.5" cy="7" r="4" /><path d="M19 8v6M22 11h-6" /></Svg>
 export const IconLogout = (p) => <Svg {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5M21 12H9" /></Svg>
 export const IconDollar = (p) => <Svg {...p}><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" /></Svg>
+export const IconPeso = (p) => <Svg {...p}><path d="M8 3v18" /><path d="M8 4h6.2a4.2 4.2 0 0 1 0 8.4H8" /><path d="M5 8h13" /><path d="M5 12h13" /></Svg>
 export const IconRevenue = (p) => <Svg {...p}><path d="M3 17l6-6 4 4 8-8" /><path d="M21 7v6h-6" /></Svg>
 export const IconCalendar = (p) => <Svg {...p}><rect x="3" y="4" width="18" height="17" rx="2" /><path d="M3 9h18M8 2v4M16 2v4" /></Svg>
 export const IconAlert = (p) => <Svg {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></Svg>
@@ -26,6 +27,7 @@ export const IconEdit = (p) => <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3
 export const IconTrash = (p) => <Svg {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></Svg>
 export const IconClose = (p) => <Svg {...p}><path d="M18 6 6 18M6 6l12 12" /></Svg>
 export const IconScan = (p) => <Svg {...p}><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" /><path d="M3 12h18" /></Svg>
+export const IconBarcode = (p) => <Svg {...p}><path d="M4 5v14M8 5v14M12 5v14M16 5v14M20 5v14" /><path d="M6 5v14M14 5v14M18 5v14" /></Svg>
 export const IconImage = (p) => <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.8" /><path d="M21 15l-5-5L5 21" /></Svg>
 export const IconUpload = (p) => <Svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M17 8l-5-5-5 5M12 3v12" /></Svg>
 export const IconDownload = (p) => <Svg {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><path d="M7 10l5 5 5-5M12 15V3" /></Svg>

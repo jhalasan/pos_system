@@ -94,6 +94,7 @@ export function toUserAccount(record) {
     role: record.role || '',
     status: record.status || 'active',
     quickLoginEnabled: Boolean(record.quick_login_enabled),
+    authorizationBarcode: record.void_barcode || '',
   }
 }
 
