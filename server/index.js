@@ -2,6 +2,8 @@ import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import { createProxyMiddleware } from 'http-proxy-middleware'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
 import {
   authenticateAdminUser,
@@ -11,7 +13,7 @@ import {
 } from './pocketbase.js'
 import {
   activityLogPayload,
-  cashierPayload,
+  cashierFormData,
   deriveStatus,
   productPayload,
   productFormData,
@@ -23,6 +25,9 @@ import {
 
 const app = express()
 const PORT = Number(process.env.API_PORT || 3001)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const DIST_DIR = path.resolve(__dirname, '..', 'dist')
+const INDEX_HTML = path.join(DIST_DIR, 'index.html')
 const PB_PROXY_TARGET = process.env.POCKETBASE_PROXY_TARGET || 'http://127.0.0.1:8090'
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5133,http://localhost:5173,http://localhost:5174')
   .split(',')
@@ -405,6 +410,22 @@ app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
   res.json({ ok: true })
 }))
 
+app.post('/api/cashier/activity-log', asyncRoute(async (req, res) => {
+  const cashierId = String(req.body?.cashierId || '').trim()
+  const action = String(req.body?.action || '').trim()
+  const detail = String(req.body?.detail || '').trim()
+
+  if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
+  if (!action || !detail) return res.status(400).json({ error: 'Action and detail are required.' })
+
+  await createLog({
+    userId: cashierId,
+    action,
+    detail,
+  })
+  res.status(201).json({ ok: true })
+}))
+
 app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
   const cashierId = String(req.query?.cashierId || '').trim()
   const search = String(req.query?.q || '').trim().toLowerCase()
@@ -471,6 +492,9 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   const paymentMethod = req.body?.paymentMethod === 'gcash' ? 'gcash' : 'cash'
   const refNumber = String(req.body?.refNumber || '').trim()
   const totalAmount = Number(req.body?.totalAmount) || 0
+  const subtotalAmount = Number(req.body?.subtotalAmount) || totalAmount
+  const discountPercent = Number(req.body?.discountPercent) || 0
+  const discountAmount = Number(req.body?.discountAmount) || 0
   const transactionNo = await nextTransactionNumber()
 
   if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
@@ -519,6 +543,14 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     action: 'Sale',
     detail: `Completed transaction ${transactionNo} - PHP ${totalAmount.toFixed(2)}`,
   })
+
+  if (discountAmount > 0 || discountPercent > 0) {
+    await createLog({
+      userId: cashierId,
+      action: 'Discount',
+      detail: `Applied ${discountPercent}% discount (${discountAmount.toFixed(2)} off ${subtotalAmount.toFixed(2)}) on transaction ${transactionNo}`,
+    })
+  }
 
   res.status(201).json({ id: sale.id, transactionNo, totalAmount })
 }))
@@ -586,8 +618,8 @@ app.get('/api/cashiers', asyncRoute(async (_req, res) => {
   res.json(records.map((record) => toCashier(record, salesByCashier.get(record.id))))
 }))
 
-app.post('/api/cashiers', asyncRoute(async (req, res) => {
-  const payload = cashierPayload(req.body)
+app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, res) => {
+  const payload = cashierFormData(req.body || {}, req.file)
   if (!payload.name || !payload.email) {
     return res.status(400).json({ error: 'Name and email are required.' })
   }
@@ -597,10 +629,12 @@ app.post('/api/cashiers', asyncRoute(async (req, res) => {
   res.status(201).json(toCashier(created))
 }))
 
-app.patch('/api/cashiers/:id', asyncRoute(async (req, res) => {
-  const payload = cashierPayload(req.body)
-  delete payload.password
-  delete payload.passwordConfirm
+app.patch('/api/cashiers/:id', upload.single('profile_img'), asyncRoute(async (req, res) => {
+  const payload = cashierFormData(req.body || {}, req.file)
+  if (!String(req.body?.password || '').trim()) {
+    delete payload.password
+    delete payload.passwordConfirm
+  }
   const updated = await (await pbCollection('users')).update(req.params.id, payload)
   await createLog({ action: 'Cashier', detail: `Updated cashier "${payload.email}"` })
   res.json(toCashier(updated))
@@ -910,6 +944,19 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     monthlySales: monthlyTrend,
   })
 }))
+
+app.use(express.static(DIST_DIR))
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/api/')) {
+    next()
+    return
+  }
+
+  res.sendFile(INDEX_HTML, (error) => {
+    if (error) next(error)
+  })
+})
 
 app.use((error, _req, res, next) => {
   void next

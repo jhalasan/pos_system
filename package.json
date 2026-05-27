@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "api": "node server/index.js",
+    "host": "npm run build && node server/index.js",
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",

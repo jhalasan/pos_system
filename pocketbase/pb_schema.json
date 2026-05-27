@@ -1314,6 +1314,28 @@
         "type": "text"
       },
       {
+        "help": "",
+        "hidden": false,
+        "id": "file100000001",
+        "maxSelect": 1,
+        "maxSize": 5242880,
+        "mimeTypes": [
+          "image/jpeg",
+          "image/png",
+          "image/webp"
+        ],
+        "name": "profile_img",
+        "presentable": false,
+        "protected": false,
+        "required": false,
+        "system": false,
+        "thumbs": [
+          "100x100",
+          "300x300"
+        ],
+        "type": "file"
+      },
+      {
         "autogeneratePattern": "",
         "help": "",
         "hidden": false,

@@ -43,10 +43,19 @@ async function authAsPocketBaseAdmin() {
     )
   } catch (error) {
     if (error.status !== 404) throw error
-    await pb.collection('_admins').authWithPassword(
-      PB_SUPERUSER_EMAIL,
-      PB_SUPERUSER_PASSWORD,
-    )
+    try {
+      await pb.collection('_admins').authWithPassword(
+        PB_SUPERUSER_EMAIL,
+        PB_SUPERUSER_PASSWORD,
+      )
+    } catch (legacyError) {
+      if (legacyError.status === 404) {
+        const configError = new Error('PocketBase auth endpoint was not found. Set POCKETBASE_URL to your PocketBase server, usually http://127.0.0.1:8090. Do not set POCKETBASE_URL to the Express/ngrok API URL.')
+        configError.status = 500
+        throw configError
+      }
+      throw legacyError
+    }
   }
 }
 

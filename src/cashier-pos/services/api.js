@@ -1,4 +1,12 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+const API_URL = import.meta.env.VITE_API_URL || '/api'
+
+function parseJson(text) {
+  try {
+    return text ? JSON.parse(text) : null
+  } catch {
+    return null
+  }
+}
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_URL}${path}`, {
@@ -9,10 +17,15 @@ async function request(path, options = {}) {
     },
   })
 
-  const payload = await res.json().catch(() => null)
+  const text = await res.text().catch(() => '')
+  const payload = parseJson(text)
 
   if (!res.ok) {
-    throw new Error(payload?.error || 'Request failed.')
+    throw new Error(payload?.error || text || 'Request failed.')
+  }
+
+  if (payload === null && text.trim()) {
+    throw new Error(`Expected JSON from API at ${API_URL}${path}, but received a non-JSON response.`)
   }
 
   return payload
@@ -38,6 +51,10 @@ export const cashierApi = {
   authorizeVoid: (code) => request('/cashier/authorize-void', {
     method: 'POST',
     body: JSON.stringify({ code }),
+  }),
+  logActivity: ({ cashierId, action, detail }) => request('/cashier/activity-log', {
+    method: 'POST',
+    body: JSON.stringify({ cashierId, action, detail }),
   }),
   completeSale: (sale) => request('/cashier/sales', {
     method: 'POST',

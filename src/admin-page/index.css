@@ -454,6 +454,14 @@ ul { list-style: none; }
   background: var(--primary); color: #fff;
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700;
+  overflow: hidden;
+}
+.user-chip .av img,
+.cashier-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 .user-chip .un { font-size: 12.5px; font-weight: 600; }
 .user-chip .ur { font-size: 11px; color: var(--text-muted); }

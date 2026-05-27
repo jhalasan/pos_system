@@ -1,5 +1,3 @@
-import pb from './pocketbase.js'
-
 export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
   const lowStock = Number(product.lowStock ?? product.min_stock ?? 10)
@@ -12,10 +10,22 @@ function firstFileValue(value) {
   return Array.isArray(value) ? value[0] : value
 }
 
+function fileProxyUrl(record, filename, query = '') {
+  if (!filename) return ''
+  const collection = record.collectionId || record.collectionName
+  if (!collection || !record.id) return ''
+  const suffix = query ? `?${query}` : ''
+  return `/api/pocketbase/files/${encodeURIComponent(collection)}/${encodeURIComponent(record.id)}/${encodeURIComponent(filename)}${suffix}`
+}
+
 function productImageUrl(record) {
   const filename = firstFileValue(record.product_img)
-  if (!filename) return ''
-  return pb.files.getURL(record, filename, { url: true })
+  return fileProxyUrl(record, filename)
+}
+
+function profileImageUrl(record) {
+  const filename = firstFileValue(record.profile_img)
+  return fileProxyUrl(record, filename, 'thumb=100x100')
 }
 
 function firstRelationValue(value) {
@@ -79,6 +89,8 @@ export function toCashier(record, sales = 0) {
     shift: record.shift || 'Morning',
     status: record.status || 'active',
     quickLoginEnabled: Boolean(record.quick_login_enabled),
+    image: firstFileValue(record.profile_img) || '',
+    imageUrl: profileImageUrl(record),
     sales: Number(sales) || 0,
   }
 }
@@ -98,7 +110,7 @@ export function toUserAccount(record) {
   }
 }
 
-export function cashierPayload(input) {
+export function cashierPayload(input = {}) {
   const password = input.password || process.env.DEFAULT_CASHIER_PASSWORD || 'cashier123'
 
   return {
@@ -110,6 +122,16 @@ export function cashierPayload(input) {
     passwordConfirm: password,
     role: 'cashier',
     verified: input.status !== 'inactive',
+  }
+}
+
+export function cashierFormData(input = {}, file) {
+  const payload = cashierPayload(input)
+  if (!file) return payload
+
+  return {
+    ...payload,
+    profile_img: new File([file.buffer], file.originalname, { type: file.mimetype }),
   }
 }
 

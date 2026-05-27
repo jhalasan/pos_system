@@ -134,6 +134,12 @@ const Cashier = ({ onLogout, user }) => {
     return Math.max(0, baseQty - getReservedQuantity(productId, excludedTransactionId));
   };
 
+  const stockForProduct = (item, excludedTransactionId = null) => {
+    const productId = item.id || item.productId;
+    const source = products.find((product) => product.id === productId) || item;
+    return getRemainingStock(source, excludedTransactionId);
+  };
+
   const updateActiveTransaction = (changes) => {
     setTransactions((current) => current.map((txn) => (
       txn.id === activeTransaction
@@ -238,8 +244,19 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
-    updateActiveTransaction({ cartItems: [], lastScanned: null });
+    const voidTotal = total;
+    const voidItems = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+    updateActiveTransaction({ cartItems: [], lastScanned: null, discount: 0 });
     resetPaymentState();
+    try {
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Transaction Void',
+        detail: `Voided transaction ${activeTxn.transactionNo} with ${voidItems} item(s), total ${money(voidTotal)}`,
+      });
+    } catch {
+      // Do not block the cashier flow if audit logging fails.
+    }
     setShowVoidAuth(false);
     setManagerBarcode('');
     setVoidError('');
@@ -258,7 +275,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleAddToCart = (product) => {
-    const availableQty = getRemainingStock(product);
+    const availableQty = stockForProduct(product);
 
     if (availableQty <= 0) {
       showNotification(`${product.name} is out of stock.`);
@@ -299,7 +316,7 @@ const Cashier = ({ onLogout, user }) => {
         name: product.name,
         barcode: product.barcode,
         price: product.price,
-        stockQty: availableQty - 1,
+        productId: product.id,
         lowStock: product.lowStock,
       },
     });
@@ -421,6 +438,9 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const sale = await cashierApi.completeSale({
         cashierId: user?.id,
+        subtotalAmount: subtotal,
+        discountPercent: discount,
+        discountAmount,
         totalAmount: total,
         paymentMethod: isSplitPayment ? 'cash' : paymentMethod,
         refNumber: isSplitPayment ? `split:${JSON.stringify(splitPayments)}` : gcashRef,
@@ -596,8 +616,8 @@ const Cashier = ({ onLogout, user }) => {
                   <strong>{lastScanned.name}</strong>
                   <small>{lastScanned.barcode || 'No barcode'} | {money(lastScanned.price)}</small>
                 </div>
-                <span className={`${styles['stock-pill']} ${styles[stockState(lastScanned).key]}`}>
-                  {stockState(lastScanned).label}
+                <span className={`${styles['stock-pill']} ${styles[stockState({ ...lastScanned, stockQty: stockForProduct(lastScanned) }).key]}`}>
+                  {stockState({ ...lastScanned, stockQty: stockForProduct(lastScanned) }).label}
                 </span>
               </div>
             )}
@@ -611,7 +631,7 @@ const Cashier = ({ onLogout, user }) => {
                   <div className={styles['search-empty']}>No products found.</div>
                 ) : (
                   filteredProducts.map((product, index) => {
-                    const stock = stockState({ ...product, qty: getRemainingStock(product) });
+                    const stock = stockState({ ...product, qty: stockForProduct(product) });
                     return (
                       <button
                         key={product.id}
@@ -650,7 +670,7 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <div className={styles['cart-items']}>
                 {cartItems.map((item) => {
-                  const remainingStock = getRemainingStock(item);
+                  const remainingStock = stockForProduct(item);
                   const maxQty = Math.max(1, getRemainingStock(item, activeTransaction));
                   const stock = stockState({ ...item, stockQty: remainingStock });
                   return (

@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+const API_URL = import.meta.env.VITE_API_URL || '/api'
 
 function parseJson(text) {
   try {
@@ -34,6 +34,10 @@ async function request(path, options = {}) {
     throw new Error(parsed?.error || text || `Request failed with HTTP ${res.status}.`)
   }
 
+  if (parsed === null && text.trim()) {
+    throw new Error(`Expected JSON from API at ${API_URL}${path}, but received a non-JSON response.`)
+  }
+
   return parsed
 }
 
@@ -50,6 +54,18 @@ function productBody(data) {
     formData.append(key, value ?? '')
   }
   formData.append('product_img', data.imageFile)
+  return formData
+}
+
+function cashierBody(data) {
+  if (!data.imageFile) return JSON.stringify(data)
+
+  const formData = new FormData()
+  for (const [key, value] of Object.entries(data)) {
+    if (['imageFile', 'imageUrl', 'image'].includes(key)) continue
+    formData.append(key, value ?? '')
+  }
+  formData.append('profile_img', data.imageFile)
   return formData
 }
 
@@ -93,8 +109,8 @@ export const api = {
   scanInventory: (data) => request('/inventory/scan', { method: 'POST', body: JSON.stringify(data) }),
   fsnInventory: () => request('/inventory/fsn'),
   cashiers: () => request('/cashiers'),
-  createCashier: (data) => request('/cashiers', { method: 'POST', body: JSON.stringify(data) }),
-  updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  createCashier: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
+  updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
   deleteCashier: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),
   activityLogs: () => request('/activity-logs'),
   settingsAdmins: () => request('/settings/admins'),
