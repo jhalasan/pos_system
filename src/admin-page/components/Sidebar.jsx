@@ -16,7 +16,7 @@ const navItems = [
   { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]
 
-export default function Sidebar({ open = false, onNavigate = () => {} }) {
+export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
   const nav = useNavigate()
 
   function handleLogout() {
@@ -25,7 +25,7 @@ export default function Sidebar({ open = false, onNavigate = () => {} }) {
   }
 
   return (
-    <aside className={'sidebar' + (open ? ' active' : '')}>
+    <aside className={'sidebar' + (open ? ' active' : '') + (collapsed ? ' collapsed' : '')}>
       <div className="sidebar-brand">
         <div className="mk">N</div>
         <div>
@@ -40,11 +40,12 @@ export default function Sidebar({ open = false, onNavigate = () => {} }) {
           <NavLink
             key={to}
             to={to}
+            title={collapsed ? label : undefined}
             onClick={onNavigate}
             className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
           >
             <Icon size={18} />
-            <span>{label}</span>
+            <span className="nav-text">{label}</span>
           </NavLink>
         ))}
       </nav>
@@ -53,18 +54,19 @@ export default function Sidebar({ open = false, onNavigate = () => {} }) {
         <button
           className="nav-item"
           style={{ width: '100%' }}
+          title={collapsed ? 'Sync to Cloud' : undefined}
           onClick={() => alert('Syncing local data to the cloud...')}
         >
           <IconCloud size={18} />
-          <span>Sync to Cloud</span>
+          <span className="nav-text">Sync to Cloud</span>
         </button>
-        <NavLink to="/admin/cashiers" className="nav-item" onClick={onNavigate}>
+        <NavLink to="/admin/cashiers" className="nav-item" onClick={onNavigate} title={collapsed ? 'Add Cashier' : undefined}>
           <IconUserPlus size={18} />
-          <span>Add Cashier</span>
+          <span className="nav-text">Add Cashier</span>
         </NavLink>
-        <button className="nav-item danger" style={{ width: '100%' }} onClick={handleLogout}>
+        <button className="nav-item danger" style={{ width: '100%' }} onClick={handleLogout} title={collapsed ? 'Logout' : undefined}>
           <IconLogout size={18} />
-          <span>Logout</span>
+          <span className="nav-text">Logout</span>
         </button>
       </div>
     </aside>

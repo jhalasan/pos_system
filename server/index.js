@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
+import { createProxyMiddleware } from 'http-proxy-middleware'
 import 'dotenv/config'
 import {
   authenticateAdminUser,
@@ -22,10 +23,13 @@ import {
 
 const app = express()
 const PORT = Number(process.env.API_PORT || 3001)
-const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173,http://localhost:5174')
+const PB_PROXY_TARGET = process.env.POCKETBASE_PROXY_TARGET || 'http://127.0.0.1:8090'
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5133,http://localhost:5173,http://localhost:5174')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean)
+const ngrokHostPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.dev$/i
+const ngrokAppPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -40,13 +44,43 @@ const upload = multer({
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      ngrokHostPattern.test(origin) ||
+      ngrokAppPattern.test(origin)
+    ) {
       callback(null, true)
       return
     }
     callback(new Error(`Origin ${origin} is not allowed by CORS.`))
   },
+  credentials: true,
+  exposedHeaders: ['Authorization', 'Location', 'X-PocketBase-Token'],
 }))
+
+app.use('/api/pocketbase', createProxyMiddleware({
+  target: PB_PROXY_TARGET,
+  changeOrigin: true,
+  pathRewrite: (path) => `/api${path}`,
+  xfwd: true,
+  on: {
+    proxyReq(proxyReq) {
+      proxyReq.setHeader('ngrok-skip-browser-warning', 'true')
+    },
+    proxyRes(proxyRes) {
+      delete proxyRes.headers['x-frame-options']
+    },
+    error(err, _req, res) {
+      console.error(`PocketBase proxy error: ${err.message}`)
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' })
+      }
+      res.end(JSON.stringify({ error: 'PocketBase proxy failed. Make sure PocketBase is running on http://127.0.0.1:8090.' }))
+    },
+  },
+}))
+
 app.use(express.json())
 
 function asyncRoute(handler) {
@@ -820,6 +854,7 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
       ? item.expand.product_id[0]
       : item.expand?.product_id
     const current = productSales.get(productId) || {
+      id: productId,
       name: expandedProduct?.name || productsById.get(productId)?.name || productId,
       category: productsById.get(productId)?.category || expandedProduct?.category || '',
       units: 0,

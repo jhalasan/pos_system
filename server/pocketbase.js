@@ -35,6 +35,21 @@ export default pb
 
 let authPromise = null
 
+async function authAsPocketBaseAdmin() {
+  try {
+    await pb.collection('_superusers').authWithPassword(
+      PB_SUPERUSER_EMAIL,
+      PB_SUPERUSER_PASSWORD,
+    )
+  } catch (error) {
+    if (error.status !== 404) throw error
+    await pb.collection('_admins').authWithPassword(
+      PB_SUPERUSER_EMAIL,
+      PB_SUPERUSER_PASSWORD,
+    )
+  }
+}
+
 export async function ensurePocketBaseAuth() {
   if (!PB_SUPERUSER_EMAIL || !PB_SUPERUSER_PASSWORD) {
     const error = new Error('PocketBase superuser credentials are missing. Set POCKETBASE_SUPERUSER_EMAIL and POCKETBASE_SUPERUSER_PASSWORD in .env.')
@@ -43,10 +58,7 @@ export async function ensurePocketBaseAuth() {
   }
   if (pb.authStore.isValid) return
 
-  authPromise ||= pb.collection('_superusers').authWithPassword(
-    PB_SUPERUSER_EMAIL,
-    PB_SUPERUSER_PASSWORD,
-  )
+  authPromise ||= authAsPocketBaseAdmin()
 
   try {
     await authPromise

@@ -111,7 +111,7 @@ export default function Dashboard() {
             ) : (
               <div className="rank-list">
                 {data.topProducts.map((p, i) => (
-                  <div className="rank-row" key={p.name}>
+                  <div className="rank-row" key={p.id || p.name}>
                     <span className="rank-no">{i + 1}</span>
                     <div className="rank-info">
                       <div className="rn">{p.name}</div>

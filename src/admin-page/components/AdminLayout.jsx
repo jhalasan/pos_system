@@ -19,6 +19,7 @@ export default function AdminLayout() {
   const section = pathname.split('/')[2] || 'dashboard'
   const [now, setNow] = useState(new Date())
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -26,14 +27,27 @@ export default function AdminLayout() {
   }, [])
 
   return (
-    <div className="admin-shell">
+    <div className={'admin-shell' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
       <div
         className={'sidebar-overlay' + (sidebarOpen ? ' active' : '')}
         onClick={() => setSidebarOpen(false)}
       />
-      <Sidebar open={sidebarOpen} onNavigate={() => setSidebarOpen(false)} />
+      <Sidebar
+        open={sidebarOpen}
+        collapsed={sidebarCollapsed}
+        onNavigate={() => setSidebarOpen(false)}
+      />
       <div className="main">
         <header className="topbar">
+          <button
+            type="button"
+            className="desktop-sidebar-btn"
+            aria-label={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+            title={sidebarCollapsed ? 'Expand menu' : 'Collapse menu'}
+            onClick={() => setSidebarCollapsed((value) => !value)}
+          >
+            <IconMenu size={20} />
+          </button>
           <button
             type="button"
             className="mobile-menu-btn"
