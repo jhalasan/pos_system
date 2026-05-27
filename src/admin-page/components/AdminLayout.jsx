@@ -26,8 +26,13 @@ export default function AdminLayout() {
     return () => clearInterval(t)
   }, [])
 
+  useEffect(() => {
+    document.body.classList.toggle('admin-menu-open', sidebarOpen)
+    return () => document.body.classList.remove('admin-menu-open')
+  }, [sidebarOpen])
+
   return (
-    <div className={'admin-shell' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
+    <div className={'admin-shell' + (sidebarCollapsed ? ' sidebar-collapsed' : '') + (sidebarOpen ? ' menu-open' : '')}>
       <div
         className={'sidebar-overlay' + (sidebarOpen ? ' active' : '')}
         onClick={() => setSidebarOpen(false)}

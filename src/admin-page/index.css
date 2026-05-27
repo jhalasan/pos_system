@@ -43,7 +43,11 @@
 /* ---- Reset ---- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html, body, #root { height: 100%; }
+html, body, #root {
+  height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
 
 body {
   font-family: var(--font);
@@ -52,6 +56,10 @@ body {
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+body.admin-menu-open {
+  overflow: hidden;
+  touch-action: none;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -137,6 +145,7 @@ ul { list-style: none; }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
+  min-width: 0;
 }
 .panel { padding: 20px; }
 .panel-head {
@@ -294,7 +303,13 @@ ul { list-style: none; }
 /* ============================================================
    ADMIN LAYOUT
    ============================================================ */
-.admin-shell { display: flex; min-height: 100vh; }
+.admin-shell {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
 
 .sidebar {
   width: var(--sidebar-w);
@@ -414,7 +429,14 @@ ul { list-style: none; }
 }
 
 /* ---- Main content ---- */
-.main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.main {
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
 
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -466,7 +488,14 @@ ul { list-style: none; }
 .user-chip .un { font-size: 12.5px; font-weight: 600; }
 .user-chip .ur { font-size: 11px; color: var(--text-muted); }
 
-.content { padding: 26px 28px; flex: 1; }
+.content {
+  padding: 26px 28px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
 
 /* ---- Page header ---- */
 .page-head {
@@ -543,7 +572,13 @@ ul { list-style: none; }
 /* ============================================================
    TABLE
    ============================================================ */
-.table-wrap { overflow-x: auto; }
+.table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
 table.data {
   width: 100%; border-collapse: collapse; font-size: 13px;
 }
@@ -1205,6 +1240,18 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .role-grid { grid-template-columns: 1fr; }
   .stat-grid, .stat-grid.cols-3 { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
+  .grid-2, .grid-2-wide { grid-template-columns: 1fr; }
+  .fsn-grid { grid-template-columns: 1fr; }
+  .fsn-card { padding: 16px; }
+  .fsn-card-top { margin-bottom: 12px; }
+  .fsn-value { font-size: 26px; }
+  .fsn-product-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .fsn-product-tags {
+    justify-content: flex-start;
+  }
   .scan-grid { grid-template-columns: 1fr; }
   .scan-preview, .scan-error { align-items: stretch; flex-direction: column; }
   .barcode-summary { grid-template-columns: 1fr; }
@@ -1216,24 +1263,36 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .barcode-actions { justify-content: flex-start; }
   .barcode-preview,
   .barcode-empty { width: 100%; }
-  .content, .topbar { padding-left: 16px; padding-right: 16px; }
-  .admin-shell { flex-direction: column; }
+  .content {
+    padding: 18px 14px;
+  }
+  .topbar {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .admin-shell {
+    flex-direction: column;
+    min-height: 100dvh;
+  }
   .sidebar {
     display: flex;
     position: fixed;
     top: 0;
     left: 0;
-    width: 280px;
-    max-width: 86vw;
-    height: 100vh;
+    width: min(280px, 82vw);
+    max-width: 82vw;
+    height: 100dvh;
+    max-height: 100dvh;
     z-index: 90;
     transform: translateX(-100%);
     transition: transform .22s ease;
     box-shadow: 2px 0 14px rgba(0, 0, 0, .22);
     overflow-y: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
   }
   .sidebar.collapsed {
-    width: 280px;
+    width: min(280px, 82vw);
   }
   .sidebar.collapsed .sidebar-brand {
     justify-content: flex-start;
@@ -1257,6 +1316,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
     inset: 0;
     z-index: 80;
     background: rgba(15, 23, 42, .45);
+    touch-action: none;
   }
   .sidebar-overlay.active { display: block; }
   .mobile-menu-btn {
@@ -1300,5 +1360,95 @@ table.data tbody tr:hover { background: var(--surface-2); }
   }
   .activity-toolbar .count {
     justify-self: start;
+  }
+  .page-head {
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .page-head h1 {
+    font-size: 20px;
+  }
+  .page-actions {
+    width: 100%;
+  }
+  .page-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .toolbar .input-search,
+  .toolbar .select,
+  .toolbar .count {
+    width: 100%;
+    min-width: 0;
+    margin-left: 0;
+  }
+  .table-wrap {
+    display: block;
+    margin: 0 !important;
+    border-radius: 0 0 var(--radius) var(--radius);
+    max-width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    background: var(--surface);
+  }
+  .card:has(.table-wrap) {
+    overflow: hidden;
+  }
+  table.data {
+    min-width: 680px;
+  }
+  table.data thead th,
+  table.data tbody td {
+    padding: 10px 12px;
+    white-space: nowrap;
+  }
+  table.data thead th:first-child,
+  table.data tbody td:first-child {
+    padding-left: 16px;
+  }
+  table.data thead th:last-child,
+  table.data tbody td:last-child {
+    padding-right: 16px;
+  }
+  .prod-cell {
+    min-width: 190px;
+  }
+  .toast {
+    left: 14px;
+    right: 14px;
+    bottom: 18px;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 430px) {
+  .content {
+    padding: 14px 12px;
+  }
+  .panel-head,
+  .panel-body {
+    padding: 14px;
+  }
+  .stat-card {
+    padding: 16px;
+  }
+  .stat-value {
+    font-size: 24px;
+  }
+  .fsn-card-panel,
+  .card {
+    border-radius: 8px;
+  }
+  .fsn-grid-wrap,
+  .fsn-product-list {
+    padding: 14px;
+  }
+  table.data {
+    min-width: 620px;
   }
 }
