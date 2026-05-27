@@ -1,12 +1,37 @@
 import PocketBase from 'pocketbase'
 import 'dotenv/config'
 
-const PB_URL = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090'
+const POCKETBASE_ENDPOINTS = {
+  // 1. PRODUCTION / DEPLOYMENT:
+  // Use this when the live API domain is ready.
+  production: 'https://api.yourstartup.com',
+
+  // 2. REMOTE TEAM TESTING:
+  // WARNING: ngrok URLs change every time ngrok restarts unless you use a reserved domain.
+  remoteTeamTesting: 'https://xxxx.ngrok-free.app',
+
+  // 3. LOCAL ALONE DEVELOPMENT:
+  // Use this when PocketBase is running on this machine.
+  localAloneDevelopment: 'http://127.0.0.1:8090',
+}
+
+const POCKETBASE_PHASE =
+  process.env.POCKETBASE_PHASE ||
+  (process.env.NODE_ENV === 'production' ? 'production' : 'localAloneDevelopment')
+
+// Manual phase switch examples:
+// const POCKETBASE_PHASE = 'production'
+// const POCKETBASE_PHASE = 'remoteTeamTesting'
+// const POCKETBASE_PHASE = 'localAloneDevelopment'
+
+export const PB_URL = process.env.POCKETBASE_URL || POCKETBASE_ENDPOINTS[POCKETBASE_PHASE] || POCKETBASE_ENDPOINTS.localAloneDevelopment
 const PB_SUPERUSER_EMAIL = process.env.POCKETBASE_SUPERUSER_EMAIL || process.env.POCKETBASE_ADMIN_EMAIL
 const PB_SUPERUSER_PASSWORD = process.env.POCKETBASE_SUPERUSER_PASSWORD || process.env.POCKETBASE_ADMIN_PASSWORD
 
 export const pb = new PocketBase(PB_URL)
 pb.autoCancellation(false)
+
+export default pb
 
 let authPromise = null
 

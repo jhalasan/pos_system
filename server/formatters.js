@@ -1,4 +1,4 @@
-const PB_URL = process.env.POCKETBASE_URL || 'http://127.0.0.1:8090'
+import pb from './pocketbase.js'
 
 export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
@@ -15,7 +15,7 @@ function firstFileValue(value) {
 function productImageUrl(record) {
   const filename = firstFileValue(record.product_img)
   if (!filename) return ''
-  return `${PB_URL}/api/files/products/${record.id}/${encodeURIComponent(filename)}`
+  return pb.files.getURL(record, filename, { url: true })
 }
 
 function firstRelationValue(value) {
