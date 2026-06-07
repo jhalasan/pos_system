@@ -1,4 +1,7 @@
+import { desktopCashierApi } from './desktopApi'
+
 const API_URL = import.meta.env.VITE_API_URL || '/api'
+const isDesktopCashier = import.meta.env.VITE_APP_TARGET === 'cashier-desktop'
 
 function parseJson(text) {
   try {
@@ -36,7 +39,7 @@ export const money = (n) => 'PHP ' + Number(n || 0).toLocaleString('en-PH', {
   maximumFractionDigits: 2,
 })
 
-export const cashierApi = {
+const webCashierApi = {
   login: (email, password) => request('/cashier/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
@@ -60,4 +63,10 @@ export const cashierApi = {
     method: 'POST',
     body: JSON.stringify(sale),
   }),
+}
+
+export const cashierApi = isDesktopCashier ? desktopCashierApi : {
+  ...webCashierApi,
+  currentUser: async () => null,
+  logout: async () => {},
 }

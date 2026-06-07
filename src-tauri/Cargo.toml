@@ -1,0 +1,18 @@
+[package]
+name = "nexa-pos-cashier"
+version = "0.1.0"
+description = "Offline-first cashier terminal"
+authors = ["Nexa POS"]
+edition = "2021"
+
+[lib]
+name = "nexa_pos_cashier_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }

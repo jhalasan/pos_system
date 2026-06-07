@@ -1,4 +1,7 @@
+import { desktopAdminApi } from './desktopApi'
+
 const API_URL = import.meta.env.VITE_API_URL || '/api'
+const isDesktopApp = import.meta.env.VITE_APP_TARGET === 'cashier-desktop'
 
 function parseJson(text) {
   try {
@@ -90,7 +93,7 @@ export const defaultCategories = [
   'Personal Care',
 ]
 
-export const api = {
+const webApi = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   adminQuickLoginAccounts: () => request('/auth/quick-login-accounts'),
   dashboard: () => request('/dashboard'),
@@ -132,3 +135,5 @@ export const api = {
     body: JSON.stringify({ enabled }),
   }),
 }
+
+export const api = isDesktopApp ? desktopAdminApi : webApi

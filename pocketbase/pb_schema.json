@@ -1,8 +1,8 @@
 [
   {
     "id": "pbc_444539071",
-    "listRule": null,
-    "viewRule": null,
+    "listRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "viewRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
     "createRule": null,
     "updateRule": null,
     "deleteRule": null,
@@ -112,8 +112,8 @@
   },
   {
     "id": "pbc_3292755704",
-    "listRule": null,
-    "viewRule": null,
+    "listRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "viewRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
     "createRule": null,
     "updateRule": null,
     "deleteRule": null,
@@ -180,8 +180,8 @@
   },
   {
     "id": "pbc_4092854851",
-    "listRule": null,
-    "viewRule": null,
+    "listRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "viewRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
     "createRule": null,
     "updateRule": null,
     "deleteRule": null,

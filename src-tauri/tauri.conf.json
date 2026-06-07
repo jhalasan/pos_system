@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Nexa POS Cashier",
+  "version": "0.1.0",
+  "identifier": "com.nexapos.cashier",
+  "build": {
+    "beforeDevCommand": "npm run dev:cashier",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build:cashier",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "security": {
+      "csp": "default-src 'self' customprotocol: asset:; connect-src 'self' ipc: http://ipc.localhost http://localhost:8090 http://127.0.0.1:8090 https: wss:; img-src 'self' asset: http://asset.localhost data: blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Nexa POS Cashier",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Business",
+    "shortDescription": "Offline-first cashier terminal",
+    "longDescription": "Nexa POS cashier terminal with local product storage and background cloud synchronization.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}
