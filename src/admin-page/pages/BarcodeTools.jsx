@@ -105,6 +105,27 @@ function printBarcode(title, value) {
   popup.print()
 }
 
+function normalizeAuthorizationCode(result) {
+  if (!result || typeof result !== 'object') {
+    throw new Error('Authorization barcode generation returned an empty response.')
+  }
+
+  const id = String(result.id || '').trim()
+  const barcode = String(result.barcode || '').trim()
+  if (!id || !barcode) {
+    throw new Error('Authorization barcode generation returned incomplete data.')
+  }
+
+  return {
+    id,
+    barcode,
+    label: String(result.label || 'Void and Discount Approval').trim(),
+    status: String(result.status || 'active').trim() || 'active',
+    generatedBy: String(result.generatedBy || 'Admin').trim() || 'Admin',
+    createdAt: result.createdAt || new Date().toISOString(),
+  }
+}
+
 function AuthorizationModal({ email, onClose, onGenerated }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -120,7 +141,7 @@ function AuthorizationModal({ email, onClose, onGenerated }) {
     setError('')
     try {
       const result = await api.generateAuthorizationBarcode(email, password)
-      onGenerated(result)
+      onGenerated(normalizeAuthorizationCode(result))
     } catch (err) {
       setError(err.message || 'Unable to generate authorization barcode.')
     } finally {
@@ -230,9 +251,14 @@ export default function BarcodeTools() {
   }
 
   function handleAuthorizationGenerated(result) {
-    setAuthCodes([result, ...authCodes])
-    setAuthModalOpen(false)
-    flash('Authorization barcode generated.')
+    try {
+      const normalized = normalizeAuthorizationCode(result)
+      setAuthCodes([normalized, ...authCodes.filter((item) => item.id !== normalized.id)])
+      setAuthModalOpen(false)
+      flash('Authorization barcode generated.')
+    } catch (err) {
+      flash(err.message || 'Unable to use the generated authorization barcode.')
+    }
   }
 
   async function toggleAuthorization(code) {

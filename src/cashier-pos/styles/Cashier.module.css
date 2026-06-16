@@ -51,6 +51,15 @@
   white-space: nowrap;
 }
 
+.spin-icon {
+  animation: cashier-spin 1s linear infinite;
+}
+
+@keyframes cashier-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .header-title {
   font-size: 20px;
   font-weight: 600;
@@ -151,6 +160,16 @@
   border-color: #86efac;
 }
 
+.transaction-tab.voided {
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.transaction-tab.voided.active {
+  background-color: #fef2f2;
+  border-color: #fca5a5;
+}
+
 .tab-count {
   min-width: 20px;
   height: 20px;
@@ -177,6 +196,11 @@
   justify-content: center;
   font-size: 11px;
   font-weight: 800;
+}
+
+.tab-done.voided {
+  background-color: #fee2e2;
+  color: #b91c1c;
 }
 
 .tab-close {

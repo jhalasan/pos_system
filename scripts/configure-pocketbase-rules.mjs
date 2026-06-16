@@ -44,7 +44,7 @@ await updateCollection('products', {
   listRule: readRule,
   viewRule: readRule,
   createRule: adminRule,
-  updateRule: adminRule,
+  updateRule: cashierRule,
   deleteRule: adminRule,
 })
 
@@ -60,6 +60,12 @@ await updateCollection('activity_logs', {
 })
 
 await updateCollection('sales', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+})
+
+await updateCollection('sale_items', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,

@@ -140,6 +140,66 @@ async function createLog(log) {
   }
 }
 
+async function authorizeManagerApproval({ code, email, password }) {
+  const barcode = String(code || '').trim()
+  if (barcode) {
+    const authorization = await pbCollection('authorization_barcodes')
+      .then((collection) => collection.getFirstListItem(
+        pb.filter('code = {:code} && status = "active"', { code: barcode }),
+        { expand: 'generated_by' },
+      ))
+      .catch((error) => {
+        if (error.status === 404) return null
+        throw error
+      })
+
+    if (authorization) {
+      const generatedBy = Array.isArray(authorization.expand?.generated_by)
+        ? authorization.expand.generated_by[0]
+        : authorization.expand?.generated_by
+
+      return {
+        id: generatedBy?.id || '',
+        name: generatedBy?.name || generatedBy?.email || 'Manager',
+        email: generatedBy?.email || '',
+        method: 'barcode',
+      }
+    }
+
+    const legacyManager = await (await pbCollection('users')).getFirstListItem(
+      pb.filter('void_barcode = {:code} && role = "admin"', { code: barcode }),
+    ).catch((error) => {
+      if (error.status === 404) return null
+      throw error
+    })
+
+    if (legacyManager) {
+      return {
+        id: legacyManager.id,
+        name: legacyManager.name || legacyManager.email || 'Manager',
+        email: legacyManager.email || '',
+        method: 'barcode',
+      }
+    }
+  }
+
+  const managerEmail = String(email || '').trim()
+  const managerPassword = String(password || '')
+  if (managerEmail && managerPassword) {
+    const manager = await authenticateAdminUser(managerEmail, managerPassword)
+    return {
+      id: manager.id,
+      name: manager.name || manager.email || 'Manager',
+      email: manager.email || '',
+      method: 'password',
+    }
+  }
+
+  const error = new Error('Manager approval requires a valid barcode or admin email and password.')
+  error.status = 400
+  throw error
+}
+
 function productRecordPayload(body = {}, categoryId, file) {
   return file ? productFormData(body, categoryId, file) : productPayload(body, categoryId)
 }
@@ -381,33 +441,12 @@ app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) =>
 }))
 
 app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
-  const code = String(req.body?.code || '').trim()
-  if (!code) return res.status(400).json({ error: 'Authorization barcode is required.' })
-
-  const authorization = await pbCollection('authorization_barcodes')
-    .then((collection) => collection.getFirstListItem(
-      pb.filter('code = {:code} && status = "active"', { code }),
-      { expand: 'generated_by' },
-    ))
-    .catch((error) => {
-      if (error.status === 404) return null
-      throw error
-    })
-
-  if (authorization) {
-    res.json({ ok: true, authorizedBy: authorization.expand?.generated_by?.email || 'Authorization barcode' })
-    return
-  }
-
-  const legacyManager = await (await pbCollection('users')).getFirstListItem(
-    pb.filter('void_barcode = {:code} && role = "admin"', { code }),
-  ).catch((error) => {
-    if (error.status === 404) return null
-    throw error
+  const approver = await authorizeManagerApproval({
+    code: req.body?.code,
+    email: req.body?.email,
+    password: req.body?.password,
   })
-
-  if (!legacyManager) return res.status(403).json({ error: 'Authorization barcode is not valid.' })
-  res.json({ ok: true })
+  res.json({ ok: true, approver })
 }))
 
 app.post('/api/cashier/activity-log', asyncRoute(async (req, res) => {
@@ -429,14 +468,14 @@ app.post('/api/cashier/activity-log', asyncRoute(async (req, res) => {
 app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
   const cashierId = String(req.query?.cashierId || '').trim()
   const search = String(req.query?.q || '').trim().toLowerCase()
-  if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
 
   const todayStart = new Date()
   todayStart.setHours(0, 0, 0, 0)
 
   const sales = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
-    filter: pb.filter('cashier_id = {:cashierId} && status != "voided"', { cashierId }),
+    filter: cashierId ? pb.filter('cashier_id = {:cashierId}', { cashierId }) : '',
+    expand: 'cashier_id',
   })
 
   const todaysSales = sales
@@ -464,6 +503,9 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
       paymentMethod: sale.payment_method || '',
       status: sale.status || 'completed',
       createdAt: sale.created_at || sale.created,
+      cashierName: (Array.isArray(sale.expand?.cashier_id) ? sale.expand.cashier_id[0] : sale.expand?.cashier_id)?.name
+        || (Array.isArray(sale.expand?.cashier_id) ? sale.expand.cashier_id[0] : sale.expand?.cashier_id)?.email
+        || String(sale.cashier_id || ''),
       itemCount: items.reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0),
       items: items.map((item) => {
         const product = Array.isArray(item.expand?.product_id)
@@ -553,6 +595,67 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   }
 
   res.status(201).json({ id: sale.id, transactionNo, totalAmount })
+}))
+
+app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
+  const saleId = String(req.params.id || '').trim()
+  const cashierId = String(req.body?.cashierId || '').trim()
+  const reason = String(req.body?.reason || '').trim()
+  if (!saleId) return res.status(400).json({ error: 'Sale is required.' })
+
+  const approver = await authorizeManagerApproval({
+    code: req.body?.code,
+    email: req.body?.email,
+    password: req.body?.password,
+  })
+
+  const sales = await pbCollection('sales')
+  const saleItems = await pbCollection('sale_items')
+  const products = await pbCollection('products')
+  const sale = await sales.getOne(saleId).catch((error) => {
+    if (error.status === 404) return null
+    throw error
+  })
+
+  if (!sale) return res.status(404).json({ error: 'Completed sale not found.' })
+  if ((sale.status || 'completed') === 'voided') {
+    return res.status(409).json({ error: 'This transaction has already been voided.' })
+  }
+
+  const items = await saleItems.getFullList({
+    filter: pb.filter('sale_id = {:saleId}', { saleId }),
+  })
+
+  for (const item of items) {
+    const productId = productRelationId(item.product_id)
+    if (!productId) continue
+    const product = await products.getOne(productId)
+    await products.update(product.id, {
+      quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+    })
+  }
+
+  const updatedSale = await sales.update(saleId, {
+    status: 'voided',
+    voided_by: approver.id || '',
+  })
+
+  await createLog({
+    userId: cashierId || productRelationId(sale.cashier_id),
+    action: 'Transaction Void',
+    detail: `Voided completed transaction ${sale.transaction_no || sale.id} approved by ${approver.name}${reason ? ` (${reason})` : ''}`,
+  })
+
+  res.json({
+    ok: true,
+    sale: {
+      id: updatedSale.id,
+      transactionNo: updatedSale.transaction_no || updatedSale.id,
+      status: updatedSale.status || 'voided',
+      approvedBy: approver.name,
+      voidedAt: new Date().toISOString(),
+    },
+  })
 }))
 
 app.post('/api/products', upload.single('product_img'), asyncRoute(async (req, res) => {

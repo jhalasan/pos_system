@@ -51,9 +51,9 @@ const webCashierApi = {
   salesHistory: ({ cashierId, q = '' }) => request(
     `/cashier/sales?cashierId=${encodeURIComponent(cashierId || '')}&q=${encodeURIComponent(q)}`
   ),
-  authorizeVoid: (code) => request('/cashier/authorize-void', {
+  authorizeVoid: (authorization) => request('/cashier/authorize-void', {
     method: 'POST',
-    body: JSON.stringify({ code }),
+    body: JSON.stringify(typeof authorization === 'string' ? { code: authorization } : authorization),
   }),
   logActivity: ({ cashierId, action, detail }) => request('/cashier/activity-log', {
     method: 'POST',
@@ -62,6 +62,15 @@ const webCashierApi = {
   completeSale: (sale) => request('/cashier/sales', {
     method: 'POST',
     body: JSON.stringify(sale),
+  }),
+  syncNow: async () => ({ uploaded: 0, failed: 0, mode: 'server-direct' }),
+  voidCompletedSale: ({ saleId, cashierId, authorization, reason }) => request(`/cashier/sales/${encodeURIComponent(saleId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({
+      cashierId,
+      reason,
+      ...(typeof authorization === 'string' ? { code: authorization } : authorization),
+    }),
   }),
 }
 

@@ -671,6 +671,38 @@ table.data tbody tr:hover { background: var(--surface-2); }
   animation: pop .18s ease;
 }
 
+.sync-indicator {
+  position: fixed; bottom: 24px; left: 24px; z-index: 190;
+  background: rgba(255, 255, 255, 0.96); color: var(--text);
+  border: 1px solid var(--border-strong);
+  padding: 12px 18px; border-radius: 999px;
+  font-size: 13px; font-weight: 700;
+  box-shadow: var(--shadow-lg);
+  display: inline-flex; align-items: center; gap: 9px;
+  backdrop-filter: blur(8px);
+  animation: pop .18s ease;
+}
+
+.sync-indicator.running { border-color: #bfdbfe; color: #1d4ed8; }
+.sync-indicator.succeeded { border-color: #86efac; color: #166534; }
+.sync-indicator.offline,
+.sync-indicator.failed { border-color: #fecaca; color: #b91c1c; }
+
+.sync-indicator-dot {
+  width: 9px; height: 9px; border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 16%, transparent);
+}
+
+.sync-indicator.running .sync-indicator-dot {
+  animation: sync-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sync-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.72); opacity: 0.6; }
+}
+
 /* ============================================================
    FSN INVENTORY ANALYSIS
    ============================================================ */
@@ -987,6 +1019,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
   
   /* Toast positioning */
   .toast { bottom: 16px; right: 16px; font-size: 12px; padding: 10px 14px; }
+  .sync-indicator { bottom: 16px; left: 16px; font-size: 12px; padding: 10px 14px; }
   
   /* Misc */
   .icon-btn { width: 28px; height: 28px; }

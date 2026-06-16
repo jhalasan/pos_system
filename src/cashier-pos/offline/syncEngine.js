@@ -6,6 +6,16 @@ const DEFAULT_INTERVAL_MS = 5_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
 
+function emitSyncStatus(state, message) {
+  globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+    detail: {
+      scope: 'cashier',
+      state,
+      message,
+    },
+  }))
+}
+
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -17,7 +27,6 @@ function retryDelay(attempts) {
 
 function cloudSalePayload(sale) {
   return {
-    client_sale_id: sale.clientSaleId,
     transaction_no: sale.transactionNo,
     cashier_id: sale.cashierId,
     total_amount: sale.totalAmount,
@@ -25,16 +34,76 @@ function cloudSalePayload(sale) {
     ref_number: sale.refNumber,
     status: 'completed',
     created_at: sale.createdAt,
-    items: sale.items,
-    subtotal_amount: sale.subtotalAmount,
-    discount_percent: sale.discountPercent,
-    discount_amount: sale.discountAmount,
   }
 }
 
 function saleActivityDetail(sale) {
   const itemCount = sale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
   return `Completed transaction ${sale.transactionNo} with ${itemCount} item(s), total PHP ${Number(sale.totalAmount || 0).toFixed(2)}.`
+}
+
+async function ensureCloudSaleItems(pb, sale, cloudSale) {
+  const existingItems = await pb.collection('sale_items').getFullList({
+    filter: pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
+    requestKey: null,
+  }).catch(() => [])
+
+  if (existingItems.length > 0) {
+    return { items: existingItems, createdNow: false }
+  }
+
+  const createdItems = []
+  for (const item of sale.items) {
+    const created = await pb.collection('sale_items').create({
+      sale_id: cloudSale.id,
+      product_id: item.productId,
+      quantity_sold: Number(item.quantity) || 0,
+      price_at_sale: Number(item.price) || 0,
+    }, {
+      requestKey: `sale-item:${sale.clientSaleId}:${item.productId}`,
+    })
+    createdItems.push(created)
+  }
+
+  return { items: createdItems, createdNow: true }
+}
+
+async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
+  for (const item of sale.items) {
+    const productId = String(item.productId || '').trim()
+    if (!productId) continue
+
+    const product = await pb.collection('products').getOne(productId, { requestKey: null })
+    const matchingSaleItems = cloudSaleItems.filter((saleItem) => {
+      const saleItemProductId = Array.isArray(saleItem.product_id) ? saleItem.product_id[0] : saleItem.product_id
+      return saleItemProductId === productId
+    })
+    const syncedQty = matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0)
+
+    await pb.collection('products').update(product.id, {
+      quantity: Math.max(0, (Number(product.quantity) || 0) - syncedQty),
+    }, {
+      requestKey: `product-stock:${sale.clientSaleId}:${productId}`,
+    })
+  }
+}
+
+async function findExistingCloudSale(pb, sale) {
+  const filters = [
+    pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
+      transactionNo: sale.transactionNo,
+      cashierId: sale.cashierId,
+    }),
+  ]
+
+  for (const filter of filters) {
+    const found = await pb.collection('sales').getFirstListItem(filter, {
+      requestKey: null,
+    }).catch(() => null)
+    if (found) return found
+  }
+
+  return null
 }
 
 export class CashierSyncEngine extends EventTarget {
@@ -105,16 +174,23 @@ export class CashierSyncEngine extends EventTarget {
   }
 
   async runSync() {
-    if (!(await this.isCloudReachable())) {
-      this.dispatchEvent(new CustomEvent('offline'))
-      return { uploaded: 0, failed: 0 }
-    }
-
     const now = Date.now()
     const queuedSales = await cashierDb.pendingSales
       .where('[status+nextAttemptAt]')
       .between(['pending', Dexie.minKey], ['pending', now])
       .sortBy('createdAt')
+
+    if (queuedSales.length === 0) {
+      return { uploaded: 0, failed: 0 }
+    }
+
+    if (!(await this.isCloudReachable())) {
+      emitSyncStatus('offline', 'Auto-Sync Waiting for Connection')
+      this.dispatchEvent(new CustomEvent('offline'))
+      return { uploaded: 0, failed: 0 }
+    }
+
+    emitSyncStatus('running', 'Auto-Sync Running')
 
     let uploaded = 0
     let failed = 0
@@ -143,25 +219,32 @@ export class CashierSyncEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('synccomplete', {
       detail: { uploaded, failed },
     }))
+    emitSyncStatus(
+      failed > 0 ? 'failed' : 'succeeded',
+      failed > 0
+        ? `Auto-Sync Finished with ${failed} Failed`
+        : 'Auto-Sync Succeeded',
+    )
     return { uploaded, failed }
   }
 
   async uploadSale(sale) {
+    let cloudSale = null
     try {
-      await this.pb.collection('sales').create(cloudSalePayload(sale), {
+      cloudSale = await this.pb.collection('sales').create(cloudSalePayload(sale), {
         requestKey: `sale:${sale.clientSaleId}`,
       })
     } catch (error) {
       if (error?.status !== 400 && error?.status !== 409) throw error
 
-      const existing = await this.pb.collection('sales').getFirstListItem(
-        this.pb.filter('client_sale_id = {:clientSaleId}', {
-          clientSaleId: sale.clientSaleId,
-        }),
-        { requestKey: null },
-      ).catch(() => null)
+      cloudSale = await findExistingCloudSale(this.pb, sale)
 
-      if (!existing) throw error
+      if (!cloudSale) throw error
+    }
+
+    const { items: cloudSaleItems, createdNow } = await ensureCloudSaleItems(this.pb, sale, cloudSale)
+    if (createdNow) {
+      await ensureCloudStockDeduction(this.pb, sale, cloudSaleItems)
     }
 
     const detail = saleActivityDetail(sale)
@@ -183,7 +266,9 @@ export class CashierSyncEngine extends EventTarget {
     }
 
     await cashierDb.pendingSales.delete(sale.clientSaleId)
-    await cashierDb.completedSales.update(sale.clientSaleId, { syncStatus: 'synced' })
+    if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+      await cashierDb.completedSales.update(sale.clientSaleId, { syncStatus: 'synced' })
+    }
     this.dispatchEvent(new CustomEvent('salesynced', {
       detail: { clientSaleId: sale.clientSaleId },
     }))

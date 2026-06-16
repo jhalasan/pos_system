@@ -156,6 +156,21 @@ function toCloudActivityLog(record) {
   }
 }
 
+function toAuthorizationBarcode(record) {
+  const generatedBy = Array.isArray(record.expand?.generated_by)
+    ? record.expand.generated_by[0]
+    : record.expand?.generated_by
+
+  return {
+    id: record.id,
+    barcode: record.code || '',
+    label: record.label || 'Void and Discount Approval',
+    status: record.status || 'active',
+    generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
+    createdAt: record.created || new Date().toISOString(),
+  }
+}
+
 function pocketBaseErrorMessage(error, fallback = 'PocketBase rejected the request.') {
   const fieldErrors = error?.response?.data || error?.data?.data || {}
   const details = Object.entries(fieldErrors)
@@ -603,10 +618,62 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     return syncEngine?.syncNow() || { uploaded: 0, failed: 0 }
   },
-  latestAuthorizationBarcode: async () => null,
-  authorizationBarcodes: async () => [],
-  updateAuthorizationBarcodeStatus: async () => null,
-  deleteAuthorizationBarcode: async () => null,
+  async latestAuthorizationBarcode() {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) return null
+
+    const records = await pb.collection('authorization_barcodes').getFullList({
+      sort: '-created',
+      filter: 'status = "active"',
+      expand: 'generated_by',
+      requestKey: null,
+    }).catch(() => [])
+
+    return records[0] ? toAuthorizationBarcode(records[0]) : null
+  },
+  async authorizationBarcodes() {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) return []
+
+    const records = await pb.collection('authorization_barcodes').getFullList({
+      sort: '-created',
+      expand: 'generated_by',
+      requestKey: null,
+    }).catch(() => [])
+
+    return records.map(toAuthorizationBarcode)
+  },
+  async updateAuthorizationBarcodeStatus(id, status) {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) {
+      throw new Error('Internet is required to update authorization barcodes.')
+    }
+
+    const nextStatus = status === 'revoked' ? 'revoked' : 'active'
+    const updated = await pb.collection('authorization_barcodes').update(id, {
+      status: nextStatus,
+    }, {
+      expand: 'generated_by',
+      requestKey: null,
+    }).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, 'Unable to update authorization barcode.'))
+    })
+
+    await recordActivity('Settings', `${nextStatus === 'active' ? 'Enabled' : 'Disabled'} authorization barcode ${updated.code}.`)
+    return toAuthorizationBarcode(updated)
+  },
+  async deleteAuthorizationBarcode(id) {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) {
+      throw new Error('Internet is required to delete authorization barcodes.')
+    }
+
+    await pb.collection('authorization_barcodes').delete(id, { requestKey: null }).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, 'Unable to delete authorization barcode.'))
+    })
+    await recordActivity('Settings', `Deleted authorization barcode ${id}.`)
+    return null
+  },
   async cashiers() {
     return listDesktopCashiers()
   },
@@ -648,11 +715,6 @@ export const desktopAdminApi = {
   async activityLogs() {
     await startAdminRuntime()
     const localLogs = await adminDb.activityLogs.orderBy('time').reverse().toArray()
-
-    if (localLogs.length > 0) {
-      return localLogs
-    }
-
     if (await isCloudReachable()) {
       const records = await pb.collection('activity_logs').getFullList({
         sort: '-timestamp,-created',
@@ -661,10 +723,16 @@ export const desktopAdminApi = {
       }).catch(() => [])
       const logs = records.map(toCloudActivityLog)
       if (logs.length) await adminDb.activityLogs.bulkPut(logs)
-      return logs
+
+      const merged = new Map()
+      for (const log of [...logs, ...localLogs]) {
+        const key = log.cloudId || log.id
+        if (!merged.has(key)) merged.set(key, log)
+      }
+      return [...merged.values()].sort((a, b) => new Date(b.time) - new Date(a.time))
     }
 
-    return []
+    return localLogs
   },
   async settingsAdmins() {
     await startAdminRuntime()
@@ -697,7 +765,45 @@ export const desktopAdminApi = {
     return toSettingsUser(updated)
   },
   updateAdminAuthorizationBarcode: async () => null,
-  generateAuthorizationBarcode: async () => null,
+  async generateAuthorizationBarcode(email, password) {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) {
+      throw new Error('Internet is required to generate authorization barcodes.')
+    }
+
+    const managerEmail = String(email || '').trim()
+    const managerPassword = String(password || '')
+    if (!managerEmail || !managerPassword) {
+      throw new Error('Admin password is required.')
+    }
+
+    const authClient = new PocketBase(baseUrl)
+    authClient.autoCancellation(false)
+    const auth = await authClient.collection('users').authWithPassword(managerEmail, managerPassword).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, 'Unable to verify admin credentials.'))
+    })
+
+    const admin = auth.record
+    if (admin?.role !== 'admin') throw new Error('Only admin accounts can generate authorization barcodes.')
+    if (admin?.status === 'inactive') throw new Error('This admin account is inactive.')
+
+    const barcode = `90${String(Date.now()).slice(-10)}${String(Math.floor(Math.random() * 100)).padStart(2, '0')}`
+    const created = await pb.collection('authorization_barcodes').create({
+      code: barcode,
+      label: 'Void and Discount Approval',
+      purpose: 'void_discount',
+      status: 'active',
+      generated_by: admin.id,
+    }, {
+      expand: 'generated_by',
+      requestKey: null,
+    }).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, 'Unable to generate authorization barcode.'))
+    })
+
+    await recordActivity('Settings', 'Generated authorization barcode for void and discount approvals.')
+    return toAuthorizationBarcode(created)
+  },
   async settingsCashiers() {
     return listDesktopCashiers()
   },

@@ -1,4 +1,9 @@
-import { cashierDb } from './db'
+import { cashierDb, initializeCashierDb } from './db'
+
+async function hasTable(name) {
+  await initializeCashierDb()
+  return cashierDb.tables.some((table) => table.name === name)
+}
 
 function newClientSaleId() {
   if (!globalThis.crypto?.randomUUID) {
@@ -19,6 +24,7 @@ function validateSale(sale) {
 
 export async function finalizeSaleLocally(sale) {
   validateSale(sale)
+  await initializeCashierDb()
 
   const clientSaleId = newClientSaleId()
   const createdAt = new Date().toISOString()
@@ -26,6 +32,7 @@ export async function finalizeSaleLocally(sale) {
   const pendingSale = {
     clientSaleId,
     cashierId: sale.cashierId,
+    cashierName: String(sale.cashierName || ''),
     transactionNo: sale.transactionNo || `OFFLINE-${clientSaleId.slice(0, 8).toUpperCase()}`,
     totalAmount: Number(sale.totalAmount),
     subtotalAmount: Number(sale.subtotalAmount) || Number(sale.totalAmount),
@@ -47,10 +54,16 @@ export async function finalizeSaleLocally(sale) {
     createdAt,
   }
 
-  await cashierDb.transaction(
-    'rw',
+  const canStoreCompletedSales = await hasTable('completedSales')
+  const transactionTables = [
     cashierDb.products,
     cashierDb.pendingSales,
+  ]
+  if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
+
+  await cashierDb.transaction(
+    'rw',
+    ...transactionTables,
     async () => {
       for (const item of pendingSale.items) {
         if (!item.productId || item.quantity <= 0) {
@@ -69,30 +82,36 @@ export async function finalizeSaleLocally(sale) {
       }
 
       await cashierDb.pendingSales.add(pendingSale)
-      await cashierDb.completedSales.put({
-        ...pendingSale,
-        status: 'completed',
-        syncStatus: 'pending',
-      })
+      if (canStoreCompletedSales) {
+        await cashierDb.completedSales.put({
+          ...pendingSale,
+          status: 'completed',
+          syncStatus: 'pending',
+        })
+      }
     },
   )
 
   return pendingSale
 }
 
-export function getPendingSales() {
+export async function getPendingSales() {
+  await initializeCashierDb()
   return cashierDb.pendingSales.orderBy('createdAt').toArray()
 }
 
-export function getCompletedSales() {
+export async function getCompletedSales() {
+  if (!(await hasTable('completedSales'))) return []
   return cashierDb.completedSales.orderBy('createdAt').reverse().toArray()
 }
 
-export function getPendingSaleCount() {
+export async function getPendingSaleCount() {
+  await initializeCashierDb()
   return cashierDb.pendingSales.count()
 }
 
 export async function retryFailedSale(clientSaleId) {
+  await initializeCashierDb()
   const updated = await cashierDb.pendingSales.update(clientSaleId, {
     status: 'pending',
     attempts: 0,
@@ -101,4 +120,62 @@ export async function retryFailedSale(clientSaleId) {
   })
 
   if (!updated) throw new Error(`Queued sale "${clientSaleId}" was not found.`)
+}
+
+async function restoreProductStock(items = []) {
+  for (const item of items) {
+    const productId = String(item.productId || item.id || '')
+    if (!productId) continue
+    const product = await cashierDb.products.get(productId)
+    if (!product) continue
+    await cashierDb.products.update(product.id, {
+      quantity: (Number(product.quantity) || 0) + (Number(item.quantity) || 0),
+    })
+  }
+}
+
+export async function findLocalSale(clientSaleId) {
+  await initializeCashierDb()
+  const pendingSale = await cashierDb.pendingSales.get(clientSaleId)
+  const completedSale = await hasTable('completedSales')
+    ? await cashierDb.completedSales.get(clientSaleId)
+    : null
+
+  return completedSale || pendingSale || null
+}
+
+export async function voidLocalSale(clientSaleId, metadata = {}) {
+  await initializeCashierDb()
+  const sale = await findLocalSale(clientSaleId)
+  if (!sale) throw new Error(`Completed sale "${clientSaleId}" was not found locally.`)
+  if (sale.status === 'voided') throw new Error('This transaction has already been voided.')
+
+  const canStoreCompletedSales = await hasTable('completedSales')
+  const transactionTables = [cashierDb.products, cashierDb.pendingSales]
+  if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
+
+  await cashierDb.transaction('rw', ...transactionTables, async () => {
+    await restoreProductStock(sale.items)
+    await cashierDb.pendingSales.delete(clientSaleId)
+
+    if (canStoreCompletedSales) {
+      await cashierDb.completedSales.put({
+        ...sale,
+        status: 'voided',
+        syncStatus: sale.syncStatus === 'synced' ? 'voided' : 'voided',
+        voidedAt: metadata.voidedAt || new Date().toISOString(),
+        voidedBy: metadata.voidedBy || '',
+        voidReason: metadata.reason || '',
+      })
+    }
+  })
+
+  return {
+    ...sale,
+    status: 'voided',
+    syncStatus: sale.syncStatus === 'synced' ? 'voided' : 'voided',
+    voidedAt: metadata.voidedAt || new Date().toISOString(),
+    voidedBy: metadata.voidedBy || '',
+    voidReason: metadata.reason || '',
+  }
 }

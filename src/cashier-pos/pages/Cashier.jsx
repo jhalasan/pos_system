@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ClockHistory, Dash, Plus, Trash, XLg, Cart } from 'react-bootstrap-icons';
+import { ArrowRepeat, ClockHistory, Dash, Plus, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
+import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
 import styles from '../styles/Cashier.module.css';
 
@@ -71,6 +72,14 @@ const Cashier = ({ onLogout, user }) => {
   const [showVoidAuth, setShowVoidAuth] = useState(false);
   const [managerBarcode, setManagerBarcode] = useState('');
   const [voidError, setVoidError] = useState('');
+  const [showCompletedVoidModal, setShowCompletedVoidModal] = useState(false);
+  const [completedVoidTarget, setCompletedVoidTarget] = useState(null);
+  const [completedVoidCode, setCompletedVoidCode] = useState('');
+  const [completedVoidEmail, setCompletedVoidEmail] = useState('');
+  const [completedVoidPassword, setCompletedVoidPassword] = useState('');
+  const [completedVoidReason, setCompletedVoidReason] = useState('');
+  const [completedVoidError, setCompletedVoidError] = useState('');
+  const [completedVoidLoading, setCompletedVoidLoading] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountApprovalCode, setDiscountApprovalCode] = useState('');
   const [discountAmountInput, setDiscountAmountInput] = useState('');
@@ -85,6 +94,7 @@ const Cashier = ({ onLogout, user }) => {
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
+  const [syncing, setSyncing] = useState(false);
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -98,6 +108,8 @@ const Cashier = ({ onLogout, user }) => {
   const gcashRef = activeTxn.gcashRef;
   const lastScanned = activeTxn.lastScanned;
   const isCompletedTxn = activeTxn.status === 'completed';
+  const isVoidedTxn = activeTxn.status === 'voided' || activeTxn.completedSale?.status === 'voided';
+  const isLockedTxn = isCompletedTxn || isVoidedTxn;
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -177,11 +189,10 @@ const Cashier = ({ onLogout, user }) => {
   }
 
   async function loadTransactionHistory() {
-    if (!user?.id) return;
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      setHistoryRecords(await cashierApi.salesHistory({ cashierId: user.id }));
+      setHistoryRecords(await cashierApi.salesHistory({}));
     } catch (err) {
       setHistoryError(err.message || 'Unable to load transaction history.');
     } finally {
@@ -241,8 +252,19 @@ const Cashier = ({ onLogout, user }) => {
     });
   };
 
+  const resetCompletedVoidState = () => {
+    setShowCompletedVoidModal(false);
+    setCompletedVoidTarget(null);
+    setCompletedVoidCode('');
+    setCompletedVoidEmail('');
+    setCompletedVoidPassword('');
+    setCompletedVoidReason('');
+    setCompletedVoidError('');
+    setCompletedVoidLoading(false);
+  };
+
   const handleVoidTransaction = () => {
-    if (isCompletedTxn) return;
+    if (isLockedTxn) return;
     setShowVoidAuth(true);
     setManagerBarcode('');
     setVoidError('');
@@ -286,8 +308,86 @@ const Cashier = ({ onLogout, user }) => {
     loadTransactionHistory();
   };
 
+  const handleSyncNow = async () => {
+    setSyncing(true);
+    try {
+      const result = await cashierApi.syncNow();
+      await loadProducts();
+      if (showHistory) await loadTransactionHistory();
+      showNotification(`Sync finished: ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed.`);
+    } catch (err) {
+      showNotification(err.message || 'Unable to sync right now.');
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleOpenCompletedVoidModal = (sale) => {
+    setCompletedVoidTarget(sale);
+    setCompletedVoidCode('');
+    setCompletedVoidEmail('');
+    setCompletedVoidPassword('');
+    setCompletedVoidReason('');
+    setCompletedVoidError('');
+    setShowCompletedVoidModal(true);
+  };
+
+  const handleConfirmCompletedVoid = async () => {
+    if (!completedVoidTarget?.saleId) {
+      setCompletedVoidError('Completed sale reference is missing.');
+      return;
+    }
+
+    const authorization = completedVoidCode.trim()
+      ? { code: completedVoidCode.trim() }
+      : { email: completedVoidEmail.trim(), password: completedVoidPassword };
+
+    if (!authorization.code && (!authorization.email || !authorization.password)) {
+      setCompletedVoidError('Enter a manager barcode or an admin email and password.');
+      return;
+    }
+
+    setCompletedVoidLoading(true);
+    setCompletedVoidError('');
+
+    try {
+      const result = await cashierApi.voidCompletedSale({
+        saleId: completedVoidTarget.saleId,
+        cashierId: user?.id,
+        authorization,
+        reason: completedVoidReason.trim(),
+      });
+
+      setTransactions((current) => current.map((txn) => {
+        const matchesSale = txn.completedSale?.saleId === completedVoidTarget.saleId;
+        if (!matchesSale) return txn;
+
+        return {
+          ...txn,
+          status: 'voided',
+          completedSale: {
+            ...txn.completedSale,
+            status: 'voided',
+            approvedBy: result.approvedBy,
+            voidedAt: result.voidedAt,
+            voidReason: completedVoidReason.trim(),
+          },
+        };
+      }));
+
+      await loadProducts();
+      if (showHistory) await loadTransactionHistory();
+      resetCompletedVoidState();
+      showNotification(`Transaction ${result.transactionNo} has been voided.`);
+    } catch (err) {
+      setCompletedVoidError(err.message || 'Unable to void the completed transaction.');
+    } finally {
+      setCompletedVoidLoading(false);
+    }
+  };
+
   const handleAddToCart = (product) => {
-    if (isCompletedTxn) {
+    if (isLockedTxn) {
       showNotification('This transaction is already completed. Start a new transaction to continue selling.');
       return;
     }
@@ -375,7 +475,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleScan = async () => {
-    if (isCompletedTxn) {
+    if (isLockedTxn) {
       showNotification('This transaction is already completed. Start a new transaction to continue selling.');
       return;
     }
@@ -390,12 +490,12 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleRemoveItem = (id) => {
-    if (isCompletedTxn) return;
+    if (isLockedTxn) return;
     updateActiveTransaction({ cartItems: cartItems.filter((item) => item.id !== id) });
   };
 
   const handleQuantityChange = (id, value) => {
-    if (isCompletedTxn) return;
+    if (isLockedTxn) return;
     const requested = Number(value);
     if (!Number.isFinite(requested)) return;
 
@@ -425,8 +525,8 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const validatePayment = () => {
-    if (isCompletedTxn) {
-      alert('This transaction is already completed.');
+    if (isLockedTxn) {
+      alert(isVoidedTxn ? 'This transaction has already been voided.' : 'This transaction is already completed.');
       return false;
     }
 
@@ -477,6 +577,7 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const sale = await cashierApi.completeSale({
         cashierId: user?.id,
+        cashierName: user?.name || user?.email || 'Cashier',
         transactionNo: completedTransactionNo,
         subtotalAmount: subtotal,
         discountPercent: discount,
@@ -568,6 +669,16 @@ const Cashier = ({ onLogout, user }) => {
             <ClockHistory size={16} />
             History
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles['history-button']}
+            onClick={handleSyncNow}
+            disabled={syncing}
+          >
+            <ArrowRepeat size={16} className={syncing ? styles['spin-icon'] : ''} />
+            {syncing ? 'Syncing' : 'Sync'}
+          </Button>
         </div>
         <div className={styles['header-actions']}>
           <button className={styles['logout-button']} onClick={handleLogout}>
@@ -582,13 +693,15 @@ const Cashier = ({ onLogout, user }) => {
           {transactions.map((txn) => (
             <button
               key={txn.id}
-              className={`${styles['transaction-tab']} ${activeTransaction === txn.id ? styles.active : ''} ${txn.status === 'completed' ? styles.completed : ''}`}
+              className={`${styles['transaction-tab']} ${activeTransaction === txn.id ? styles.active : ''} ${txn.status === 'completed' ? styles.completed : ''} ${txn.status === 'voided' ? styles.voided : ''}`}
               onClick={() => setActiveTransaction(txn.id)}
               title={txn.transactionNo}
             >
               {txn.name}
               {txn.status === 'completed' ? (
                 <small className={styles['tab-done']}>Done</small>
+              ) : txn.status === 'voided' ? (
+                <small className={`${styles['tab-done']} ${styles.voided}`}>Voided</small>
               ) : txn.cartItems.length > 0 && (
                 <small className={styles['tab-count']}>{txn.cartItems.reduce((sum, item) => sum + item.quantity, 0)}</small>
               )}
@@ -633,18 +746,36 @@ const Cashier = ({ onLogout, user }) => {
             </div>
           </div>
 
-          {isCompletedTxn && (
+          {isLockedTxn && (
             <div className={styles['completed-banner']}>
               <div>
-                <strong>Transaction Completed</strong>
+                <strong>{isVoidedTxn ? 'Transaction Voided' : 'Transaction Completed'}</strong>
                 <span>
-                  {activeTxn.completedSale?.transactionNo || activeTxn.transactionNo} was completed
-                  {activeTxn.completedSale?.completedAt ? ` at ${formatTransactionTime(activeTxn.completedSale.completedAt)}` : ''}.
+                  {activeTxn.completedSale?.transactionNo || activeTxn.transactionNo}
+                  {isVoidedTxn ? ' was voided' : ' was completed'}
+                  {activeTxn.completedSale?.voidedAt
+                    ? ` at ${formatTransactionTime(activeTxn.completedSale.voidedAt)}`
+                    : (activeTxn.completedSale?.completedAt ? ` at ${formatTransactionTime(activeTxn.completedSale.completedAt)}` : '')}.
                 </span>
               </div>
-              <Badge variant={activeTxn.completedSale?.pendingSync ? 'info' : 'success'} size="sm">
-                {activeTxn.completedSale?.pendingSync ? 'Pending sync' : 'Completed'}
-              </Badge>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <Badge variant={isVoidedTxn ? 'danger' : (activeTxn.completedSale?.pendingSync ? 'info' : 'success')} size="sm">
+                  {isVoidedTxn ? 'Voided' : (activeTxn.completedSale?.pendingSync ? 'Pending sync' : 'Completed')}
+                </Badge>
+                {isCompletedTxn && !isVoidedTxn && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenCompletedVoidModal({
+                      saleId: activeTxn.completedSale?.saleId,
+                      transactionNo: activeTxn.completedSale?.transactionNo || activeTxn.transactionNo,
+                      totalAmount: activeTxn.completedSale?.totalAmount || total,
+                    })}
+                  >
+                    Void Transaction
+                  </Button>
+                )}
+              </div>
             </div>
           )}
 
@@ -661,7 +792,7 @@ const Cashier = ({ onLogout, user }) => {
                 inputRef={barcodeInputRef}
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
-                disabled={isCompletedTxn}
+                disabled={isLockedTxn}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -669,7 +800,7 @@ const Cashier = ({ onLogout, user }) => {
                   }
                 }}
               />
-              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isCompletedTxn}>Scan</Button>
+              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isLockedTxn}>Scan</Button>
             </div>
 
             <Input
@@ -678,7 +809,7 @@ const Cashier = ({ onLogout, user }) => {
               value={searchProduct}
               onChange={handleSearchProductChange}
               onKeyDown={handleSearchKeyDown}
-              disabled={isCompletedTxn}
+              disabled={isLockedTxn}
             />
 
             {lastScanned && (
@@ -811,9 +942,9 @@ const Cashier = ({ onLogout, user }) => {
               </div>
             </div>
 
-            {isCompletedTxn && (
+            {isLockedTxn && (
               <div className={styles['payment-complete-card']}>
-                <strong>Completed</strong>
+                <strong>{isVoidedTxn ? 'Voided' : 'Completed'}</strong>
                 <span>Transaction {activeTxn.completedSale?.transactionNo || activeTxn.transactionNo}</span>
               </div>
             )}
@@ -840,8 +971,8 @@ const Cashier = ({ onLogout, user }) => {
             <div className={styles['payment-method']}>
               <label className={styles['filter-label']}>Payment Type</label>
               <div className={styles['payment-buttons']}>
-                <button className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: false })} disabled={isCompletedTxn}>Single</button>
-                <button className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: true })} disabled={isCompletedTxn}>Split</button>
+                <button className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: false })} disabled={isLockedTxn}>Single</button>
+                <button className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: true })} disabled={isLockedTxn}>Split</button>
               </div>
             </div>
 
@@ -850,14 +981,14 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['payment-method']}>
                   <label className={styles['filter-label']}>Payment Method</label>
                   <div className={styles['payment-buttons']}>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isCompletedTxn}>Cash</button>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isCompletedTxn}>GCash</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isLockedTxn}>Cash</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isLockedTxn}>GCash</button>
                   </div>
                 </div>
 
                 {paymentMethod === 'cash' && (
                   <>
-                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isCompletedTxn} />
+                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
                     {cashAmount && (
                       <div className={styles['change-display']}>
                         <div className={styles['change-row']}><span>Total Payment:</span><span>{money(total)}</span></div>
@@ -872,7 +1003,7 @@ const Cashier = ({ onLogout, user }) => {
 
                 {paymentMethod === 'gcash' && (
                   <>
-                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isCompletedTxn} />
+                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isLockedTxn} />
                     <div className={styles['total-display']}><span>Total amount: {money(total)}</span></div>
                   </>
                 )}
@@ -880,8 +1011,8 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <div className={styles['payment-method']}>
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isCompletedTxn} />
-                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isCompletedTxn} />
+                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
+                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
                 <div className={styles['change-display']}>
                   <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
                   <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
@@ -894,12 +1025,12 @@ const Cashier = ({ onLogout, user }) => {
               fullWidth
               className={styles['complete-button']}
               onClick={handleCompleteTransaction}
-              disabled={cartItems.length === 0 || isCompletedTxn}
+              disabled={cartItems.length === 0 || isLockedTxn}
             >
-              {isCompletedTxn ? 'Transaction Completed' : 'Complete Transaction'}
+              {isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : 'Complete Transaction')}
             </Button>
 
-            {!isCompletedTxn && cartItems.length > 0 && (
+            {!isLockedTxn && cartItems.length > 0 && (
               <div className={styles['void-zone']}>
                 <button type="button" onClick={handleVoidTransaction}>
                   <Trash size={14} />
@@ -1034,12 +1165,13 @@ const Cashier = ({ onLogout, user }) => {
                   <div>
                     <strong>TXN {sale.transactionNo}</strong>
                     <span>{formatTransactionTime(sale.createdAt)} | {sale.itemCount} item(s)</span>
+                    <span>{sale.cashierName || 'Cashier'}</span>
                   </div>
                   <div className={styles['history-total']}>{money(sale.totalAmount)}</div>
                 </div>
                 <div className={styles['history-meta']}>
                   <Badge variant="info" size="sm">{sale.paymentMethod || 'payment'}</Badge>
-                  <Badge variant="success" size="sm">{sale.status}</Badge>
+                  <Badge variant={sale.status === 'Voided' ? 'danger' : 'success'} size="sm">{sale.status}</Badge>
                 </div>
                 <div className={styles['history-lines']}>
                   {sale.items.map((item) => (
@@ -1055,6 +1187,61 @@ const Cashier = ({ onLogout, user }) => {
         )}
       </Modal>
 
+      <Modal
+        isOpen={showCompletedVoidModal}
+        onClose={resetCompletedVoidState}
+        title="Void Completed Transaction"
+        footer={(
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={resetCompletedVoidState} disabled={completedVoidLoading}>
+              Cancel
+            </button>
+            <button className="btn btn-danger" onClick={handleConfirmCompletedVoid} disabled={completedVoidLoading}>
+              {completedVoidLoading ? 'Voiding...' : 'Confirm Void'}
+            </button>
+          </div>
+        )}
+      >
+        <p>
+          Void transaction <strong>{completedVoidTarget?.transactionNo || ''}</strong> with manager approval.
+        </p>
+        <Input
+          label="Manager Barcode"
+          placeholder="Scan or enter manager barcode"
+          value={completedVoidCode}
+          onChange={(e) => setCompletedVoidCode(e.target.value)}
+          disabled={completedVoidLoading}
+        />
+        <p style={{ margin: '4px 0 12px', color: 'var(--text-muted)', fontSize: 13 }}>
+          Or use an admin account if the barcode is unavailable.
+        </p>
+        <Input
+          label="Admin Email"
+          type="email"
+          placeholder="Enter admin email"
+          value={completedVoidEmail}
+          onChange={(e) => setCompletedVoidEmail(e.target.value)}
+          disabled={completedVoidLoading || Boolean(completedVoidCode.trim())}
+        />
+        <Input
+          label="Admin Password"
+          type="password"
+          placeholder="Enter admin password"
+          value={completedVoidPassword}
+          onChange={(e) => setCompletedVoidPassword(e.target.value)}
+          disabled={completedVoidLoading || Boolean(completedVoidCode.trim())}
+        />
+        <Input
+          label="Reason"
+          placeholder="Reason for voiding this sale"
+          value={completedVoidReason}
+          onChange={(e) => setCompletedVoidReason(e.target.value)}
+          disabled={completedVoidLoading}
+        />
+        {completedVoidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{completedVoidError}</div>}
+      </Modal>
+
+      <SyncStatusIndicator scope="cashier" />
       {notification && <div className={styles['notification-toast']}>{notification}</div>}
     </div>
   );

@@ -8,6 +8,16 @@ const DEFAULT_INTERVAL_MS = 5_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
 
+function emitSyncStatus(state, message) {
+  globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+    detail: {
+      scope: 'admin',
+      state,
+      message,
+    },
+  }))
+}
+
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
@@ -124,16 +134,23 @@ export class AdminSyncEngine extends EventTarget {
   }
 
   async runSync() {
-    if (!(await this.isCloudReachable())) {
-      this.dispatchEvent(new CustomEvent('offline'))
-      return { uploaded: 0, failed: 0 }
-    }
-
     const now = Date.now()
     const queuedOps = await adminDb.pendingOps
       .where('[status+nextAttemptAt]')
       .between(['pending', Dexie.minKey], ['pending', now])
       .sortBy('createdAt')
+
+    if (queuedOps.length === 0) {
+      return { uploaded: 0, failed: 0 }
+    }
+
+    if (!(await this.isCloudReachable())) {
+      emitSyncStatus('offline', 'Auto-Sync Waiting for Connection')
+      this.dispatchEvent(new CustomEvent('offline'))
+      return { uploaded: 0, failed: 0 }
+    }
+
+    emitSyncStatus('running', 'Auto-Sync Running')
 
     let uploaded = 0
     let failed = 0
@@ -164,6 +181,12 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     this.dispatchEvent(new CustomEvent('synccomplete', { detail: { uploaded, failed } }))
+    emitSyncStatus(
+      failed > 0 ? 'failed' : 'succeeded',
+      failed > 0
+        ? `Auto-Sync Finished with ${failed} Failed`
+        : 'Auto-Sync Succeeded',
+    )
     return { uploaded, failed }
   }
 

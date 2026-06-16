@@ -1,11 +1,14 @@
+import PocketBase from 'pocketbase'
 import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { getAllProducts, getProductByBarcode } from '../offline/productRepository'
 import {
   finalizeSaleLocally,
+  findLocalSale,
   getCompletedSales,
   getPendingSales,
+  voidLocalSale,
 } from '../offline/saleRepository'
 import { startCashierRuntime } from '../offline/runtime'
 
@@ -100,6 +103,67 @@ async function createCloudActivityLog({ cashierId, action, detail }) {
   }, { requestKey: `activity:${cashierId}:${action}:${Date.now()}` }).catch(() => null)
 }
 
+async function authorizeManagerApproval(authorization = {}) {
+  const payload = typeof authorization === 'string' ? { code: authorization } : authorization
+  const code = String(payload?.code || '').trim()
+  const email = String(payload?.email || '').trim()
+  const password = String(payload?.password || '')
+  const activeRuntime = await runtime()
+
+  if (code) {
+    const authorizationRecord = await activeRuntime.pb.collection('authorization_barcodes').getFirstListItem(
+      activeRuntime.pb.filter('code = {:code} && status = "active"', { code }),
+      { expand: 'generated_by', requestKey: null },
+    ).catch(() => null)
+
+    if (authorizationRecord) {
+      const generatedBy = Array.isArray(authorizationRecord.expand?.generated_by)
+        ? authorizationRecord.expand.generated_by[0]
+        : authorizationRecord.expand?.generated_by
+
+      return {
+        id: generatedBy?.id || '',
+        name: generatedBy?.name || generatedBy?.email || 'Manager',
+        email: generatedBy?.email || '',
+        method: 'barcode',
+      }
+    }
+
+    const legacyManager = await activeRuntime.pb.collection('users').getFirstListItem(
+      activeRuntime.pb.filter('void_barcode = {:code} && role = "admin"', { code }),
+      { requestKey: null },
+    ).catch(() => null)
+
+    if (legacyManager) {
+      return {
+        id: legacyManager.id,
+        name: legacyManager.name || legacyManager.email || 'Manager',
+        email: legacyManager.email || '',
+        method: 'barcode',
+      }
+    }
+  }
+
+  if (email && password) {
+    const adminClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL)
+    adminClient.autoCancellation(false)
+    const auth = await adminClient.collection('users').authWithPassword(email, password)
+    const admin = auth.record
+
+    if (admin?.role !== 'admin') throw new Error('Only admin accounts can approve completed transaction voids.')
+    if (admin?.status === 'inactive') throw new Error('This admin account is inactive.')
+
+    return {
+      id: admin.id,
+      name: admin.name || admin.email || 'Manager',
+      email: admin.email || '',
+      method: 'password',
+    }
+  }
+
+  throw new Error('Manager approval requires a barcode or admin email and password.')
+}
+
 export const desktopCashierApi = {
   async currentUser() {
     const activeRuntime = await runtime()
@@ -185,10 +249,15 @@ export const desktopCashierApi = {
         transactionNo: sale.transactionNo,
         totalAmount: sale.totalAmount,
         paymentMethod: sale.paymentMethod,
-        status: pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed',
+        status: sale.status === 'voided'
+          ? 'Voided'
+          : (pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed'),
         createdAt: sale.createdAt,
         itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0),
         items: sale.items,
+        cashierName: sale.cashierName || '',
+        approvedBy: sale.voidedBy || '',
+        voidedAt: sale.voidedAt || '',
       }))
   },
 
@@ -207,18 +276,78 @@ export const desktopCashierApi = {
     }
   },
 
+  async syncNow() {
+    const activeRuntime = await runtime()
+    return activeRuntime.syncEngine.syncNow()
+  },
+
   async authorizeVoid(code) {
     if (globalThis.navigator && !globalThis.navigator.onLine) {
       throw new Error('Manager approval requires a network connection.')
     }
-    const activeRuntime = await runtime()
-    return activeRuntime.pb.collection('authorization_barcodes').getFirstListItem(
-      activeRuntime.pb.filter('code = {:code} && status = "active"', { code }),
-      { requestKey: null },
-    )
+    return authorizeManagerApproval(code)
   },
 
   async logActivity({ cashierId, action, detail }) {
     return createCloudActivityLog({ cashierId, action, detail })
+  },
+
+  async voidCompletedSale({ saleId, cashierId, authorization, reason }) {
+    const localSale = await findLocalSale(saleId)
+    if (!localSale) throw new Error('Completed sale not found on this device.')
+    if (localSale.status === 'voided') throw new Error('This transaction has already been voided.')
+
+    const approver = await authorizeManagerApproval(authorization)
+
+    if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
+      const activeRuntime = await runtime()
+      const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
+        activeRuntime.pb.filter('client_sale_id = {:clientSaleId}', { clientSaleId: saleId }),
+        { requestKey: null },
+      ).catch(() => null)
+
+      if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
+        const saleItems = await activeRuntime.pb.collection('sale_items').getFullList({
+          filter: activeRuntime.pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
+          requestKey: null,
+        })
+
+        for (const item of saleItems) {
+          const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
+          if (!productId) continue
+          const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
+          await activeRuntime.pb.collection('products').update(product.id, {
+            quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+          }, { requestKey: null })
+        }
+
+        await activeRuntime.pb.collection('sales').update(cloudSale.id, {
+          status: 'voided',
+          voided_by: approver.id || '',
+        }, { requestKey: null })
+      }
+    } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
+      throw new Error('Internet is required to void a synced transaction.')
+    }
+
+    const voidedSale = await voidLocalSale(saleId, {
+      reason,
+      voidedAt: new Date().toISOString(),
+      voidedBy: approver.name,
+    })
+
+    await createCloudActivityLog({
+      cashierId: cashierId || localSale.cashierId,
+      action: 'Transaction Void',
+      detail: `Voided completed transaction ${localSale.transactionNo} approved by ${approver.name}${reason ? ` (${reason})` : ''}`,
+    })
+
+    return {
+      id: voidedSale.clientSaleId,
+      transactionNo: voidedSale.transactionNo,
+      status: 'Voided',
+      approvedBy: approver.name,
+      voidedAt: voidedSale.voidedAt,
+    }
   },
 }
