@@ -21,6 +21,14 @@ cashierDb.version(3).stores({
   settings: '&key',
 })
 
+cashierDb.version(4).stores({
+  products: '&id, &barcode, name, category, updated',
+  pendingSales: '&clientSaleId, status, createdAt, nextAttemptAt, [status+nextAttemptAt]',
+  completedSales: '&clientSaleId, cashierId, transactionNo, createdAt',
+  quickLoginAccounts: '&id, email, role, status, quickLoginEnabled',
+  settings: '&key',
+})
+
 cashierDb.on('blocked', () => {
   console.warn('Cashier database upgrade is blocked by another open window.')
 })

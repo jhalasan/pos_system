@@ -4,6 +4,21 @@ import { login } from '../auth'
 import { IconLock } from '../components/Icons'
 import { api } from '../services/api'
 
+function displayName(account) {
+  const email = String(account?.email || '').trim()
+  const name = String(account?.name || '').trim()
+  return name || email.split('@')[0] || 'Admin'
+}
+
+function initialsFor(account) {
+  return displayName(account)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('')
+    .slice(0, 2) || 'A'
+}
+
 export default function Login() {
   const nav = useNavigate()
   const [email, setEmail] = useState('')
@@ -18,7 +33,9 @@ export default function Login() {
     async function loadQuickAccounts() {
       try {
         const accounts = await api.adminQuickLoginAccounts()
-        if (!ignore) setQuickAccounts(accounts)
+        if (!ignore) {
+          setQuickAccounts((Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim()))
+        }
       } catch {
         if (!ignore) setQuickAccounts([])
       }
@@ -77,10 +94,10 @@ export default function Login() {
                     disabled={loading}
                   >
                     <span className="quick-login-avatar">
-                      {account.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}
+                      {initialsFor(account)}
                     </span>
                     <span>
-                      <strong>{account.name}</strong>
+                      <strong>{displayName(account)}</strong>
                       <small>{account.email}</small>
                     </span>
                   </button>

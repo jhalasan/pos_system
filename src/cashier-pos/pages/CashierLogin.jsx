@@ -4,6 +4,21 @@ import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
 import styles from '../styles/CashierLogin.module.css';
 
+function displayName(account) {
+  const email = String(account?.email || '').trim();
+  const name = String(account?.name || '').trim();
+  return name || email.split('@')[0] || 'Cashier';
+}
+
+function initialsFor(account) {
+  return displayName(account)
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() || '')
+    .join('')
+    .slice(0, 2) || 'C';
+}
+
 const CashierLogin = ({ onLogin }) => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
@@ -19,7 +34,9 @@ const CashierLogin = ({ onLogin }) => {
     async function loadQuickAccounts() {
       try {
         const accounts = await cashierApi.quickLoginAccounts();
-        if (!ignore) setQuickAccounts(accounts);
+        if (!ignore) {
+          setQuickAccounts((Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim()));
+        }
       } catch {
         if (!ignore) setQuickAccounts([]);
       }
@@ -86,10 +103,10 @@ const CashierLogin = ({ onLogin }) => {
                     disabled={loading}
                   >
                     <span className={styles['quick-login-avatar']}>
-                      {account.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}
+                      {initialsFor(account)}
                     </span>
                     <span>
-                      <strong>{account.name}</strong>
+                      <strong>{displayName(account)}</strong>
                       <small>{account.email}</small>
                     </span>
                   </button>

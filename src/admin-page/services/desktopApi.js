@@ -110,10 +110,13 @@ function toProduct(record) {
 }
 
 function toSettingsUser(record) {
+  const email = record.email || ''
+  const name = record.name || email.split('@')[0] || 'User'
+
   return {
     id: record.id,
-    name: record.name || record.email || 'User',
-    email: record.email || '',
+    name,
+    email,
     role: record.role || '',
     shift: record.shift || '',
     status: record.status || 'active',
@@ -296,6 +299,7 @@ async function offlineLogin(email, password) {
   }
 
   adminSession = cached
+  await recordActivity('Login', 'Signed in to admin dashboard.')
   return { user: cached, offline: true }
 }
 
@@ -436,6 +440,7 @@ export const desktopAdminApi = {
         throw new Error('This account is inactive.')
       }
       await cacheAdminLogin(auth.record, password)
+      await recordActivity('Login', 'Signed in to admin dashboard.')
       refreshAdminLocalCache({ pb }).catch(() => {})
       return { user: auth.record }
     } catch (error) {
@@ -459,15 +464,24 @@ export const desktopAdminApi = {
       return adminDb.users
         .where('role')
         .equals('admin')
-        .filter((user) => user.status === 'active')
+        .filter((user) => user.status === 'active' && Boolean(user.quick_login_enabled ?? user.quickLoginEnabled))
         .toArray()
+        .then((records) => records.map(toSettingsUser).filter((user) => user.email))
     }
     return pb.collection('users').getFullList({
       filter: 'role = "admin" && quick_login_enabled = true && status = "active"',
       fields: 'id,name,email,role,status',
       sort: 'name',
       requestKey: null,
-    }).catch(() => [])
+    })
+      .then(async (records) => {
+        await cacheUsers(records.map((record) => ({
+          ...record,
+          quick_login_enabled: true,
+        })))
+        return records.map(toSettingsUser).filter((user) => user.email)
+      })
+      .catch(() => [])
   },
 
   async products() {

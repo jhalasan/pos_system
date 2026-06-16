@@ -1,4 +1,5 @@
 import { initializeCashierDb } from '../offline/db'
+import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { getAllProducts, getProductByBarcode } from '../offline/productRepository'
 import {
@@ -9,6 +10,47 @@ import {
 import { startCashierRuntime } from '../offline/runtime'
 
 let runtimePromise
+
+function toQuickLoginAccount(record) {
+  const email = String(record?.email || '').trim()
+  const name = String(record?.name || '').trim()
+  return {
+    id: record.id,
+    email,
+    name: name || email.split('@')[0] || 'Cashier',
+  }
+}
+
+function toCachedQuickLoginAccount(record) {
+  return {
+    id: record.id,
+    email: String(record.email || '').trim(),
+    name: String(record.name || '').trim() || String(record.email || '').trim().split('@')[0] || 'Cashier',
+    role: record.role || 'cashier',
+    status: record.status || 'active',
+    quickLoginEnabled: Boolean(record.quickLoginEnabled ?? record.quick_login_enabled),
+  }
+}
+
+async function cacheQuickLoginAccounts(records = []) {
+  await initializeCashierDb()
+  const normalized = records
+    .map((record) => toCachedQuickLoginAccount(record))
+    .filter((record) => record.email)
+
+  await cashierDb.transaction('rw', cashierDb.quickLoginAccounts, async () => {
+    await cashierDb.quickLoginAccounts.clear()
+    if (normalized.length) await cashierDb.quickLoginAccounts.bulkPut(normalized)
+  })
+}
+
+async function cachedQuickLoginAccounts() {
+  await initializeCashierDb()
+  return cashierDb.quickLoginAccounts
+    .filter((account) => account.role === 'cashier' && account.status === 'active' && account.quickLoginEnabled)
+    .toArray()
+    .then((records) => records.map(toQuickLoginAccount))
+}
 
 function runtime() {
   runtimePromise ||= startCashierRuntime()
@@ -67,6 +109,25 @@ export const desktopCashierApi = {
   async login(email, password) {
     const activeRuntime = await runtime()
     const auth = await activeRuntime.login(email, password)
+    if (auth.record?.role !== 'cashier') {
+      activeRuntime.logout()
+      throw new Error('Only cashier accounts can access this area.')
+    }
+    if (auth.record?.status === 'inactive') {
+      activeRuntime.logout()
+      throw new Error('This account is inactive.')
+    }
+    await createCloudActivityLog({
+      cashierId: auth.record.id,
+      action: 'Login',
+      detail: 'Signed in to cashier POS',
+    })
+    void activeRuntime.pb.collection('users').getFullList({
+      filter: 'role = "cashier" && quick_login_enabled = true && status = "active"',
+      fields: 'id,name,email,role,status,quick_login_enabled',
+      sort: 'name',
+      requestKey: null,
+    }).then(cacheQuickLoginAccounts).catch(() => {})
     activeRuntime.refreshProducts().catch((error) => {
       console.warn('Product catalog refresh failed after cashier login:', error)
     })
@@ -79,14 +140,22 @@ export const desktopCashierApi = {
   },
 
   async quickLoginAccounts() {
-    if (globalThis.navigator && !globalThis.navigator.onLine) return []
+    await initializeCashierDb()
+    if (globalThis.navigator && !globalThis.navigator.onLine) {
+      return cachedQuickLoginAccounts()
+    }
     const activeRuntime = await runtime()
     return activeRuntime.pb.collection('users').getFullList({
-      filter: 'role = "cashier" && quick_login = true && status = "active"',
-      fields: 'id,name,email',
+      filter: 'role = "cashier" && quick_login_enabled = true && status = "active"',
+      fields: 'id,name,email,role,status,quick_login_enabled',
       sort: 'name',
       requestKey: null,
-    }).catch(() => [])
+    })
+      .then(async (records) => {
+        await cacheQuickLoginAccounts(records)
+        return records.map(toQuickLoginAccount).filter((account) => account.email)
+      })
+      .catch(() => cachedQuickLoginAccounts())
   },
 
   async products() {
