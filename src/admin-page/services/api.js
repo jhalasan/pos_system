@@ -134,6 +134,7 @@ const webApi = {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
   }),
+  syncNow: async () => ({ uploaded: 0, failed: 0 }),
 }
 
 export const api = isDesktopApp ? desktopAdminApi : webApi

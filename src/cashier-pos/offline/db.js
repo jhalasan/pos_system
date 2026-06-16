@@ -14,6 +14,13 @@ cashierDb.version(2).stores({
   settings: '&key',
 })
 
+cashierDb.version(3).stores({
+  products: '&id, &barcode, name, category, updated',
+  pendingSales: '&clientSaleId, status, createdAt, nextAttemptAt, [status+nextAttemptAt]',
+  completedSales: '&clientSaleId, cashierId, transactionNo, createdAt',
+  settings: '&key',
+})
+
 cashierDb.on('blocked', () => {
   console.warn('Cashier database upgrade is blocked by another open window.')
 })
@@ -22,4 +29,3 @@ export async function initializeCashierDb() {
   await cashierDb.open()
   return cashierDb
 }
-

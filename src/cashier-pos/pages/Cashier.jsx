@@ -45,6 +45,8 @@ function createTransaction(id, transactionNo = `${todayPrefix()}${String(id).pad
     cashAmount: '',
     gcashRef: '',
     lastScanned: null,
+    status: 'open',
+    completedSale: null,
   };
 }
 
@@ -95,6 +97,7 @@ const Cashier = ({ onLogout, user }) => {
   const cashAmount = activeTxn.cashAmount;
   const gcashRef = activeTxn.gcashRef;
   const lastScanned = activeTxn.lastScanned;
+  const isCompletedTxn = activeTxn.status === 'completed';
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
@@ -143,6 +146,14 @@ const Cashier = ({ onLogout, user }) => {
   const updateActiveTransaction = (changes) => {
     setTransactions((current) => current.map((txn) => (
       txn.id === activeTransaction
+        ? { ...txn, ...(typeof changes === 'function' ? changes(txn) : changes) }
+        : txn
+    )));
+  };
+
+  const updateTransactionById = (transactionId, changes) => {
+    setTransactions((current) => current.map((txn) => (
+      txn.id === transactionId
         ? { ...txn, ...(typeof changes === 'function' ? changes(txn) : changes) }
         : txn
     )));
@@ -231,6 +242,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleVoidTransaction = () => {
+    if (isCompletedTxn) return;
     setShowVoidAuth(true);
     setManagerBarcode('');
     setVoidError('');
@@ -275,6 +287,10 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleAddToCart = (product) => {
+    if (isCompletedTxn) {
+      showNotification('This transaction is already completed. Start a new transaction to continue selling.');
+      return;
+    }
     const availableQty = stockForProduct(product);
 
     if (availableQty <= 0) {
@@ -359,6 +375,10 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleScan = async () => {
+    if (isCompletedTxn) {
+      showNotification('This transaction is already completed. Start a new transaction to continue selling.');
+      return;
+    }
     const code = barcode.trim();
     if (!code) return;
 
@@ -370,10 +390,12 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleRemoveItem = (id) => {
+    if (isCompletedTxn) return;
     updateActiveTransaction({ cartItems: cartItems.filter((item) => item.id !== id) });
   };
 
   const handleQuantityChange = (id, value) => {
+    if (isCompletedTxn) return;
     const requested = Number(value);
     if (!Number.isFinite(requested)) return;
 
@@ -403,6 +425,11 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const validatePayment = () => {
+    if (isCompletedTxn) {
+      alert('This transaction is already completed.');
+      return false;
+    }
+
     if (cartItems.length === 0) {
       alert('Add items to the cart before completing the transaction.');
       return false;
@@ -435,9 +462,22 @@ const Cashier = ({ onLogout, user }) => {
   const handleCompleteTransaction = async () => {
     if (!validatePayment()) return;
 
+    const completingTransactionId = activeTxn.id;
+    const completedTransactionNo = activeTxn.transactionNo;
+    const completedPayment = {
+      paymentMethod: isSplitPayment ? 'split' : paymentMethod,
+      totalAmount: total,
+      cashAmount,
+      gcashRef,
+      splitPayments,
+      change,
+      completedAt: new Date().toISOString(),
+    };
+
     try {
       const sale = await cashierApi.completeSale({
         cashierId: user?.id,
+        transactionNo: completedTransactionNo,
         subtotalAmount: subtotal,
         discountPercent: discount,
         discountAmount,
@@ -446,6 +486,9 @@ const Cashier = ({ onLogout, user }) => {
         refNumber: isSplitPayment ? `split:${JSON.stringify(splitPayments)}` : gcashRef,
         items: cartItems.map((item) => ({
           productId: item.productId,
+          name: item.name,
+          barcode: item.barcode,
+          unit: item.unit,
           quantity: item.quantity,
           price: item.price,
         })),
@@ -453,11 +496,19 @@ const Cashier = ({ onLogout, user }) => {
 
       await loadProducts();
       const result = await cashierApi.nextTransactionNumber();
-      const transactionNo = result.transactionNo || nextLocalTransactionNo(activeTxn.transactionNo);
+      const transactionNo = result.transactionNo || nextLocalTransactionNo(completedTransactionNo);
       setNextTransactionNo(transactionNo);
       const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
-      const remaining = transactions.filter((t) => t.id !== activeTransaction);
-      setTransactions([...remaining, createTransaction(newId, transactionNo)]);
+      updateTransactionById(completingTransactionId, {
+        status: 'completed',
+        completedSale: {
+          ...completedPayment,
+          saleId: sale.id,
+          transactionNo: sale.transactionNo || completedTransactionNo,
+          pendingSync: sale.pendingSync,
+        },
+      });
+      setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
       setActiveTransaction(newId);
       setSearchProduct('');
       setBarcode('');
@@ -480,6 +531,8 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleDeleteTransaction = (txnId) => {
+    const target = transactions.find((txn) => txn.id === txnId);
+    if (target?.status === 'completed' && !confirm(`Close completed transaction ${target.transactionNo}?`)) return;
     const remaining = transactions.filter((t) => t.id !== txnId);
     if (remaining.length === 0) {
       const nextTransaction = createTransaction(1);
@@ -529,12 +582,14 @@ const Cashier = ({ onLogout, user }) => {
           {transactions.map((txn) => (
             <button
               key={txn.id}
-              className={`${styles['transaction-tab']} ${activeTransaction === txn.id ? styles.active : ''}`}
+              className={`${styles['transaction-tab']} ${activeTransaction === txn.id ? styles.active : ''} ${txn.status === 'completed' ? styles.completed : ''}`}
               onClick={() => setActiveTransaction(txn.id)}
               title={txn.transactionNo}
             >
               {txn.name}
-              {txn.cartItems.length > 0 && (
+              {txn.status === 'completed' ? (
+                <small className={styles['tab-done']}>Done</small>
+              ) : txn.cartItems.length > 0 && (
                 <small className={styles['tab-count']}>{txn.cartItems.reduce((sum, item) => sum + item.quantity, 0)}</small>
               )}
               <span
@@ -578,6 +633,21 @@ const Cashier = ({ onLogout, user }) => {
             </div>
           </div>
 
+          {isCompletedTxn && (
+            <div className={styles['completed-banner']}>
+              <div>
+                <strong>Transaction Completed</strong>
+                <span>
+                  {activeTxn.completedSale?.transactionNo || activeTxn.transactionNo} was completed
+                  {activeTxn.completedSale?.completedAt ? ` at ${formatTransactionTime(activeTxn.completedSale.completedAt)}` : ''}.
+                </span>
+              </div>
+              <Badge variant={activeTxn.completedSale?.pendingSync ? 'info' : 'success'} size="sm">
+                {activeTxn.completedSale?.pendingSync ? 'Pending sync' : 'Completed'}
+              </Badge>
+            </div>
+          )}
+
           <div className={styles['add-product-section']}>
             <div className={styles['section-title-row']}>
               <h3 className={styles['section-title']}>Add Product</h3>
@@ -591,6 +661,7 @@ const Cashier = ({ onLogout, user }) => {
                 inputRef={barcodeInputRef}
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
+                disabled={isCompletedTxn}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -598,7 +669,7 @@ const Cashier = ({ onLogout, user }) => {
                   }
                 }}
               />
-              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan}>Scan</Button>
+              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isCompletedTxn}>Scan</Button>
             </div>
 
             <Input
@@ -607,6 +678,7 @@ const Cashier = ({ onLogout, user }) => {
               value={searchProduct}
               onChange={handleSearchProductChange}
               onKeyDown={handleSearchKeyDown}
+              disabled={isCompletedTxn}
             />
 
             {lastScanned && (
@@ -739,6 +811,13 @@ const Cashier = ({ onLogout, user }) => {
               </div>
             </div>
 
+            {isCompletedTxn && (
+              <div className={styles['payment-complete-card']}>
+                <strong>Completed</strong>
+                <span>Transaction {activeTxn.completedSale?.transactionNo || activeTxn.transactionNo}</span>
+              </div>
+            )}
+
             <div className={styles['payment-summary']}>
               <div className={styles['summary-row']}><span>Subtotal:</span><span>{money(subtotal)}</span></div>
               <div className={styles['summary-row']}><span>Discount ({discount}%):</span><span>-{money(discountAmount)}</span></div>
@@ -761,8 +840,8 @@ const Cashier = ({ onLogout, user }) => {
             <div className={styles['payment-method']}>
               <label className={styles['filter-label']}>Payment Type</label>
               <div className={styles['payment-buttons']}>
-                <button className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: false })}>Single</button>
-                <button className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: true })}>Split</button>
+                <button className={`${styles['payment-btn']} ${!isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: false })} disabled={isCompletedTxn}>Single</button>
+                <button className={`${styles['payment-btn']} ${isSplitPayment ? styles.active : ''}`} onClick={() => updateActiveTransaction({ isSplitPayment: true })} disabled={isCompletedTxn}>Split</button>
               </div>
             </div>
 
@@ -771,14 +850,14 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['payment-method']}>
                   <label className={styles['filter-label']}>Payment Method</label>
                   <div className={styles['payment-buttons']}>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })}>Cash</button>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })}>GCash</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isCompletedTxn}>Cash</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isCompletedTxn}>GCash</button>
                   </div>
                 </div>
 
                 {paymentMethod === 'cash' && (
                   <>
-                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} />
+                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isCompletedTxn} />
                     {cashAmount && (
                       <div className={styles['change-display']}>
                         <div className={styles['change-row']}><span>Total Payment:</span><span>{money(total)}</span></div>
@@ -793,7 +872,7 @@ const Cashier = ({ onLogout, user }) => {
 
                 {paymentMethod === 'gcash' && (
                   <>
-                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} />
+                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isCompletedTxn} />
                     <div className={styles['total-display']}><span>Total amount: {money(total)}</span></div>
                   </>
                 )}
@@ -801,8 +880,8 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <div className={styles['payment-method']}>
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} />
-                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} />
+                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isCompletedTxn} />
+                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isCompletedTxn} />
                 <div className={styles['change-display']}>
                   <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
                   <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
@@ -810,19 +889,24 @@ const Cashier = ({ onLogout, user }) => {
               </div>
             )}
 
-            <div className={styles['action-row']}>
-              <Button variant="danger" fullWidth onClick={handleVoidTransaction}>Void Transaction</Button>
-            </div>
-
             <Button
               variant="primary"
               fullWidth
               className={styles['complete-button']}
               onClick={handleCompleteTransaction}
-              disabled={cartItems.length === 0}
+              disabled={cartItems.length === 0 || isCompletedTxn}
             >
-              Complete Transaction
+              {isCompletedTxn ? 'Transaction Completed' : 'Complete Transaction'}
             </Button>
+
+            {!isCompletedTxn && cartItems.length > 0 && (
+              <div className={styles['void-zone']}>
+                <button type="button" onClick={handleVoidTransaction}>
+                  <Trash size={14} />
+                  Void this transaction
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

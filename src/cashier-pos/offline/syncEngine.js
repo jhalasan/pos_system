@@ -32,6 +32,11 @@ function cloudSalePayload(sale) {
   }
 }
 
+function saleActivityDetail(sale) {
+  const itemCount = sale.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0)
+  return `Completed transaction ${sale.transactionNo} with ${itemCount} item(s), total PHP ${Number(sale.totalAmount || 0).toFixed(2)}.`
+}
+
 export class CashierSyncEngine extends EventTarget {
   constructor({
     baseUrl = import.meta.env.VITE_POCKETBASE_URL,
@@ -159,7 +164,26 @@ export class CashierSyncEngine extends EventTarget {
       if (!existing) throw error
     }
 
+    const detail = saleActivityDetail(sale)
+    const existingLog = await this.pb.collection('activity_logs').getFirstListItem(
+      this.pb.filter('user_id = {:cashierId} && action_type = "Sale" && description = {:detail}', {
+        cashierId: sale.cashierId,
+        detail,
+      }),
+      { requestKey: null },
+    ).catch(() => null)
+
+    if (!existingLog) {
+      await this.pb.collection('activity_logs').create({
+        user_id: sale.cashierId,
+        action_type: 'Sale',
+        description: detail,
+        timestamp: sale.createdAt || new Date().toISOString(),
+      }, { requestKey: `activity:${sale.clientSaleId}` }).catch(() => null)
+    }
+
     await cashierDb.pendingSales.delete(sale.clientSaleId)
+    await cashierDb.completedSales.update(sale.clientSaleId, { syncStatus: 'synced' })
     this.dispatchEvent(new CustomEvent('salesynced', {
       detail: { clientSaleId: sale.clientSaleId },
     }))

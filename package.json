@@ -11,6 +11,8 @@
     "build": "vite build",
     "build:cashier": "vite build --mode cashier",
     "lint": "eslint .",
+    "pb:rules": "node scripts/configure-pocketbase-rules.mjs",
+    "pb:seed:sample": "node scripts/seed-sample-data.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",

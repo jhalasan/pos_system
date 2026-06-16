@@ -121,7 +121,6 @@ export function cashierPayload(input = {}) {
     password,
     passwordConfirm: password,
     role: 'cashier',
-    verified: input.status !== 'inactive',
   }
 }
 

@@ -3,6 +3,7 @@ import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { getAllProducts, getProductByBarcode } from '../offline/productRepository'
 import {
   finalizeSaleLocally,
+  getCompletedSales,
   getPendingSales,
 } from '../offline/saleRepository'
 import { startCashierRuntime } from '../offline/runtime'
@@ -43,6 +44,18 @@ function localTransactionNumber() {
     String(now.getDate()).padStart(2, '0'),
   ].join('')
   return `${day}${String(Date.now()).slice(-6)}`
+}
+
+async function createCloudActivityLog({ cashierId, action, detail }) {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return null
+
+  const activeRuntime = await runtime()
+  return activeRuntime.pb.collection('activity_logs').create({
+    user_id: cashierId,
+    action_type: action,
+    description: detail,
+    timestamp: new Date().toISOString(),
+  }, { requestKey: `activity:${cashierId}:${action}:${Date.now()}` }).catch(() => null)
 }
 
 export const desktopCashierApi = {
@@ -93,7 +106,9 @@ export const desktopCashierApi = {
   },
 
   async salesHistory({ cashierId }) {
-    const sales = await getPendingSales()
+    const [completedSales, pendingSales] = await Promise.all([getCompletedSales(), getPendingSales()])
+    const pendingIds = new Set(pendingSales.map((sale) => sale.clientSaleId))
+    const sales = completedSales.length ? completedSales : pendingSales
     return sales
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .map((sale) => ({
@@ -101,7 +116,7 @@ export const desktopCashierApi = {
         transactionNo: sale.transactionNo,
         totalAmount: sale.totalAmount,
         paymentMethod: sale.paymentMethod,
-        status: sale.status === 'pending' ? 'Pending sync' : sale.status,
+        status: pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed',
         createdAt: sale.createdAt,
         itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0),
         items: sale.items,
@@ -135,12 +150,6 @@ export const desktopCashierApi = {
   },
 
   async logActivity({ cashierId, action, detail }) {
-    if (globalThis.navigator && !globalThis.navigator.onLine) return null
-    const activeRuntime = await runtime()
-    return activeRuntime.pb.collection('activity_logs').create({
-      user_id: cashierId,
-      action,
-      detail,
-    }, { requestKey: null }).catch(() => null)
+    return createCloudActivityLog({ cashierId, action, detail })
   },
 }

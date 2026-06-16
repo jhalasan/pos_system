@@ -1,5 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { logout } from '../auth'
+import { api } from '../services/api'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
   IconCloud, IconUserPlus, IconLogout, IconSettings, IconBarcode,
@@ -18,10 +20,29 @@ const navItems = [
 
 export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
   const nav = useNavigate()
+  const [toast, setToast] = useState('')
 
   function handleLogout() {
     logout()
     nav('/', { replace: true })
+  }
+
+  function flash(message) {
+    setToast(message)
+    window.setTimeout(() => setToast(''), 2400)
+  }
+
+  async function handleSync() {
+    try {
+      const result = await api.syncNow()
+      if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
+        flash('Cloud sync complete. Nothing pending.')
+      } else {
+        flash(`Cloud sync complete. Uploaded ${result.uploaded || 0}, failed ${result.failed || 0}.`)
+      }
+    } catch (error) {
+      flash(error.message || 'Unable to sync right now.')
+    }
   }
 
   return (
@@ -55,7 +76,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
           className="nav-item"
           style={{ width: '100%' }}
           title={collapsed ? 'Sync to Cloud' : undefined}
-          onClick={() => alert('Syncing local data to the cloud...')}
+          onClick={handleSync}
         >
           <IconCloud size={18} />
           <span className="nav-text">Sync to Cloud</span>
@@ -69,6 +90,8 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
           <span className="nav-text">Logout</span>
         </button>
       </div>
+
+      {toast && <div className="toast"><IconCloud size={15} /> {toast}</div>}
     </aside>
   )
 }

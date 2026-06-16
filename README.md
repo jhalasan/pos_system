@@ -24,6 +24,8 @@ VITE_API_URL=
 
 `VITE_API_URL` should stay blank when using the built-in `/api` route or the Vite proxy.
 
+For PocketHost setup, see `POCKETHOST_SETUP.md`.
+
 ## Local Coding Mode
 
 Use this when you are actively changing code and want hot reload.

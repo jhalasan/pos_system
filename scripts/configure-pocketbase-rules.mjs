@@ -53,10 +53,24 @@ await updateCollection('authorization_barcodes', {
   viewRule: readRule,
 })
 
+await updateCollection('activity_logs', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+})
+
 await updateCollection('sales', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,
+})
+
+await updateCollection('users', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: adminRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
 })
 
 console.log(`PocketBase rules configured for ${pbUrl}`)

@@ -69,6 +69,11 @@ export async function finalizeSaleLocally(sale) {
       }
 
       await cashierDb.pendingSales.add(pendingSale)
+      await cashierDb.completedSales.put({
+        ...pendingSale,
+        status: 'completed',
+        syncStatus: 'pending',
+      })
     },
   )
 
@@ -77,6 +82,10 @@ export async function finalizeSaleLocally(sale) {
 
 export function getPendingSales() {
   return cashierDb.pendingSales.orderBy('createdAt').toArray()
+}
+
+export function getCompletedSales() {
+  return cashierDb.completedSales.orderBy('createdAt').reverse().toArray()
 }
 
 export function getPendingSaleCount() {

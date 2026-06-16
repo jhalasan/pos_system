@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import ProductModal from '../components/ProductModal'
-import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTag, IconChart } from '../components/Icons'
+import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTag, IconChart, IconTrash } from '../components/Icons'
 import { api, defaultCategories, peso, statusLabel } from '../services/api'
 import { useApi } from '../hooks/useApi'
 
@@ -13,6 +13,9 @@ export default function Inventory() {
   const [barcode, setBarcode] = useState('')
   const [qty, setQty] = useState(1)
   const [feed, setFeed] = useState([])
+  const [scanMode, setScanMode] = useState('instant')
+  const [batchItems, setBatchItems] = useState([])
+  const [confirmingBatch, setConfirmingBatch] = useState(false)
   const [scanError, setScanError] = useState('')
   const [selectedFsn, setSelectedFsn] = useState('Fast-moving')
   const [newProductBarcode, setNewProductBarcode] = useState('')
@@ -25,6 +28,11 @@ export default function Inventory() {
     return [...new Set([...defaultCategories, ...products.map((p) => p.category).filter(Boolean)])]
   }, [products])
   const scannedUnits = feed.reduce((s, f) => s + f.qty, 0)
+  const batchUnits = batchItems.reduce((s, item) => s + item.qty, 0)
+  const sessionUnits = scannedUnits + batchUnits
+  const pendingById = useMemo(() => {
+    return batchItems.reduce((map, item) => ({ ...map, [item.id]: item.qty }), {})
+  }, [batchItems])
   const scannedProduct = useMemo(() => {
     const code = barcode.trim()
     if (!code) return null
@@ -64,11 +72,53 @@ export default function Inventory() {
     window.setTimeout(() => setToast(''), 2400)
   }
 
+  function addToBatch(product, count) {
+    setBatchItems((items) => {
+      const existing = items.find((item) => item.id === product.id)
+      if (existing) {
+        return items.map((item) => (
+          item.id === product.id
+            ? { ...item, qty: item.qty + count, lastScannedAt: new Date() }
+            : item
+        ))
+      }
+
+      return [
+        {
+          id: product.id,
+          sku: product.sku || product.id,
+          name: product.name,
+          barcode: product.barcode,
+          category: product.category,
+          currentQty: Number(product.qty) || 0,
+          unit: product.unit || 'unit(s)',
+          qty: count,
+          lastScannedAt: new Date(),
+        },
+        ...items,
+      ]
+    })
+  }
+
   async function scan(e) {
     e.preventDefault()
     const code = barcode.trim()
     if (!code) return
     const stockInQty = Math.max(1, Math.floor(Number(qty) || 1))
+
+    if (scanMode === 'batch') {
+      if (!scannedProduct) {
+        setScanError(`No product found for barcode "${code}".`)
+        focusBarcode()
+        return
+      }
+      addToBatch(scannedProduct, stockInQty)
+      setBarcode('')
+      setScanError('')
+      flash(`Counted ${stockInQty} unit(s) for ${scannedProduct.name}.`)
+      focusBarcode()
+      return
+    }
 
     try {
       const updated = await api.scanInventory({ barcode: code, qty: stockInQty })
@@ -93,6 +143,46 @@ export default function Inventory() {
     } catch (err) {
       setScanError(err.message || `No product found for barcode "${code}".`)
       focusBarcode()
+    }
+  }
+
+  async function confirmBatch() {
+    if (batchItems.length === 0 || confirmingBatch) return
+
+    setConfirmingBatch(true)
+    setScanError('')
+
+    try {
+      let nextProducts = products
+      let nextFsnProducts = fsnProducts
+      const confirmedFeed = []
+
+      for (const item of batchItems) {
+        const updated = await api.scanInventory({ barcode: item.barcode, qty: item.qty })
+        nextProducts = nextProducts.map((p) => (p.id === updated.id ? updated : p))
+        nextFsnProducts = nextFsnProducts.map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
+        confirmedFeed.push({
+          key: `${Date.now()}-${updated.id}`,
+          name: updated.name,
+          id: updated.sku || updated.id,
+          barcode: updated.barcode,
+          qty: item.qty,
+          newQty: updated.qty,
+          time: new Date(),
+        })
+      }
+
+      setProducts(nextProducts)
+      setFsnProducts(nextFsnProducts)
+      setFeed((f) => [...confirmedFeed, ...f].slice(0, 15))
+      setBatchItems([])
+      flash(`Confirmed ${batchUnits} unit(s) across ${batchItems.length} product(s).`)
+      focusBarcode()
+    } catch (err) {
+      setScanError(err.message || 'Unable to confirm stock-in batch.')
+      focusBarcode()
+    } finally {
+      setConfirmingBatch(false)
     }
   }
 
@@ -136,13 +226,34 @@ export default function Inventory() {
       <div className="panel-head">
         <div>
           <h3>Stock-In Scanner</h3>
-          <span className="sub">{scannedUnits} unit(s) added this session</span>
+          <span className="sub">{sessionUnits} unit(s) counted or added this session</span>
         </div>
       </div>
       <div className="panel-body">
+        <div className="scan-mode-row">
+          <button
+            type="button"
+            className={`scan-mode ${scanMode === 'instant' ? 'active' : ''}`}
+            onClick={() => setScanMode('instant')}
+          >
+            Add Immediately
+          </button>
+          <button
+            type="button"
+            className={`scan-mode ${scanMode === 'batch' ? 'active' : ''}`}
+            onClick={() => setScanMode('batch')}
+          >
+            Scan then Confirm
+          </button>
+        </div>
+
         <div className="scan-flow">
           <IconScan size={16} />
-          <span>Workflow: set <b>Qty per scan</b>, scan a barcode, then scanner Enter adds stock and refocuses the barcode field.</span>
+          <span>
+            {scanMode === 'batch'
+              ? <>Workflow: set <b>Qty per scan</b>, scan each item, review the pending count, then confirm the whole stock-in batch.</>
+              : <>Workflow: set <b>Qty per scan</b>, scan a barcode, then scanner Enter adds stock and refocuses the barcode field.</>}
+          </span>
         </div>
 
         <form className="scan-grid" onSubmit={scan}>
@@ -195,7 +306,10 @@ export default function Inventory() {
               <>
                 <div>
                   <strong>{scannedProduct.name}</strong>
-                  <span>{scannedProduct.barcode} | {scannedProduct.category} | current stock: {scannedProduct.qty}</span>
+                  <span>
+                    {scannedProduct.barcode} | {scannedProduct.category} | current stock: {scannedProduct.qty}
+                    {pendingById[scannedProduct.id] ? ` | pending: +${pendingById[scannedProduct.id]}` : ''}
+                  </span>
                 </div>
                 <span className={`badge ${(statusLabel[scannedProduct.status] || statusLabel['in-stock']).badge}`}>
                   {(statusLabel[scannedProduct.status] || statusLabel['in-stock']).text}
@@ -230,8 +344,64 @@ export default function Inventory() {
           </div>
         )}
 
+        {scanMode === 'batch' && (
+          <div className="stock-batch">
+            <div className="stock-batch-head">
+              <div>
+                <strong>Pending Stock-In Batch</strong>
+                <span>{batchUnits} unit(s) counted across {batchItems.length} product(s)</span>
+              </div>
+              <div className="stock-batch-actions">
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  disabled={batchItems.length === 0 || confirmingBatch}
+                  onClick={() => {
+                    setBatchItems([])
+                    focusBarcode()
+                  }}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={batchItems.length === 0 || confirmingBatch}
+                  onClick={confirmBatch}
+                >
+                  {confirmingBatch ? 'Confirming...' : 'Confirm Stock-In'}
+                </button>
+              </div>
+            </div>
+
+            {batchItems.length === 0 ? (
+              <div className="stock-batch-empty">Scanned items will wait here until you confirm.</div>
+            ) : (
+              <div className="stock-batch-list">
+                {batchItems.map((item) => (
+                  <div className="stock-batch-row" key={item.id}>
+                    <div>
+                      <strong>{item.name}</strong>
+                      <span>{item.barcode || item.sku} | current {item.currentQty} | after confirm {item.currentQty + item.qty}</span>
+                    </div>
+                    <span className="badge badge-info">+{item.qty}</span>
+                    <button
+                      type="button"
+                      className="icon-btn del"
+                      title="Remove from batch"
+                      onClick={() => setBatchItems((items) => items.filter((row) => row.id !== item.id))}
+                    >
+                      <IconTrash size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="scan-feed">
-          <div className="section-sub">Recently Scanned</div>
+          <div className="section-sub">{scanMode === 'batch' ? 'Recently Confirmed' : 'Recently Scanned'}</div>
           {feed.length === 0 ? (
             <div className="empty" style={{ padding: '36px 24px' }}>
               <div className="em-icon"><IconScan size={24} /></div>

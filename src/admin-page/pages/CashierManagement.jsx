@@ -17,9 +17,14 @@ export default function CashierManagement() {
   const fileInputRef = useRef(null)
   const objectUrlRef = useRef('')
   const [toast, setToast] = useState('')
+  const [formError, setFormError] = useState('')
+  const [saving, setSaving] = useState(false)
   const isEdit = Boolean(editingCashier)
 
-  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const set = (k) => (e) => {
+    setFormError('')
+    setForm({ ...form, [k]: e.target.value })
+  }
 
   useEffect(() => {
     return () => {
@@ -36,6 +41,7 @@ export default function CashierManagement() {
     setEditingCashier(null)
     setForm(blank)
     setImagePreview('')
+    setFormError('')
     setOpen(true)
   }
 
@@ -44,12 +50,14 @@ export default function CashierManagement() {
     setForm({
       name: cashier.name || '',
       email: cashier.email || '',
+      originalEmail: cashier.email || '',
       shift: cashier.shift || 'Morning',
       status: cashier.status || 'active',
       password: '',
       passwordConfirm: '',
     })
     setImagePreview(cashier.imageUrl || '')
+    setFormError('')
     setOpen(true)
   }
 
@@ -58,18 +66,21 @@ export default function CashierManagement() {
     setEditingCashier(null)
     setForm(blank)
     setImagePreview('')
+    setFormError('')
+    setSaving(false)
   }
 
   function selectImage(file) {
     if (!file) return
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      alert('Please upload a JPEG, PNG, or WEBP image.')
+      setFormError('Please upload a JPEG, PNG, or WEBP image.')
       return
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert('Profile image must be 5MB or smaller.')
+      setFormError('Profile image must be 5MB or smaller.')
       return
     }
+    setFormError('')
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     objectUrlRef.current = URL.createObjectURL(file)
     setImagePreview(objectUrlRef.current)
@@ -78,26 +89,33 @@ export default function CashierManagement() {
 
   async function saveCashier() {
     if (!form.name.trim() || !form.email.trim()) {
-      alert('Name and email are required.')
+      setFormError('Name and email are required.')
+      return
+    }
+
+    if (isEdit && form.email !== form.originalEmail) {
+      setFormError('Email changes for existing cashier accounts must be done in PocketBase Admin.')
       return
     }
 
     if (!isEdit && !form.password.trim()) {
-      alert('Password is required for new cashiers.')
+      setFormError('Password is required for new cashiers.')
       return
     }
 
     if (form.password || form.passwordConfirm) {
       if (form.password.length < 8) {
-        alert('Password must be at least 8 characters.')
+        setFormError('Password must be at least 8 characters.')
         return
       }
       if (form.password !== form.passwordConfirm) {
-        alert('Passwords do not match.')
+        setFormError('Passwords do not match.')
         return
       }
     }
 
+    setSaving(true)
+    setFormError('')
     try {
       if (isEdit) {
         const updated = await api.updateCashier(editingCashier.id, form)
@@ -110,7 +128,11 @@ export default function CashierManagement() {
       }
       closeModal()
     } catch (err) {
-      flash(err.message || 'Unable to save cashier.')
+      const message = err.message || 'Unable to save cashier.'
+      setFormError(message)
+      flash(message)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -244,14 +266,15 @@ export default function CashierManagement() {
           onClose={closeModal}
           footer={
             <>
-              <button className="btn btn-outline" onClick={closeModal}>Cancel</button>
-              <button className="btn btn-primary" onClick={saveCashier}>
-                {isEdit ? 'Save Changes' : 'Add Cashier'}
+              <button className="btn btn-outline" onClick={closeModal} disabled={saving}>Cancel</button>
+              <button className="btn btn-primary" onClick={saveCashier} disabled={saving}>
+                {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Add Cashier'}
               </button>
             </>
           }
         >
           <div className="form-grid">
+            {formError && <div className="alert error span-2">{formError}</div>}
             <div className="field span-2">
               <label>Profile Picture</label>
               <button
@@ -285,7 +308,14 @@ export default function CashierManagement() {
             </div>
             <div className="field span-2">
               <label>Email Address</label>
-              <input className="input" type="email" placeholder="name@example.com" value={form.email} onChange={set('email')} />
+              <input
+                className="input"
+                type="email"
+                placeholder="name@example.com"
+                value={form.email}
+                onChange={set('email')}
+                disabled={isEdit}
+              />
             </div>
             <div className="field">
               <label>Shift</label>
@@ -300,26 +330,30 @@ export default function CashierManagement() {
                 <option value="inactive">Inactive</option>
               </select>
             </div>
-            <div className="field">
-              <label>{isEdit ? 'New Password' : 'Password'}</label>
-              <input
-                className="input"
-                type="password"
-                placeholder={isEdit ? 'Leave blank to keep current' : 'At least 8 characters'}
-                value={form.password}
-                onChange={set('password')}
-              />
-            </div>
-            <div className="field">
-              <label>Confirm Password</label>
-              <input
-                className="input"
-                type="password"
-                placeholder={isEdit ? 'Confirm new password' : 'Repeat password'}
-                value={form.passwordConfirm}
-                onChange={set('passwordConfirm')}
-              />
-            </div>
+            {!isEdit && (
+              <>
+                <div className="field">
+                  <label>Password</label>
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="At least 8 characters"
+                    value={form.password}
+                    onChange={set('password')}
+                  />
+                </div>
+                <div className="field">
+                  <label>Confirm Password</label>
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="Repeat password"
+                    value={form.passwordConfirm}
+                    onChange={set('passwordConfirm')}
+                  />
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       )}
