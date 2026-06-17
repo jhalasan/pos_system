@@ -5,6 +5,9 @@ import LineChart from '../components/charts/LineChart'
 import { IconDownload } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { exportCsv } from '../utils/exportCsv'
+import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
+import { useState } from 'react'
 
 const emptyAnalytics = {
   productInOut: [],
@@ -15,7 +18,28 @@ const emptyAnalytics = {
 
 export default function Analytics() {
   const { data, loading, error } = useApi(api.dashboard, emptyAnalytics)
+  const [exporting, setExporting] = useState(false)
+  const [exportStatus, setExportStatus] = useState('')
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
+
+  async function exportReport() {
+    setExporting(true)
+    setExportStatus('Exporting...')
+    try {
+      const result = await exportCsv(`analytics-report-${new Date().toISOString().slice(0, 10)}.csv`, [
+        ['Section', 'Label', 'Value'],
+        ...data.productInOut.map((item) => ['Product In/Out', item.label, item.value]),
+        ...data.topProducts.map((item) => ['Top Products', item.name, item.units]),
+        ...data.hourlySales.map((item) => ['Hourly Sales', item.label, item.value]),
+        ...data.monthlySales.map((item) => ['Monthly Sales', item.label, item.value]),
+      ], { directory: getExportLocation(exportLocationKeys.reports) })
+      setExportStatus(`Exported in - "${result.path}"`)
+    } catch (err) {
+      setExportStatus(err.message || 'Unable to export report.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -41,10 +65,11 @@ export default function Analytics() {
         title="Analytics"
         subtitle="Sales trends, product movement, and performance insights."
       >
-        <button className="btn btn-outline" onClick={() => alert('Exporting analytics report...')}>
-          <IconDownload size={16} /> Export Report
+        <button className="btn btn-outline" onClick={exportReport} disabled={exporting}>
+          <IconDownload size={16} /> {exporting ? 'Exporting...' : 'Export Report'}
         </button>
       </PageHeader>
+      {exportStatus && <div className="export-status">{exportStatus}</div>}
 
       <div className="grid-2-wide" style={{ marginBottom: 18 }}>
         <div className="card">

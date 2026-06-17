@@ -81,6 +81,7 @@ export const statusLabel = {
   'in-stock': { text: 'In Stock', badge: 'badge-success' },
   low: { text: 'Low Stock', badge: 'badge-warning' },
   critical: { text: 'Critical', badge: 'badge-danger' },
+  'out-of-stock': { text: 'Out of Stock', badge: 'badge-danger' },
 }
 
 export const defaultCategories = [
@@ -97,6 +98,8 @@ const webApi = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   adminQuickLoginAccounts: () => request('/auth/quick-login-accounts'),
   dashboard: () => request('/dashboard'),
+  categories: () => request('/categories'),
+  createCategory: (name) => request('/categories', { method: 'POST', body: JSON.stringify({ name }) }),
   products: () => request('/products'),
   nextProductBarcode: () => request('/barcodes/product/next'),
   latestAuthorizationBarcode: () => request('/barcodes/authorization/latest'),

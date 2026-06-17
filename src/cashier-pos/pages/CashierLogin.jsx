@@ -4,6 +4,8 @@ import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
 import styles from '../styles/CashierLogin.module.css';
 
+const QUICK_LOGIN_CACHE_KEY = 'nexa_cashier_quick_accounts';
+
 function displayName(account) {
   const email = String(account?.email || '').trim();
   const name = String(account?.name || '').trim();
@@ -28,6 +30,14 @@ const CashierLogin = ({ onLogin }) => {
   const [loading, setLoading] = useState(false);
   const [quickAccounts, setQuickAccounts] = useState([]);
 
+  function cachedQuickAccounts() {
+    try {
+      return JSON.parse(localStorage.getItem(QUICK_LOGIN_CACHE_KEY) || '[]');
+    } catch {
+      return [];
+    }
+  }
+
   useEffect(() => {
     let ignore = false;
 
@@ -35,10 +45,16 @@ const CashierLogin = ({ onLogin }) => {
       try {
         const accounts = await cashierApi.quickLoginAccounts();
         if (!ignore) {
-          setQuickAccounts((Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim()));
+          const normalized = (Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim());
+          if (normalized.length > 0) {
+            localStorage.setItem(QUICK_LOGIN_CACHE_KEY, JSON.stringify(normalized));
+            setQuickAccounts(normalized);
+          } else {
+            setQuickAccounts(cachedQuickAccounts());
+          }
         }
       } catch {
-        if (!ignore) setQuickAccounts([]);
+        if (!ignore) setQuickAccounts(cachedQuickAccounts());
       }
     }
 

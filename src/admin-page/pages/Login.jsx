@@ -4,6 +4,8 @@ import { login } from '../auth'
 import { IconLock } from '../components/Icons'
 import { api } from '../services/api'
 
+const QUICK_LOGIN_CACHE_KEY = 'nexa_admin_quick_accounts'
+
 function displayName(account) {
   const email = String(account?.email || '').trim()
   const name = String(account?.name || '').trim()
@@ -27,6 +29,14 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const [quickAccounts, setQuickAccounts] = useState([])
 
+  function cachedQuickAccounts() {
+    try {
+      return JSON.parse(localStorage.getItem(QUICK_LOGIN_CACHE_KEY) || '[]')
+    } catch {
+      return []
+    }
+  }
+
   useEffect(() => {
     let ignore = false
 
@@ -34,10 +44,16 @@ export default function Login() {
       try {
         const accounts = await api.adminQuickLoginAccounts()
         if (!ignore) {
-          setQuickAccounts((Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim()))
+          const normalized = (Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim())
+          if (normalized.length > 0) {
+            localStorage.setItem(QUICK_LOGIN_CACHE_KEY, JSON.stringify(normalized))
+            setQuickAccounts(normalized)
+          } else {
+            setQuickAccounts(cachedQuickAccounts())
+          }
         }
       } catch {
-        if (!ignore) setQuickAccounts([])
+        if (!ignore) setQuickAccounts(cachedQuickAccounts())
       }
     }
 

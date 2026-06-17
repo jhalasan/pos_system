@@ -5,6 +5,7 @@ import { AdminSyncEngine } from '../offline/syncEngine'
 import {
   deriveStatus,
   getAllProducts,
+  getLocalCategories,
   getProductByBarcode,
   replaceProductsFromCloud,
 } from '../offline/productRepository'
@@ -261,24 +262,131 @@ async function cacheUsers(records) {
   })))
 }
 
-const emptyDashboard = {
-  stats: {
-    dailySales: 0,
-    dailySalesTrend: 0,
-    monthlySales: 0,
-    monthlySalesTrend: 0,
-    totalRevenue: 0,
-    totalRevenueTrend: 0,
-    criticalStock: 0,
-  },
-  criticalAlerts: [],
-  productInOut: [
-    { label: 'Stock In', value: 0, color: '#16a34a' },
-    { label: 'Stock Out', value: 0, color: '#ef4444' },
-  ],
-  topProducts: [],
-  hourlySales: [],
-  monthlySales: [],
+function saleDate(sale) {
+  return new Date(sale.created_at || sale.createdAt || sale.created)
+}
+
+function lastMonths(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - (count - 1 - index), 1)
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+      label: date.toLocaleString('en-US', { month: 'short' }),
+      value: 0,
+    }
+  })
+}
+
+function trend(current, previous) {
+  if (!previous) return current > 0 ? 100 : 0
+  return Math.round(((current - previous) / previous) * 100)
+}
+
+function buildDashboardFromRecords(products, sales = [], saleItems = [], now = new Date()) {
+  const todayStart = new Date(now)
+  todayStart.setHours(0, 0, 0, 0)
+  const yesterdayStart = new Date(todayStart)
+  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+
+  const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
+  const dailySales = completedSales
+    .filter((sale) => saleDate(sale) >= todayStart)
+    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+  const yesterdaySales = completedSales
+    .filter((sale) => {
+      const created = saleDate(sale)
+      return created >= yesterdayStart && created < todayStart
+    })
+    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+  const monthlySales = completedSales
+    .filter((sale) => saleDate(sale) >= monthStart)
+    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+  const lastMonthSales = completedSales
+    .filter((sale) => {
+      const created = saleDate(sale)
+      return created >= lastMonthStart && created < monthStart
+    })
+    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+  const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+
+  const productsById = new Map(products.map((product) => [product.id, product]))
+  const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
+  const monthlySaleIds = new Set(completedSales.filter((sale) => saleDate(sale) >= monthStart).map((sale) => sale.id))
+  const productSales = new Map()
+  let monthlyStockOut = 0
+
+  for (const item of saleItems) {
+    const saleId = firstRelation(item.sale_id ?? item.saleId)
+    if (!completedSaleIds.has(saleId)) continue
+
+    const productId = firstRelation(item.product_id ?? item.productId)
+    const quantity = Number(item.quantity_sold ?? item.quantity) || 0
+    if (monthlySaleIds.has(saleId)) monthlyStockOut += quantity
+    if (!productId) continue
+
+    const product = productsById.get(productId)
+    const expandedProduct = Array.isArray(item.expand?.product_id)
+      ? item.expand.product_id[0]
+      : item.expand?.product_id
+    const current = productSales.get(productId) || {
+      id: productId,
+      name: product?.name || expandedProduct?.name || productId,
+      category: product?.category || expandedProduct?.category || '',
+      units: 0,
+    }
+    current.units += quantity
+    productSales.set(productId, current)
+  }
+
+  const hourlySales = Array.from({ length: 24 }, (_, hour) => ({
+    label: `${String(hour).padStart(2, '0')}:00`,
+    value: 0,
+  }))
+  for (const sale of completedSales) {
+    const created = saleDate(sale)
+    if (created < todayStart) continue
+    hourlySales[created.getHours()].value += Number(sale.total_amount ?? sale.totalAmount) || 0
+  }
+
+  const monthlyTrend = lastMonths(8, now)
+  const monthlyTrendByKey = new Map(monthlyTrend.map((item) => [item.key, item]))
+  for (const sale of completedSales) {
+    const created = saleDate(sale)
+    const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`
+    const month = monthlyTrendByKey.get(key)
+    if (month) month.value += Number(sale.total_amount ?? sale.totalAmount) || 0
+  }
+
+  const criticalAlerts = products
+    .filter((product) => deriveStatus(product) === 'critical')
+    .slice(0, 8)
+    .map((product) => ({ name: product.name, left: product.qty }))
+  const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+
+  return {
+    stats: {
+      dailySales,
+      dailySalesTrend: trend(dailySales, yesterdaySales),
+      monthlySales,
+      monthlySalesTrend: trend(monthlySales, lastMonthSales),
+      totalRevenue,
+      totalRevenueTrend: 0,
+      criticalStock: criticalAlerts.length,
+    },
+    criticalAlerts,
+    productInOut: [
+      { label: 'Stock In', value: currentStockUnits, color: '#16a34a' },
+      { label: 'Stock Out', value: monthlyStockOut, color: '#ef4444' },
+    ],
+    topProducts: [...productSales.values()]
+      .filter((product) => product.units > 0)
+      .sort((a, b) => b.units - a.units)
+      .slice(0, 5),
+    hourlySales,
+    monthlySales: monthlyTrend,
+  }
 }
 
 function assertAdmin() {
@@ -490,7 +598,7 @@ export const desktopAdminApi = {
         .then((records) => records.map(toSettingsUser).filter((user) => user.email))
     }
     return pb.collection('users').getFullList({
-      filter: 'role = "admin" && quick_login_enabled = true && status = "active"',
+      filter: 'role = "admin" && quick_login_enabled = true && status != "inactive"',
       fields: 'id,name,email,role,status',
       sort: 'name',
       requestKey: null,
@@ -509,11 +617,60 @@ export const desktopAdminApi = {
     return listDesktopProducts()
   },
 
+  async categories() {
+    await startAdminRuntime()
+    if (await isCloudReachable()) {
+      const records = await pb.collection('categories').getFullList({
+        sort: 'name',
+        requestKey: null,
+      }).catch(() => [])
+      await adminDb.categories.bulkPut(records.map((record) => ({
+        id: record.id,
+        name: record.name || '',
+        updated: record.updated || new Date().toISOString(),
+      })))
+      return records.map((record) => ({ id: record.id, name: record.name || '' }))
+    }
+
+    return (await getLocalCategories()).map((name) => ({ id: name, name }))
+  },
+
+  async createCategory(name) {
+    await startAdminRuntime()
+    const categoryName = String(name || '').trim()
+    if (!categoryName) throw new Error('Category name is required.')
+
+    if (await isCloudReachable()) {
+      const existing = await pb.collection('categories').getFirstListItem(
+        pb.filter('name = {:name}', { name: categoryName }),
+        { requestKey: null },
+      ).catch((error) => {
+        if (error.status === 404) return null
+        throw error
+      })
+      const record = existing || await pb.collection('categories').create({ name: categoryName }, { requestKey: null })
+      await adminDb.categories.put({ id: record.id, name: record.name || categoryName, updated: record.updated || new Date().toISOString() })
+      await recordActivity('Settings', `Created category "${record.name || categoryName}".`)
+      return { id: record.id, name: record.name || categoryName }
+    }
+
+    const local = { id: `category_${categoryName.toLowerCase()}`, name: categoryName, updated: new Date().toISOString() }
+    await adminDb.categories.put(local)
+    await recordActivity('Settings', `Created local category "${categoryName}".`)
+    return local
+  },
+
   async createProduct(data) {
     assertAdmin()
     await startAdminRuntime()
     const product = await localProductFromForm(data)
+    const existing = product.barcode ? await adminDb.products.get({ barcode: product.barcode }) : null
+    if (existing && !existing.deleted) {
+      throw new Error(`Barcode ${product.barcode} already belongs to "${existing.name}". Edit that product instead of adding a duplicate.`)
+    }
+
     await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+      if (existing?.deleted) await adminDb.products.delete(existing.id)
       await adminDb.products.put(product)
       await queueOperation('createProduct', product.id, product)
     })
@@ -597,31 +754,33 @@ export const desktopAdminApi = {
 
   async dashboard() {
     await startAdminRuntime()
-    const products = await listDesktopProducts()
-    const criticalAlerts = products
-      .filter((product) => product.status === 'critical')
-      .slice(0, 8)
-      .map((product) => ({ name: product.name, left: product.qty }))
-
-    return {
-      ...emptyDashboard,
-      stats: {
-        ...emptyDashboard.stats,
-        criticalStock: criticalAlerts.length,
-      },
-      criticalAlerts,
-      productInOut: [
-        {
-          label: 'Stock In',
-          value: products.reduce((sum, product) => sum + Number(product.qty || 0), 0),
-          color: '#16a34a',
-        },
-        { label: 'Stock Out', value: 0, color: '#ef4444' },
-      ],
+    if (!(await isCloudReachable())) {
+      const products = await listDesktopProducts()
+      return buildDashboardFromRecords(products, [], [], new Date())
     }
+
+    await refreshAdminLocalCache({ pb }).catch(() => {})
+    const products = await getAllProducts()
+    const [sales, saleItems] = await Promise.all([
+      pb.collection('sales').getFullList({
+        filter: 'status != "voided"',
+        requestKey: null,
+      }).catch(() => []),
+      pb.collection('sale_items').getFullList({
+        expand: 'product_id',
+        requestKey: null,
+      }).catch(() => []),
+    ])
+
+    return buildDashboardFromRecords(products, sales, saleItems, new Date())
   },
   async syncNow() {
     await startAdminRuntime()
+    await adminDb.pendingOps.where('status').equals('failed').modify({
+      status: 'pending',
+      nextAttemptAt: 0,
+    })
+    await adminDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     return syncEngine?.syncNow() || { uploaded: 0, failed: 0 }
   },
   async latestAuthorizationBarcode() {
@@ -804,7 +963,11 @@ export const desktopAdminApi = {
       expand: 'generated_by',
       requestKey: null,
     }).catch((error) => {
-      throw new Error(pocketBaseErrorMessage(error, 'Unable to generate authorization barcode.'))
+      const message = pocketBaseErrorMessage(error, 'Unable to generate authorization barcode.')
+      if (/superusers?/i.test(message)) {
+        throw new Error('PocketHost rules still require a superuser for authorization barcodes. Run npm run pb:rules, then try again.')
+      }
+      throw new Error(message)
     })
 
     await recordActivity('Settings', 'Generated authorization barcode for void and discount approvals.')

@@ -37,6 +37,8 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       const result = await api.syncNow()
       if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
         flash('Cloud sync complete. Nothing pending.')
+      } else if ((result.failed || 0) > 0 && result.errors?.[0]) {
+        flash(`Cloud sync failed: ${result.errors[0]}`)
       } else {
         flash(`Cloud sync complete. Uploaded ${result.uploaded || 0}, failed ${result.failed || 0}.`)
       }

@@ -51,18 +51,23 @@ await updateCollection('products', {
 await updateCollection('authorization_barcodes', {
   listRule: readRule,
   viewRule: readRule,
+  createRule: adminRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
 })
 
 await updateCollection('activity_logs', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,
+  updateRule: cashierRule,
 })
 
 await updateCollection('sales', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,
+  updateRule: cashierRule,
 })
 
 await updateCollection('sale_items', {

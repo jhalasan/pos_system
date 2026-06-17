@@ -430,6 +430,29 @@ app.get('/api/products', asyncRoute(async (_req, res) => {
   res.json(records.map(toProduct))
 }))
 
+app.get('/api/categories', asyncRoute(async (_req, res) => {
+  const records = await listRecords('categories', '?sort=name&perPage=500')
+  res.json(records.map((record) => ({
+    id: record.id,
+    name: record.name || '',
+    updated: record.updated || record.created || '',
+  })))
+}))
+
+app.post('/api/categories', asyncRoute(async (req, res) => {
+  const name = String(req.body?.name || '').trim()
+  if (!name) return res.status(400).json({ error: 'Category name is required.' })
+
+  const id = await getOrCreateCategoryId(name)
+  const record = await (await pbCollection('categories')).getOne(id)
+  await createLog({ action: 'Settings', detail: `Created category "${record.name}"` })
+  res.status(201).json({
+    id: record.id,
+    name: record.name || name,
+    updated: record.updated || record.created || '',
+  })
+}))
+
 app.get('/api/cashier/products', asyncRoute(async (_req, res) => {
   const records = await listRecords('products', '?sort=name&expand=category&perPage=500')
   res.json(records.map(toProduct))
@@ -512,6 +535,9 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
       id: sale.id,
       transactionNo: sale.transaction_no || sale.id,
       totalAmount: Number(sale.total_amount) || 0,
+      subtotalAmount: Number(sale.total_amount) || 0,
+      discountPercent: 0,
+      discountAmount: 0,
       paymentMethod: sale.payment_method || '',
       status: sale.status || 'completed',
       createdAt: sale.created_at || sale.created,
@@ -606,7 +632,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     })
   }
 
-  res.status(201).json({ id: sale.id, transactionNo, totalAmount })
+  res.status(201).json({ id: sale.id, transactionNo, totalAmount, subtotalAmount, discountPercent, discountAmount })
 }))
 
 app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {

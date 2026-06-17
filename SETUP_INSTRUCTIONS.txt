@@ -44,6 +44,12 @@ DEVELOPER SETUP FOR CODE EDITS
    - Only developers running the backend/admin API need the PocketBase superuser credentials.
    - Never put superuser credentials in any VITE_ variable.
 
+   After changing PocketHost rules or importing a fresh schema, run:
+
+   npm run pb:rules
+
+   This allows POS admin users to create authorization barcodes and manage app records without putting superuser credentials in the desktop app.
+
 4. Configure .env.cashier for cashier/desktop/offline-first testing.
 
    VITE_APP_TARGET=cashier-desktop

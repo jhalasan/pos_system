@@ -1,20 +1,34 @@
 import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
-import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage } from '../components/Icons'
+import Modal from '../components/Modal'
+import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage, IconDownload } from '../components/Icons'
 import { api, defaultCategories, statusLabel, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { exportCsv } from '../utils/exportCsv'
+import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 
 export default function ProductManagement() {
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
+  const { data: categoryRecords, setData: setCategoryRecords } = useApi(api.categories, [])
   const [query, setQuery] = useState('')
   const [cat, setCat] = useState('All')
   const [modal, setModal] = useState(null)
+  const [categoryModalOpen, setCategoryModalOpen] = useState(false)
+  const [categoryName, setCategoryName] = useState('')
+  const [categoryError, setCategoryError] = useState('')
+  const [categorySaving, setCategorySaving] = useState(false)
   const [toast, setToast] = useState('')
+  const [exporting, setExporting] = useState(false)
+  const [exportStatus, setExportStatus] = useState('')
 
   const categories = useMemo(() => {
-    return [...new Set([...defaultCategories, ...list.map((p) => p.category).filter(Boolean)])]
-  }, [list])
+    return [...new Set([
+      ...defaultCategories,
+      ...categoryRecords.map((category) => category.name).filter(Boolean),
+      ...list.map((p) => p.category).filter(Boolean),
+    ])]
+  }, [categoryRecords, list])
 
   const filtered = useMemo(() => {
     return list.filter((p) => {
@@ -61,6 +75,55 @@ export default function ProductManagement() {
     }
   }
 
+  async function handleCreateCategory() {
+    const name = categoryName.trim()
+    if (!name) {
+      setCategoryError('Category name is required.')
+      return
+    }
+
+    setCategorySaving(true)
+    setCategoryError('')
+    try {
+      const created = await api.createCategory(name)
+      setCategoryRecords([
+        created,
+        ...categoryRecords.filter((category) => category.name.toLowerCase() !== created.name.toLowerCase()),
+      ])
+      setCategoryName('')
+      setCategoryModalOpen(false)
+      flash(`Created category "${created.name}".`)
+    } catch (err) {
+      setCategoryError(err.message || 'Unable to create category.')
+    } finally {
+      setCategorySaving(false)
+    }
+  }
+
+  async function exportProducts() {
+    setExporting(true)
+    setExportStatus('Exporting...')
+    try {
+      const result = await exportCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, [
+        ['Name', 'Barcode', 'Category', 'Quantity', 'Unit', 'Price', 'Status'],
+        ...filtered.map((product) => [
+          product.name,
+          product.barcode,
+          product.category,
+          product.qty,
+          product.unit,
+          product.price,
+          product.status,
+        ]),
+      ], { directory: getExportLocation(exportLocationKeys.products) })
+      setExportStatus(`Exported in - "${result.path}"`)
+    } catch (err) {
+      setExportStatus(err.message || 'Unable to export products.')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -85,10 +148,17 @@ export default function ProductManagement() {
         title="Product Management"
         subtitle="Add, edit, and organize products in your catalog."
       >
+        <button className="btn btn-outline" onClick={exportProducts} disabled={exporting}>
+          <IconDownload size={16} /> {exporting ? 'Exporting...' : 'Export Products'}
+        </button>
+        <button className="btn btn-outline" onClick={() => setCategoryModalOpen(true)}>
+          <IconPlus size={16} /> Create Category
+        </button>
         <button className="btn btn-primary" onClick={() => setModal({ mode: 'add' })}>
           <IconPlus size={16} /> Add Product
         </button>
       </PageHeader>
+      {exportStatus && <div className="export-status">{exportStatus}</div>}
 
       <div className="card">
         <div className="toolbar">
@@ -137,9 +207,12 @@ export default function ProductManagement() {
                 </tr>
               )}
               {filtered.map((p) => {
-                const st = statusLabel[p.status] || statusLabel['in-stock']
+                const isOutOfStock = Number(p.qty) <= 0
+                const st = isOutOfStock
+                  ? statusLabel['out-of-stock']
+                  : statusLabel[p.status] || statusLabel['in-stock']
                 return (
-                  <tr key={p.id}>
+                  <tr key={p.id} className={isOutOfStock ? 'product-row-out' : ''}>
                     <td>
                       <div className="prod-cell">
                         <div className="prod-thumb">
@@ -157,7 +230,7 @@ export default function ProductManagement() {
                     </td>
                     <td className="mono">{p.barcode}</td>
                     <td>{p.category}</td>
-                    <td className="t-center">{p.qty}</td>
+                    <td className={`t-center ${isOutOfStock ? 'stock-zero' : ''}`}>{p.qty}</td>
                     <td>{p.unit}</td>
                     <td>{peso(p.price)}</td>
                     <td><span className={`badge ${st.badge}`}>{st.text}</span></td>
@@ -195,6 +268,51 @@ export default function ProductManagement() {
           onClose={() => setModal(null)}
           onSave={handleSave}
         />
+      )}
+
+      {categoryModalOpen && (
+        <Modal
+          title="Create Category"
+          onClose={() => {
+            setCategoryModalOpen(false)
+            setCategoryName('')
+            setCategoryError('')
+          }}
+          footer={(
+            <>
+              <button
+                className="btn btn-outline"
+                disabled={categorySaving}
+                onClick={() => {
+                  setCategoryModalOpen(false)
+                  setCategoryName('')
+                  setCategoryError('')
+                }}
+              >
+                Cancel
+              </button>
+              <button className="btn btn-primary" disabled={categorySaving} onClick={handleCreateCategory}>
+                {categorySaving ? 'Creating...' : 'Create Category'}
+              </button>
+            </>
+          )}
+        >
+          <div className="field">
+            <label>Category Name</label>
+            <input
+              className="input"
+              placeholder="e.g. Frozen Goods"
+              value={categoryName}
+              onChange={(event) => {
+                setCategoryName(event.target.value)
+                setCategoryError('')
+              }}
+              onKeyDown={(event) => { if (event.key === 'Enter') handleCreateCategory() }}
+              autoFocus
+            />
+          </div>
+          {categoryError && <div className="alert error">{categoryError}</div>}
+        </Modal>
       )}
 
       {toast && (

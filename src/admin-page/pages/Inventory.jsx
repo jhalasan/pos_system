@@ -9,6 +9,7 @@ import { useApi } from '../hooks/useApi'
 export default function Inventory() {
   const { data: products, setData: setProducts, loading, error } = useApi(api.products, [])
   const { data: fsnProducts, setData: setFsnProducts } = useApi(api.fsnInventory, [])
+  const { data: categoryRecords } = useApi(api.categories, [])
   const barcodeRef = useRef(null)
   const [barcode, setBarcode] = useState('')
   const [qty, setQty] = useState(1)
@@ -25,8 +26,12 @@ export default function Inventory() {
   const lowItems = products.filter((p) => p.status !== 'in-stock').length
   const stockValue = products.reduce((s, p) => s + p.qty * p.price, 0)
   const categories = useMemo(() => {
-    return [...new Set([...defaultCategories, ...products.map((p) => p.category).filter(Boolean)])]
-  }, [products])
+    return [...new Set([
+      ...defaultCategories,
+      ...categoryRecords.map((category) => category.name).filter(Boolean),
+      ...products.map((p) => p.category).filter(Boolean),
+    ])]
+  }, [categoryRecords, products])
   const scannedUnits = feed.reduce((s, f) => s + f.qty, 0)
   const batchUnits = batchItems.reduce((s, item) => s + item.qty, 0)
   const sessionUnits = scannedUnits + batchUnits

@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { IconBell, IconMenu } from './Icons'
 import SyncStatusIndicator from '../../components/SyncStatusIndicator'
+import { api } from '../services/api'
 
 const titles = {
   dashboard: 'Dashboard',
@@ -21,6 +22,8 @@ export default function AdminLayout() {
   const [now, setNow] = useState(new Date())
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [notifications, setNotifications] = useState([])
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -31,6 +34,50 @@ export default function AdminLayout() {
     document.body.classList.toggle('admin-menu-open', sidebarOpen)
     return () => document.body.classList.remove('admin-menu-open')
   }, [sidebarOpen])
+
+  async function toggleNotifications() {
+    const nextOpen = !notificationsOpen
+    setNotificationsOpen(nextOpen)
+    if (!nextOpen) return
+
+    try {
+      const [dashboard, activityLogs] = await Promise.all([
+        api.dashboard(),
+        api.activityLogs(),
+      ])
+      const recentEvents = activityLogs
+        .filter((log) => log.action === 'Discount' || log.action === 'Transaction Void')
+        .slice(0, 5)
+      const alerts = [
+        ...(dashboard.criticalAlerts || []).map((item) => ({
+          tone: 'danger',
+          title: item.name,
+          detail: `${item.left} item(s) left`,
+        })),
+        ...((dashboard.topProducts || []).slice(0, 3).map((item) => ({
+          tone: 'info',
+          title: item.name,
+          detail: `${item.units} unit(s) sold`,
+        }))),
+        ...recentEvents.map((log) => ({
+          tone: log.action === 'Transaction Void' ? 'danger' : 'warning',
+          title: log.action === 'Transaction Void' ? 'Voided transaction' : 'Discount applied',
+          detail: `${log.user || 'System'} - ${log.detail || new Date(log.time).toLocaleString()}`,
+        })),
+      ]
+      setNotifications(alerts.length ? alerts : [{
+        tone: 'success',
+        title: 'All clear',
+        detail: 'No critical stock, discount, void, or sales alerts right now.',
+      }])
+    } catch (error) {
+      setNotifications([{
+        tone: 'danger',
+        title: 'Unable to load notifications',
+        detail: error.message || 'Please try again.',
+      }])
+    }
+  }
 
   return (
     <div className={'admin-shell' + (sidebarCollapsed ? ' sidebar-collapsed' : '') + (sidebarOpen ? ' menu-open' : '')}>
@@ -71,7 +118,22 @@ export default function AdminLayout() {
               {' - '}
               {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
-            <button className="icon-btn" title="Notifications"><IconBell size={17} /></button>
+            <div className="notification-wrap">
+              <button className="icon-btn" title="Notifications" onClick={toggleNotifications}>
+                <IconBell size={17} />
+              </button>
+              {notificationsOpen && (
+                <div className="notification-panel">
+                  <div className="notification-head">Notifications</div>
+                  {notifications.map((item, index) => (
+                    <div className={`notification-item ${item.tone}`} key={`${item.title}-${index}`}>
+                      <strong>{item.title}</strong>
+                      <span>{item.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="user-chip">
               <div className="av">AD</div>
               <div>

@@ -67,6 +67,42 @@ async function productBody(pb, data) {
   return formData
 }
 
+async function findCloudProductByBarcode(pb, barcode) {
+  const normalizedBarcode = String(barcode || '').trim()
+  if (!normalizedBarcode) return null
+
+  return pb.collection('products').getFirstListItem(
+    pb.filter('barcode = {:barcode}', { barcode: normalizedBarcode }),
+    { expand: 'category', requestKey: null },
+  ).catch((error) => {
+    if (error.status === 404) return null
+    throw error
+  })
+}
+
+async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb) {
+  const normalized = normalizeProduct(cloudRecord, pb)
+
+  await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+    await adminDb.products.delete(localProductId)
+    await adminDb.products.put(normalized)
+
+    const laterOps = await adminDb.pendingOps.where('productId').equals(localProductId).toArray()
+    for (const laterOp of laterOps) {
+      await adminDb.pendingOps.update(laterOp.id, {
+        productId: cloudRecord.id,
+        payload: {
+          ...laterOp.payload,
+          id: cloudRecord.id,
+          categoryId: normalized.categoryId || laterOp.payload?.categoryId,
+        },
+      })
+    }
+  })
+
+  return normalized
+}
+
 export class AdminSyncEngine extends EventTarget {
   constructor({
     baseUrl = import.meta.env.VITE_POCKETBASE_URL,
@@ -157,6 +193,7 @@ export class AdminSyncEngine extends EventTarget {
 
     let uploaded = 0
     let failed = 0
+    const errors = []
 
     for (const op of queuedOps) {
       if (this.stopped) break
@@ -166,6 +203,7 @@ export class AdminSyncEngine extends EventTarget {
         uploaded += 1
       } catch (error) {
         failed += 1
+        errors.push(errorMessage(error))
         const attempts = op.attempts + 1
         await adminDb.pendingOps.update(op.id, {
           attempts,
@@ -185,6 +223,7 @@ export class AdminSyncEngine extends EventTarget {
         uploaded += 1
       } catch (error) {
         failed += 1
+        errors.push(errorMessage(error))
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { log, error } }))
       }
     }
@@ -195,39 +234,31 @@ export class AdminSyncEngine extends EventTarget {
       })
     }
 
-    this.dispatchEvent(new CustomEvent('synccomplete', { detail: { uploaded, failed } }))
+    this.dispatchEvent(new CustomEvent('synccomplete', { detail: { uploaded, failed, errors } }))
     emitSyncStatus(
       failed > 0 ? 'failed' : 'succeeded',
       failed > 0
-        ? `Auto-Sync Finished with ${failed} Failed`
+        ? `Auto-Sync Finished with ${failed} Failed: ${errors[0] || 'Unknown error'}`
         : 'Auto-Sync Succeeded',
     )
-    return { uploaded, failed }
+    return { uploaded, failed, errors }
   }
 
   async uploadOperation(op) {
     if (op.type === 'createProduct') {
-      const created = await this.pb.collection('products').create(await productBody(this.pb, op.payload), {
-        expand: 'category',
-        requestKey: op.id,
-      })
-      const normalized = normalizeProduct(created, this.pb)
-      await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
-        await adminDb.products.delete(op.productId)
-        await adminDb.products.put(normalized)
-
-        const laterOps = await adminDb.pendingOps.where('productId').equals(op.productId).toArray()
-        for (const laterOp of laterOps) {
-          await adminDb.pendingOps.update(laterOp.id, {
-            productId: created.id,
-            payload: {
-              ...laterOp.payload,
-              id: created.id,
-              categoryId: normalized.categoryId || laterOp.payload?.categoryId,
-            },
+      const existing = await findCloudProductByBarcode(this.pb, op.payload?.barcode)
+      const saved = existing
+        ? await this.pb.collection('products').update(existing.id, await productBody(this.pb, op.payload), {
+            expand: 'category',
+            requestKey: op.id,
           })
-        }
+        : await this.pb.collection('products').create(await productBody(this.pb, op.payload), {
+            expand: 'category',
+            requestKey: op.id,
+          })
 
+      await replaceLocalProductWithCloud(op.productId, saved, this.pb)
+      await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
         await adminDb.pendingOps.delete(op.id)
       })
       return

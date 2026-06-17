@@ -187,7 +187,7 @@ export const desktopCashierApi = {
       detail: 'Signed in to cashier POS',
     })
     void activeRuntime.pb.collection('users').getFullList({
-      filter: 'role = "cashier" && quick_login_enabled = true && status = "active"',
+      filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
       fields: 'id,name,email,role,status,quick_login_enabled',
       sort: 'name',
       requestKey: null,
@@ -210,7 +210,7 @@ export const desktopCashierApi = {
     }
     const activeRuntime = await runtime()
     return activeRuntime.pb.collection('users').getFullList({
-      filter: 'role = "cashier" && quick_login_enabled = true && status = "active"',
+      filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
       fields: 'id,name,email,role,status,quick_login_enabled',
       sort: 'name',
       requestKey: null,
@@ -248,6 +248,9 @@ export const desktopCashierApi = {
         id: sale.clientSaleId,
         transactionNo: sale.transactionNo,
         totalAmount: sale.totalAmount,
+        subtotalAmount: sale.subtotalAmount,
+        discountPercent: Number(sale.discountPercent) || 0,
+        discountAmount: Number(sale.discountAmount) || 0,
         paymentMethod: sale.paymentMethod,
         status: sale.status === 'voided'
           ? 'Voided'
@@ -300,34 +303,41 @@ export const desktopCashierApi = {
     const approver = await authorizeManagerApproval(authorization)
 
     if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
-      const activeRuntime = await runtime()
-      const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
-        activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
-          transactionNo: localSale.transactionNo,
-          cashierId: localSale.cashierId,
-        }),
-        { requestKey: null },
-      ).catch(() => null)
+      try {
+        const activeRuntime = await runtime()
+        const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
+          activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
+            transactionNo: localSale.transactionNo,
+            cashierId: localSale.cashierId,
+          }),
+          { requestKey: null },
+        ).catch(() => null)
 
-      if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
-        const saleItems = await activeRuntime.pb.collection('sale_items').getFullList({
-          filter: activeRuntime.pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
-          requestKey: null,
-        })
+        if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
+          const saleItems = await activeRuntime.pb.collection('sale_items').getFullList({
+            filter: activeRuntime.pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
+            requestKey: null,
+          })
 
-        for (const item of saleItems) {
-          const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
-          if (!productId) continue
-          const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
-          await activeRuntime.pb.collection('products').update(product.id, {
-            quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+          for (const item of saleItems) {
+            const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
+            if (!productId) continue
+            const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
+            await activeRuntime.pb.collection('products').update(product.id, {
+              quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+            }, { requestKey: null })
+          }
+
+          await activeRuntime.pb.collection('sales').update(cloudSale.id, {
+            status: 'voided',
+            voided_by: approver.id || '',
           }, { requestKey: null })
         }
-
-        await activeRuntime.pb.collection('sales').update(cloudSale.id, {
-          status: 'voided',
-          voided_by: approver.id || '',
-        }, { requestKey: null })
+      } catch (error) {
+        if (/superusers?/i.test(error?.message || '')) {
+          throw new Error('PocketHost rules still require a superuser to void completed sales. Run npm run pb:rules, then try again.', { cause: error })
+        }
+        throw error
       }
     } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
       throw new Error('Internet is required to void a synced transaction.')

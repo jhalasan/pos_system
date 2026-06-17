@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import Modal from '../components/Modal'
 import { IconDownload, IconList } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { exportCsv } from '../utils/exportCsv'
+import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 
 const actionBadge = {
   Login: 'badge-info',
@@ -14,6 +17,7 @@ const actionBadge = {
   Sync: 'badge-info',
   'Transaction Void': 'badge-danger',
   Discount: 'badge-success',
+  Discounts: 'badge-success',
   'Stock Update': 'badge-warning',
   'Password Reset': 'badge-info',
   'Cloud Sync': 'badge-info',
@@ -47,25 +51,83 @@ function getDateRange(range) {
   return { start: null, end: null }
 }
 
+function getCustomDateRange(from, to) {
+  const start = from ? new Date(`${from}T00:00:00`) : null
+  const end = to ? new Date(`${to}T23:59:59.999`) : null
+  return { start, end }
+}
+
+function logMatchesFilters(log, filters) {
+  const mu = filters.userType === 'All' || log.userType === filters.userType
+  const ma = filters.action === 'All' || log.action === filters.action ||
+    (filters.action === 'Discounts' && log.action === 'Discount')
+  const dt = new Date(log.time)
+  const md = (!filters.range.start || dt >= filters.range.start) &&
+    (!filters.range.end || dt <= filters.range.end)
+  return mu && ma && md
+}
+
+function actionLabel(action) {
+  return action === 'Discount' ? 'Discounts' : action
+}
+
 export default function ActivityLogs() {
   const { data: activityLogs, loading, error } = useApi(api.activityLogs, [])
   const [userType, setUserType] = useState('All')
   const [action, setAction] = useState('All')
   const [dateRange, setDateRange] = useState('Today')
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportStatus, setExportStatus] = useState('')
+  const [exportFilters, setExportFilters] = useState({
+    userType: 'All',
+    action: 'All',
+    dateRange: 'Today',
+    from: '',
+    to: '',
+  })
 
-  const actionTypes = [...new Set(activityLogs.map((l) => l.action).filter(Boolean))]
+  const actionTypes = [...new Set(['Discounts', ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
 
   const selectedRange = useMemo(() => getDateRange(dateRange), [dateRange])
 
   const filtered = useMemo(() => {
-    return activityLogs.filter((l) => {
-      const mu = userType === 'All' || l.userType === userType
-      const ma = action === 'All' || l.action === action
-      const dt = new Date(l.time)
-      const md = !selectedRange.start || (dt >= selectedRange.start && dt <= selectedRange.end)
-      return mu && ma && md
-    })
+    return activityLogs.filter((log) => logMatchesFilters(log, {
+      userType,
+      action,
+      range: selectedRange,
+    }))
   }, [activityLogs, userType, action, selectedRange])
+
+  const exportPreview = useMemo(() => {
+    const range = exportFilters.dateRange === 'Custom'
+      ? getCustomDateRange(exportFilters.from, exportFilters.to)
+      : getDateRange(exportFilters.dateRange)
+    return activityLogs.filter((log) => logMatchesFilters(log, { ...exportFilters, range }))
+  }, [activityLogs, exportFilters])
+
+  async function exportLogs() {
+    setExporting(true)
+    setExportStatus('Exporting...')
+    try {
+      const result = await exportCsv(`activity-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ['Timestamp', 'User', 'User Type', 'Action', 'Details'],
+      ...exportPreview.map((log) => [
+        new Date(log.time).toLocaleString(),
+        log.user,
+        log.userType,
+        actionLabel(log.action),
+        log.detail,
+      ]),
+      ], { directory: getExportLocation(exportLocationKeys.activityLogs) })
+      setExportStatus(`Exported in - "${result.path}"`)
+      setExportOpen(false)
+    } catch (err) {
+      setExportStatus(err.message || 'Unable to export logs.')
+    } finally {
+      setExporting(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -91,10 +153,11 @@ export default function ActivityLogs() {
         title="Activity Logs"
         subtitle="Real-time audit trail of all system activities."
       >
-        <button className="btn btn-outline" onClick={() => alert('Exporting activity logs...')}>
+        <button className="btn btn-outline" onClick={() => setExportOpen(true)}>
           <IconDownload size={16} /> Export Logs
         </button>
       </PageHeader>
+      {exportStatus && <div className="export-status">{exportStatus}</div>}
 
       <div className="card activity-card">
         <div className="toolbar activity-toolbar">
@@ -152,7 +215,7 @@ export default function ActivityLogs() {
                     </td>
                     <td>
                       <span className={'badge ' + (actionBadge[l.action] || 'badge-neutral')}>
-                        {l.action}
+                        {actionLabel(l.action)}
                       </span>
                     </td>
                     <td className="muted">{l.detail}</td>
@@ -163,6 +226,84 @@ export default function ActivityLogs() {
           </div>
         )}
       </div>
+
+      {exportOpen && (
+        <Modal
+          title="Export Activity Logs"
+          onClose={() => setExportOpen(false)}
+          footer={(
+            <>
+              <button className="btn btn-outline" onClick={() => setExportOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={exportLogs} disabled={exporting}>
+                <IconDownload size={16} /> {exporting ? 'Exporting...' : `Export ${exportPreview.length} Log(s)`}
+              </button>
+            </>
+          )}
+        >
+          <div className="export-filter-grid">
+            <label className="field">
+              <span>Date Range</span>
+              <select
+                className="select"
+                value={exportFilters.dateRange}
+                onChange={(event) => setExportFilters({ ...exportFilters, dateRange: event.target.value })}
+              >
+                <option value="Today">Today</option>
+                <option value="Last 7 Days">Last 7 Days</option>
+                <option value="Last 30 Days">Last 30 Days</option>
+                <option value="All Time">All Time</option>
+                <option value="Custom">Custom</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>User Type</span>
+              <select
+                className="select"
+                value={exportFilters.userType}
+                onChange={(event) => setExportFilters({ ...exportFilters, userType: event.target.value })}
+              >
+                <option value="All">All User Types</option>
+                <option value="Admin">Admin</option>
+                <option value="Cashier">Cashier</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Action Type</span>
+              <select
+                className="select"
+                value={exportFilters.action}
+                onChange={(event) => setExportFilters({ ...exportFilters, action: event.target.value })}
+              >
+                <option value="All">All Action Types</option>
+                {actionTypes.map((a) => <option key={a}>{a}</option>)}
+              </select>
+            </label>
+            {exportFilters.dateRange === 'Custom' && (
+              <>
+                <label className="field">
+                  <span>From</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={exportFilters.from}
+                    onChange={(event) => setExportFilters({ ...exportFilters, from: event.target.value })}
+                  />
+                </label>
+                <label className="field">
+                  <span>To</span>
+                  <input
+                    className="input"
+                    type="date"
+                    value={exportFilters.to}
+                    onChange={(event) => setExportFilters({ ...exportFilters, to: event.target.value })}
+                  />
+                </label>
+              </>
+            )}
+          </div>
+          <div className="export-summary">{exportPreview.length} matching record(s)</div>
+        </Modal>
+      )}
     </>
   )
 }

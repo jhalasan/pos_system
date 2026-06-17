@@ -46,7 +46,7 @@ export async function replaceProductsFromCloud(records, pb) {
   const products = records.map((record) => normalizeProduct(record, pb))
 
   await adminDb.transaction('rw', adminDb.products, async () => {
-    const pending = await adminDb.products.where('pendingSync').equals(1).toArray()
+    const pending = await adminDb.products.where('pendingSync').equals(true).toArray()
     await adminDb.products.clear()
     await adminDb.products.bulkPut(products)
     if (pending.length) await adminDb.products.bulkPut(pending)
@@ -86,4 +86,3 @@ export async function getProductByBarcode(barcode) {
 export async function getLocalCategories() {
   return (await adminDb.categories.orderBy('name').toArray()).map((category) => category.name)
 }
-

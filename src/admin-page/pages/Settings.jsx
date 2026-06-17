@@ -1,8 +1,14 @@
 import { useState } from 'react'
 import PageHeader from '../components/PageHeader'
-import { IconSettings, IconUsers } from '../components/Icons'
+import { IconDownload, IconSettings, IconUsers } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import {
+  exportLocationKeys,
+  exportLocationLabels,
+  getExportLocations,
+  saveExportLocations,
+} from '../utils/exportSettings'
 
 export default function Settings() {
   const {
@@ -13,6 +19,7 @@ export default function Settings() {
   } = useApi(api.settingsAdmins, [])
   const { data: cashiers, setData: setCashiers, loading, error } = useApi(api.settingsCashiers, [])
   const [toast, setToast] = useState('')
+  const [exportLocations, setExportLocations] = useState(getExportLocations)
 
   function flash(message) {
     setToast(message)
@@ -38,6 +45,28 @@ export default function Settings() {
       flash(`${enabled ? 'Enabled' : 'Disabled'} quick login for ${admin.name}.`)
     } catch (err) {
       flash(err.message || 'Unable to update admin quick login.')
+    }
+  }
+
+  function updateExportLocation(type, value) {
+    const saved = saveExportLocations({ ...exportLocations, [type]: value })
+    setExportLocations(saved)
+  }
+
+  async function chooseExportFolder(type) {
+    const invoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke
+    if (!invoke) {
+      flash('Folder picker is available in the desktop app.')
+      return
+    }
+
+    try {
+      const selected = await invoke('select_export_folder')
+      if (!selected) return
+      updateExportLocation(type, selected)
+      flash(`${exportLocationLabels[type]} export location saved.`)
+    } catch (err) {
+      flash(err.message || 'Unable to open folder picker.')
     }
   }
 
@@ -67,6 +96,40 @@ export default function Settings() {
       />
 
       <div className="grid-gap">
+        <div className="card">
+          <div className="panel-head">
+            <div>
+              <h3>Export Locations</h3>
+              <span className="sub">Set where desktop exports are saved on this device.</span>
+            </div>
+            <span className="stat-icon ic-indigo"><IconSettings size={18} /></span>
+          </div>
+
+          <div className="panel-body export-settings-grid">
+            {Object.values(exportLocationKeys).map((key) => (
+              <label className="field" key={key}>
+                <span>{exportLocationLabels[key]}</span>
+                <div className="folder-picker-row">
+                  <input
+                    className="input"
+                    value={exportLocations[key]}
+                    placeholder="Example: C:\\Users\\Public\\Documents\\Nexa POS Exports"
+                    onChange={(event) => updateExportLocation(key, event.target.value)}
+                    onBlur={() => flash(`${exportLocationLabels[key]} export location saved.`)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    onClick={() => chooseExportFolder(key)}
+                  >
+                    <IconDownload size={16} /> Choose Folder
+                  </button>
+                </div>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <div className="card">
           <div className="panel-head">
             <div>

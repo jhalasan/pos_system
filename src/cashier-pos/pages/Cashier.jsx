@@ -82,6 +82,8 @@ const Cashier = ({ onLogout, user }) => {
   const [completedVoidLoading, setCompletedVoidLoading] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [discountApprovalCode, setDiscountApprovalCode] = useState('');
+  const [discountApprovalEmail, setDiscountApprovalEmail] = useState('');
+  const [discountApprovalPassword, setDiscountApprovalPassword] = useState('');
   const [discountAmountInput, setDiscountAmountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
@@ -567,6 +569,9 @@ const Cashier = ({ onLogout, user }) => {
     const completedPayment = {
       paymentMethod: isSplitPayment ? 'split' : paymentMethod,
       totalAmount: total,
+      subtotalAmount: subtotal,
+      discountPercent: discount,
+      discountAmount,
       cashAmount,
       gcashRef,
       splitPayments,
@@ -607,6 +612,7 @@ const Cashier = ({ onLogout, user }) => {
           saleId: sale.id,
           transactionNo: sale.transactionNo || completedTransactionNo,
           pendingSync: sale.pendingSync,
+          discounted: discount > 0,
         },
       });
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
@@ -762,9 +768,14 @@ const Cashier = ({ onLogout, user }) => {
                 <Badge variant={isVoidedTxn ? 'danger' : (activeTxn.completedSale?.pendingSync ? 'info' : 'success')} size="sm">
                   {isVoidedTxn ? 'Voided' : (activeTxn.completedSale?.pendingSync ? 'Pending sync' : 'Completed')}
                 </Badge>
+                {activeTxn.completedSale?.discounted && (
+                  <Badge variant="warning" size="sm">
+                    Discounted {activeTxn.completedSale.discountPercent}%
+                  </Badge>
+                )}
                 {isCompletedTxn && !isVoidedTxn && (
                   <Button
-                    variant="outline"
+                    variant="danger"
                     size="sm"
                     onClick={() => handleOpenCompletedVoidModal({
                       saleId: activeTxn.completedSale?.saleId,
@@ -960,6 +971,8 @@ const Cashier = ({ onLogout, user }) => {
               <Button variant="outline" onClick={() => {
                 setShowDiscountModal(true);
                 setDiscountApprovalCode('');
+                setDiscountApprovalEmail('');
+                setDiscountApprovalPassword('');
                 setDiscountAmountInput('');
                 setDiscountError('');
                 setDiscountApproved(false);
@@ -1074,6 +1087,8 @@ const Cashier = ({ onLogout, user }) => {
           setShowDiscountModal(false);
           setDiscountApproved(false);
           setDiscountApprovalCode('');
+          setDiscountApprovalEmail('');
+          setDiscountApprovalPassword('');
           setDiscountAmountInput('');
           setDiscountError('');
         }}
@@ -1084,6 +1099,8 @@ const Cashier = ({ onLogout, user }) => {
               setShowDiscountModal(false);
               setDiscountApproved(false);
               setDiscountApprovalCode('');
+              setDiscountApprovalEmail('');
+              setDiscountApprovalPassword('');
               setDiscountAmountInput('');
               setDiscountError('');
             }}>
@@ -1092,7 +1109,14 @@ const Cashier = ({ onLogout, user }) => {
             {!discountApproved ? (
               <button className="btn btn-primary" onClick={async () => {
                 try {
-                  await cashierApi.authorizeVoid(discountApprovalCode);
+                  const authorization = discountApprovalCode.trim()
+                    ? { code: discountApprovalCode.trim() }
+                    : { email: discountApprovalEmail.trim(), password: discountApprovalPassword };
+                  if (!authorization.code && (!authorization.email || !authorization.password)) {
+                    setDiscountError('Enter a manager barcode or admin email and password.');
+                    return;
+                  }
+                  await cashierApi.authorizeVoid(authorization);
                   setDiscountApproved(true);
                   setDiscountError('');
                 } catch (err) {
@@ -1112,6 +1136,8 @@ const Cashier = ({ onLogout, user }) => {
                 setShowDiscountModal(false);
                 setDiscountApproved(false);
                 setDiscountApprovalCode('');
+                setDiscountApprovalEmail('');
+                setDiscountApprovalPassword('');
                 setDiscountAmountInput('');
                 setDiscountError('');
                 showNotification(`Discount applied: ${amount}%`);
@@ -1124,8 +1150,27 @@ const Cashier = ({ onLogout, user }) => {
       >
         {!discountApproved ? (
           <>
-            <p>Please enter manager approval code to permit discount changes.</p>
+            <p>Please enter a manager barcode or admin account to permit discount changes.</p>
             <Input label="Manager Approval Code" placeholder="Enter manager barcode" value={discountApprovalCode} onChange={(e) => setDiscountApprovalCode(e.target.value)} />
+            <p style={{ margin: '4px 0 12px', color: 'var(--text-muted)', fontSize: 13 }}>
+              Or use an admin account if the barcode is unavailable.
+            </p>
+            <Input
+              label="Admin Email"
+              type="email"
+              placeholder="Enter admin email"
+              value={discountApprovalEmail}
+              onChange={(e) => setDiscountApprovalEmail(e.target.value)}
+              disabled={Boolean(discountApprovalCode.trim())}
+            />
+            <Input
+              label="Admin Password"
+              type="password"
+              placeholder="Enter admin password"
+              value={discountApprovalPassword}
+              onChange={(e) => setDiscountApprovalPassword(e.target.value)}
+              disabled={Boolean(discountApprovalCode.trim())}
+            />
           </>
         ) : (
           <>
@@ -1172,6 +1217,11 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['history-meta']}>
                   <Badge variant="info" size="sm">{sale.paymentMethod || 'payment'}</Badge>
                   <Badge variant={sale.status === 'Voided' ? 'danger' : 'success'} size="sm">{sale.status}</Badge>
+                  {(Number(sale.discountPercent) > 0 || Number(sale.discountAmount) > 0) && (
+                    <Badge variant="warning" size="sm">
+                      Discounted {Number(sale.discountPercent) || 0}%
+                    </Badge>
+                  )}
                 </div>
                 <div className={styles['history-lines']}>
                   {sale.items.map((item) => (
