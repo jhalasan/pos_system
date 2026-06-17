@@ -8,6 +8,13 @@ This project uses:
 
 Do not commit real .env files or PocketBase superuser credentials.
 
+PocketHost URL for this project:
+
+   https://nexasystems.pockethost.io
+
+Use the URL exactly like that in environment files.
+Do not add a trailing slash, /api, or /_/.
+
 
 DEVELOPER SETUP FOR CODE EDITS
 ==============================
@@ -26,8 +33,8 @@ DEVELOPER SETUP FOR CODE EDITS
 
 3. Configure .env for PocketHost.
 
-   POCKETBASE_URL=https://your-instance.pockethost.io
-   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_URL=https://nexasystems.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://nexasystems.pockethost.io
    POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
    POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
    VITE_API_URL=
@@ -40,7 +47,7 @@ DEVELOPER SETUP FOR CODE EDITS
 4. Configure .env.cashier for cashier/desktop/offline-first testing.
 
    VITE_APP_TARGET=cashier-desktop
-   VITE_POCKETBASE_URL=https://your-instance.pockethost.io
+   VITE_POCKETBASE_URL=https://nexasystems.pockethost.io
 
 5. Run the normal web/admin development app.
 
@@ -92,8 +99,8 @@ Use this if teammates are not on the same Wi-Fi and need a temporary public link
 
 1. Make sure .env points to PocketHost.
 
-   POCKETBASE_URL=https://your-instance.pockethost.io
-   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_URL=https://nexasystems.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://nexasystems.pockethost.io
    POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
    POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
    VITE_API_URL=
@@ -135,8 +142,8 @@ For final client deployment, do not use ngrok or a LAN IP. Deploy the Express ap
 
    Set these on the hosting provider:
 
-   POCKETBASE_URL=https://your-instance.pockethost.io
-   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_URL=https://nexasystems.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://nexasystems.pockethost.io
    POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
    POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
    VITE_API_URL=
@@ -172,7 +179,7 @@ For final client deployment, do not use ngrok or a LAN IP. Deploy the Express ap
    Install the generated Windows app on cashier devices.
    The cashier desktop app should point to:
 
-   VITE_POCKETBASE_URL=https://your-instance.pockethost.io
+   VITE_POCKETBASE_URL=https://nexasystems.pockethost.io
 
    Cashier devices need internet for first login and cloud sync, but can continue completing sales locally after the product catalog and login state have been initialized.
 
