@@ -81,7 +81,33 @@ Open the Vite URL, usually:
 http://localhost:5173
 ```
 
-## 7. Build the cashier desktop app
+## 7. Share the app outside your Wi-Fi/network
+
+Your teammates cannot use `localhost` or your LAN IP when they are on a different network. They need a public URL for the Express app.
+
+For temporary testing, run:
+
+```bash
+npm run host
+```
+
+Then expose port `3001`:
+
+```bash
+ngrok http 3001
+```
+
+Give teammates the ngrok root URL:
+
+```text
+https://your-ngrok-url.ngrok-free.app
+```
+
+They should open the root URL, not `/api`. They do not need `.env`, the PocketBase superuser credentials, your Wi-Fi, or your IP address.
+
+For a permanent URL, deploy this Node/Express app to a public host and set the same `.env` values from step 2 on that host.
+
+## 8. Build the cashier desktop app
 
 After `.env.cashier` points to PocketHost:
 

@@ -24,7 +24,7 @@ import {
 } from './formatters.js'
 
 const app = express()
-const PORT = Number(process.env.API_PORT || 3001)
+const PORT = Number(process.env.PORT || process.env.API_PORT || 3001)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST_DIR = path.resolve(__dirname, '..', 'dist')
 const INDEX_HTML = path.join(DIST_DIR, 'index.html')
@@ -35,6 +35,16 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:1420,http
   .filter(Boolean)
 const ngrokHostPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.dev$/i
 const ngrokAppPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i
+const localNetworkHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})$/i
+
+function parseOrigin(origin) {
+  try {
+    return origin ? new URL(origin) : null
+  } catch {
+    return null
+  }
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -49,11 +59,13 @@ const upload = multer({
 
 app.use(cors({
   origin(origin, callback) {
+    const parsedOrigin = parseOrigin(origin)
     if (
       !origin ||
       allowedOrigins.includes(origin) ||
       ngrokHostPattern.test(origin) ||
-      ngrokAppPattern.test(origin)
+      ngrokAppPattern.test(origin) ||
+      (parsedOrigin && ['http:', 'https:'].includes(parsedOrigin.protocol) && localNetworkHostPattern.test(parsedOrigin.hostname))
     ) {
       callback(null, true)
       return
@@ -1072,4 +1084,5 @@ app.use((error, _req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`Admin API listening on http://localhost:${PORT}`)
+  console.log(`For LAN testing, open http://<this-computer-ip>:${PORT}`)
 })

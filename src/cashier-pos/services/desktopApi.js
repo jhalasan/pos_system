@@ -302,7 +302,10 @@ export const desktopCashierApi = {
     if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
       const activeRuntime = await runtime()
       const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
-        activeRuntime.pb.filter('client_sale_id = {:clientSaleId}', { clientSaleId: saleId }),
+        activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
+          transactionNo: localSale.transactionNo,
+          cashierId: localSale.cashierId,
+        }),
         { requestKey: null },
       ).catch(() => null)
 

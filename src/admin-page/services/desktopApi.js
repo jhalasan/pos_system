@@ -386,14 +386,20 @@ async function recordActivity(action, detail) {
   await adminDb.activityLogs.add(log)
 
   if (!globalThis.navigator || globalThis.navigator.onLine) {
-    pb.collection('activity_logs').create({
-      user_id: log.userId,
-      action_type: log.action,
-      description: log.detail,
-      timestamp: log.time,
-    }, { requestKey: log.id })
-      .then((record) => adminDb.activityLogs.update(log.id, { cloudId: record.id }))
-      .catch(() => {})
+    try {
+      const record = await pb.collection('activity_logs').create({
+        user_id: log.userId,
+        action_type: log.action,
+        description: log.detail,
+        timestamp: log.time,
+      }, { requestKey: log.id })
+      await adminDb.activityLogs.update(log.id, { cloudId: record.id })
+      return log
+    } catch {
+      syncEngine?.schedule(0)
+    }
+  } else {
+    syncEngine?.schedule(0)
   }
 
   return log

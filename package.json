@@ -5,9 +5,12 @@
   "type": "module",
   "scripts": {
     "api": "node server/index.js",
+    "start": "node server/index.js",
     "host": "npm run build && node server/index.js",
     "dev": "vite",
+    "dev:lan": "vite --host 0.0.0.0",
     "dev:cashier": "vite --mode cashier",
+    "dev:cashier:lan": "vite --mode cashier --host 0.0.0.0",
     "build": "vite build",
     "build:cashier": "vite build --mode cashier",
     "lint": "eslint .",

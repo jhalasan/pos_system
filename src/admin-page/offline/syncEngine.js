@@ -139,8 +139,11 @@ export class AdminSyncEngine extends EventTarget {
       .where('[status+nextAttemptAt]')
       .between(['pending', Dexie.minKey], ['pending', now])
       .sortBy('createdAt')
+    const queuedLogs = await adminDb.activityLogs
+      .filter((log) => !log.cloudId)
+      .toArray()
 
-    if (queuedOps.length === 0) {
+    if (queuedOps.length === 0 && queuedLogs.length === 0) {
       return { uploaded: 0, failed: 0 }
     }
 
@@ -171,6 +174,18 @@ export class AdminSyncEngine extends EventTarget {
           nextAttemptAt: Date.now() + retryDelay(attempts),
         })
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { op, error } }))
+      }
+    }
+
+    for (const log of queuedLogs) {
+      if (this.stopped) break
+
+      try {
+        await this.uploadActivityLog(log)
+        uploaded += 1
+      } catch (error) {
+        failed += 1
+        this.dispatchEvent(new CustomEvent('syncerror', { detail: { log, error } }))
       }
     }
 
@@ -251,5 +266,16 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     throw new Error(`Unknown admin sync operation: ${op.type}`)
+  }
+
+  async uploadActivityLog(log) {
+    const record = await this.pb.collection('activity_logs').create({
+      user_id: log.userId || '',
+      action_type: log.action || 'Activity',
+      description: log.detail || '',
+      timestamp: log.time || new Date().toISOString(),
+    }, { requestKey: log.id })
+
+    await adminDb.activityLogs.update(log.id, { cloudId: record.id })
   }
 }
