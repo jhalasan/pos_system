@@ -1,0 +1,195 @@
+NEXA POS SETUP INSTRUCTIONS
+
+This project uses:
+- React/Vite for the frontend
+- Express for the backend API
+- PocketHost.io for the hosted PocketBase database
+- IndexedDB local storage for offline-first desktop/admin/cashier behavior
+
+Do not commit real .env files or PocketBase superuser credentials.
+
+
+DEVELOPER SETUP FOR CODE EDITS
+==============================
+
+1. Clone the project and install dependencies.
+
+   git clone <repo-url>
+   cd pos_system
+   npm install
+
+2. Create local environment files.
+
+   PowerShell:
+   Copy-Item .env.example .env
+   Copy-Item .env.cashier.example .env.cashier
+
+3. Configure .env for PocketHost.
+
+   POCKETBASE_URL=https://your-instance.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
+   POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
+   VITE_API_URL=
+
+   Notes:
+   - VITE_API_URL should stay blank when using npm run dev with the Vite proxy.
+   - Only developers running the backend/admin API need the PocketBase superuser credentials.
+   - Never put superuser credentials in any VITE_ variable.
+
+4. Configure .env.cashier for cashier/desktop/offline-first testing.
+
+   VITE_APP_TARGET=cashier-desktop
+   VITE_POCKETBASE_URL=https://your-instance.pockethost.io
+
+5. Run the normal web/admin development app.
+
+   Terminal 1:
+   npm run api
+
+   Terminal 2:
+   npm run dev
+
+   Open:
+   http://localhost:1420
+
+6. Run the cashier/offline-first development app.
+
+   npm run dev:cashier
+
+   This activates VITE_APP_TARGET=cashier-desktop and uses local IndexedDB storage with background sync to PocketHost.
+
+7. Build the cashier desktop app.
+
+   npm run build:cashier
+   npm run tauri:build
+
+8. Local offline-first behavior to expect.
+
+   Cashier desktop:
+   - Caches product catalog locally.
+   - Saves completed sales locally first.
+   - Deducts local product stock immediately.
+   - Queues pending sales and syncs to PocketHost when online.
+
+   Admin desktop/offline mode:
+   - Caches products, categories, users, and activity logs locally.
+   - Queues product create/update/delete and inventory stock scans.
+   - Queues local admin activity logs.
+   - Syncs queued changes to PocketHost when online.
+
+   Still requires internet:
+   - First login on a device.
+   - Creating/updating/deleting cashier or admin accounts.
+   - Authorization barcode cloud settings.
+   - Manager approval by cloud credentials/barcodes.
+
+
+TEMPORARY REMOTE TESTING FOR TEAMMATES
+======================================
+
+Use this if teammates are not on the same Wi-Fi and need a temporary public link.
+
+1. Make sure .env points to PocketHost.
+
+   POCKETBASE_URL=https://your-instance.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
+   POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
+   VITE_API_URL=
+
+2. Start the app.
+
+   npm run host
+
+3. Expose the app publicly.
+
+   ngrok http 3001
+
+4. Give teammates the ngrok root URL.
+
+   Example:
+   https://your-ngrok-url.ngrok-free.app
+
+   They should open the root URL, not /api.
+   They do not need .env, your Wi-Fi, your IP address, or superuser credentials.
+
+
+CLIENT DEPLOYMENT SETUP
+=======================
+
+For final client deployment, do not use ngrok or a LAN IP. Deploy the Express app to a public Node host such as Render, Railway, Fly.io, or a VPS.
+
+1. PocketHost database.
+
+   PocketHost should already have:
+   - Imported schema from pocketbase/pb_schema.json.
+   - Required collections and rules configured.
+   - At least one POS admin user in the users collection.
+
+   The POS admin user is different from the PocketBase superuser.
+   The POS admin user logs into the POS app.
+   The PocketBase superuser manages the PocketHost dashboard and server-side API access.
+
+2. Deployment environment variables.
+
+   Set these on the hosting provider:
+
+   POCKETBASE_URL=https://your-instance.pockethost.io
+   POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
+   POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
+   POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
+   VITE_API_URL=
+
+   Most hosts automatically set PORT.
+   Only set API_PORT if your host specifically requires a fixed port.
+
+3. Deployment commands.
+
+   Build command:
+   npm run build
+
+   Start command:
+   npm start
+
+4. Client web access.
+
+   Give the client the deployed public app URL.
+   The client should not receive:
+   - .env files
+   - Source code
+   - PocketBase superuser credentials
+   - Developer local URLs
+   - LAN IP addresses
+
+5. Client cashier desktop app.
+
+   Build the cashier installer from a configured developer machine:
+
+   npm run build:cashier
+   npm run tauri:build
+
+   Install the generated Windows app on cashier devices.
+   The cashier desktop app should point to:
+
+   VITE_POCKETBASE_URL=https://your-instance.pockethost.io
+
+   Cashier devices need internet for first login and cloud sync, but can continue completing sales locally after the product catalog and login state have been initialized.
+
+6. Client support notes.
+
+   If login fails:
+   - Confirm the user exists in PocketHost users collection.
+   - Confirm role is admin or cashier as needed.
+   - Confirm status is active.
+   - Confirm the deployed app can reach PocketHost.
+
+   If sync fails:
+   - Confirm internet connection.
+   - Confirm PocketHost URL is correct.
+   - Confirm schema and rules were applied.
+   - Check pending sales or pending operations in local IndexedDB during troubleshooting.
+
+   If using the web app only:
+   - Web cashier/admin actions go through the deployed Express API.
+   - Offline-first behavior is intended for the desktop/cashier build path.
