@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRepeat, ClockHistory, Dash, Plus, Trash, XLg, Cart } from 'react-bootstrap-icons';
+import { ArrowRepeat, ClockHistory, Dash, Plus, Printer, Receipt, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
@@ -7,6 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
+import { printCompletedReceipt } from '../services/receiptPrinter';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -59,6 +60,24 @@ function formatTransactionTime(value) {
   });
 }
 
+function formatTransactionDate(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function returnedQuantityForItem(sale, productId) {
+  return (sale?.adjustments || [])
+    .flatMap((adjustment) => adjustment.items || [])
+    .filter((item) => String(item.productId || item.id || '') === String(productId || ''))
+    .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+}
+
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
@@ -74,6 +93,7 @@ const Cashier = ({ onLogout, user }) => {
   const [voidError, setVoidError] = useState('');
   const [showCompletedVoidModal, setShowCompletedVoidModal] = useState(false);
   const [completedVoidTarget, setCompletedVoidTarget] = useState(null);
+  const [completedVoidApprovalMethod, setCompletedVoidApprovalMethod] = useState('barcode');
   const [completedVoidCode, setCompletedVoidCode] = useState('');
   const [completedVoidEmail, setCompletedVoidEmail] = useState('');
   const [completedVoidPassword, setCompletedVoidPassword] = useState('');
@@ -81,6 +101,7 @@ const Cashier = ({ onLogout, user }) => {
   const [completedVoidError, setCompletedVoidError] = useState('');
   const [completedVoidLoading, setCompletedVoidLoading] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
+  const [discountApprovalMethod, setDiscountApprovalMethod] = useState('barcode');
   const [discountApprovalCode, setDiscountApprovalCode] = useState('');
   const [discountApprovalEmail, setDiscountApprovalEmail] = useState('');
   const [discountApprovalPassword, setDiscountApprovalPassword] = useState('');
@@ -97,6 +118,20 @@ const Cashier = ({ onLogout, user }) => {
   const [historySearch, setHistorySearch] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [showReceiptLookup, setShowReceiptLookup] = useState(false);
+  const [lookupQuery, setLookupQuery] = useState('');
+  const [lookupSale, setLookupSale] = useState(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState('');
+  const [lookupMode, setLookupMode] = useState('verify');
+  const [lookupApprovalMethod, setLookupApprovalMethod] = useState('barcode');
+  const [lookupApprovalCode, setLookupApprovalCode] = useState('');
+  const [lookupApprovalEmail, setLookupApprovalEmail] = useState('');
+  const [lookupApprovalPassword, setLookupApprovalPassword] = useState('');
+  const [lookupReason, setLookupReason] = useState('');
+  const [lookupNote, setLookupNote] = useState('');
+  const [lookupReturnQty, setLookupReturnQty] = useState({});
+  const [lookupActionLoading, setLookupActionLoading] = useState(false);
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -257,12 +292,224 @@ const Cashier = ({ onLogout, user }) => {
   const resetCompletedVoidState = () => {
     setShowCompletedVoidModal(false);
     setCompletedVoidTarget(null);
+    setCompletedVoidApprovalMethod('barcode');
     setCompletedVoidCode('');
     setCompletedVoidEmail('');
     setCompletedVoidPassword('');
     setCompletedVoidReason('');
     setCompletedVoidError('');
     setCompletedVoidLoading(false);
+  };
+
+  const approvalPayload = ({ method, code, email, password }) => {
+    if (method === 'barcode') return { code: code.trim() };
+    return { email: email.trim(), password };
+  };
+
+  const approvalError = (method) => (
+    method === 'barcode'
+      ? 'Scan or enter the manager barcode.'
+      : 'Enter the admin email and password.'
+  );
+
+  const resetLookupApproval = () => {
+    setLookupApprovalMethod('barcode');
+    setLookupApprovalCode('');
+    setLookupApprovalEmail('');
+    setLookupApprovalPassword('');
+    setLookupReason('');
+    setLookupNote('');
+  };
+
+  const resetReceiptLookupState = () => {
+    setShowReceiptLookup(false);
+    setLookupQuery('');
+    setLookupSale(null);
+    setLookupLoading(false);
+    setLookupError('');
+    setLookupMode('verify');
+    setLookupReturnQty({});
+    setLookupActionLoading(false);
+    resetLookupApproval();
+  };
+
+  const selectedLookupReturnItems = () => {
+    if (!lookupSale) return [];
+    return (lookupSale.items || [])
+      .map((item) => {
+        const productId = String(item.productId || item.id || '');
+        return {
+          ...item,
+          productId,
+          quantity: Math.max(0, Number(lookupReturnQty[productId]) || 0),
+        };
+      })
+      .filter((item) => item.quantity > 0);
+  };
+
+  const selectedLookupReturnTotal = () => (
+    selectedLookupReturnItems().reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price || 0)), 0)
+  );
+
+  const handleOpenReceiptLookup = () => {
+    setShowReceiptLookup(true);
+    setLookupQuery('');
+    setLookupSale(null);
+    setLookupError('');
+    setLookupMode('verify');
+    setLookupReturnQty({});
+    resetLookupApproval();
+  };
+
+  const handleReceiptLookup = async () => {
+    const transactionNo = lookupQuery.trim();
+    if (!transactionNo) {
+      setLookupError('Scan or enter a transaction number.');
+      return;
+    }
+
+    setLookupLoading(true);
+    setLookupError('');
+    setLookupSale(null);
+    try {
+      const sale = await cashierApi.saleLookup({ transactionNo });
+      setLookupSale(sale);
+      setLookupMode('verify');
+      setLookupReturnQty({});
+      resetLookupApproval();
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Receipt Lookup',
+        detail: `Looked up receipt for transaction ${sale.transactionNo}.`,
+      }).catch(() => {});
+    } catch (err) {
+      setLookupError(err.message || 'Transaction was not found.');
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  const handleLookupReprint = async () => {
+    if (!lookupSale) return;
+    try {
+      await printCompletedReceipt({
+        transactionNo: lookupSale.transactionNo,
+        cashierName: lookupSale.cashierName || user?.name || user?.email || 'Cashier',
+        completedAt: lookupSale.createdAt,
+        items: lookupSale.items || [],
+        payment: {
+          paymentMethod: lookupSale.paymentMethod,
+          totalAmount: lookupSale.totalAmount,
+          subtotalAmount: lookupSale.subtotalAmount || lookupSale.totalAmount,
+          discountPercent: lookupSale.discountPercent,
+          discountAmount: lookupSale.discountAmount,
+          gcashRef: lookupSale.refNumber,
+        },
+      });
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Receipt Reprint',
+        detail: `Reprinted receipt for transaction ${lookupSale.transactionNo}.`,
+      }).catch(() => {});
+      showNotification(`Receipt reprinted for transaction ${lookupSale.transactionNo}.`);
+    } catch (err) {
+      setLookupError(err.message || 'Unable to reprint receipt.');
+    }
+  };
+
+  const handleLookupApprovalAction = async () => {
+    if (!lookupSale) return;
+
+    const authorization = approvalPayload({
+      method: lookupApprovalMethod,
+      code: lookupApprovalCode,
+      email: lookupApprovalEmail,
+      password: lookupApprovalPassword,
+    });
+    if (!authorization.code && (!authorization.email || !authorization.password)) {
+      setLookupError(approvalError(lookupApprovalMethod));
+      return;
+    }
+    if (lookupMode !== 'void' && selectedLookupReturnItems().length === 0) {
+      setLookupError('Select at least one item quantity.');
+      return;
+    }
+
+    setLookupActionLoading(true);
+    setLookupError('');
+
+    try {
+      const result = lookupMode === 'void'
+        ? await cashierApi.voidCompletedSale({
+            saleId: lookupSale.saleId || lookupSale.id,
+            cashierId: user?.id,
+            authorization,
+            reason: lookupReason.trim(),
+          })
+        : await cashierApi.adjustCompletedSale({
+            saleId: lookupSale.saleId || lookupSale.id,
+            cashierId: user?.id,
+            authorization,
+            type: lookupMode,
+            items: selectedLookupReturnItems().map((item) => ({
+              productId: item.productId,
+              name: item.name,
+              barcode: item.barcode,
+              quantity: item.quantity,
+              price: item.price,
+            })),
+            reason: lookupReason.trim(),
+            note: lookupNote.trim(),
+          });
+
+      await loadProducts();
+      if (showHistory) await loadTransactionHistory();
+
+      setTransactions((current) => current.map((txn) => {
+        const matchesSale = txn.completedSale?.saleId === (lookupSale.saleId || lookupSale.id);
+        if (!matchesSale) return txn;
+
+        if (lookupMode === 'void') {
+          return {
+            ...txn,
+            status: 'voided',
+            completedSale: {
+              ...txn.completedSale,
+              status: 'voided',
+              approvedBy: result.approvedBy,
+              voidedAt: result.voidedAt,
+              voidReason: lookupReason.trim(),
+            },
+          };
+        }
+
+        return {
+          ...txn,
+          completedSale: {
+            ...txn.completedSale,
+            status: 'adjusted',
+            adjustments: result.adjustments || [],
+          },
+        };
+      }));
+
+      setLookupSale(lookupMode === 'void'
+        ? { ...lookupSale, status: 'Voided', rawStatus: 'voided', voidedAt: result.voidedAt, approvedBy: result.approvedBy }
+        : result
+      );
+      setLookupMode('verify');
+      setLookupReturnQty({});
+      resetLookupApproval();
+      showNotification(
+        lookupMode === 'void'
+          ? `Transaction ${lookupSale.transactionNo} has been voided.`
+          : `${lookupMode === 'exchange' ? 'Exchange' : 'Refund'} recorded for transaction ${lookupSale.transactionNo}.`
+      );
+    } catch (err) {
+      setLookupError(err.message || `Unable to ${lookupMode} this transaction.`);
+    } finally {
+      setLookupActionLoading(false);
+    }
   };
 
   const handleVoidTransaction = () => {
@@ -340,12 +587,15 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
-    const authorization = completedVoidCode.trim()
-      ? { code: completedVoidCode.trim() }
-      : { email: completedVoidEmail.trim(), password: completedVoidPassword };
+    const authorization = approvalPayload({
+      method: completedVoidApprovalMethod,
+      code: completedVoidCode,
+      email: completedVoidEmail,
+      password: completedVoidPassword,
+    });
 
     if (!authorization.code && (!authorization.email || !authorization.password)) {
-      setCompletedVoidError('Enter a manager barcode or an admin email and password.');
+      setCompletedVoidError(approvalError(completedVoidApprovalMethod));
       return;
     }
 
@@ -566,6 +816,15 @@ const Cashier = ({ onLogout, user }) => {
 
     const completingTransactionId = activeTxn.id;
     const completedTransactionNo = activeTxn.transactionNo;
+    const completedAt = new Date().toISOString();
+    const completedItems = cartItems.map((item) => ({
+      productId: item.productId,
+      name: item.name,
+      barcode: item.barcode,
+      unit: item.unit,
+      quantity: item.quantity,
+      price: item.price,
+    }));
     const completedPayment = {
       paymentMethod: isSplitPayment ? 'split' : paymentMethod,
       totalAmount: total,
@@ -576,7 +835,7 @@ const Cashier = ({ onLogout, user }) => {
       gcashRef,
       splitPayments,
       change,
-      completedAt: new Date().toISOString(),
+      completedAt,
     };
 
     try {
@@ -590,15 +849,21 @@ const Cashier = ({ onLogout, user }) => {
         totalAmount: total,
         paymentMethod: isSplitPayment ? 'cash' : paymentMethod,
         refNumber: isSplitPayment ? `split:${JSON.stringify(splitPayments)}` : gcashRef,
-        items: cartItems.map((item) => ({
-          productId: item.productId,
-          name: item.name,
-          barcode: item.barcode,
-          unit: item.unit,
-          quantity: item.quantity,
-          price: item.price,
-        })),
+        items: completedItems,
       });
+
+      let printError = '';
+      try {
+        await printCompletedReceipt({
+          transactionNo: sale.transactionNo || completedTransactionNo,
+          cashierName: user?.name || user?.email || 'Cashier',
+          completedAt,
+          items: completedItems,
+          payment: completedPayment,
+        });
+      } catch (err) {
+        printError = err.message || 'Receipt printer did not respond.';
+      }
 
       await loadProducts();
       const result = await cashierApi.nextTransactionNumber();
@@ -620,9 +885,34 @@ const Cashier = ({ onLogout, user }) => {
       setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
-      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed successfully.`);
+      showNotification(printError
+        ? `Transaction No. ${sale.transactionNo || sale.id} completed, but receipt printing failed: ${printError}`
+        : `Transaction No. ${sale.transactionNo || sale.id} completed and receipt printed.`
+      );
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
+    }
+  };
+
+  const handleReprintReceipt = async (txn = activeTxn) => {
+    if (!txn?.completedSale || txn.status !== 'completed') return;
+
+    try {
+      await printCompletedReceipt({
+        transactionNo: txn.completedSale.transactionNo || txn.transactionNo,
+        cashierName: user?.name || user?.email || 'Cashier',
+        completedAt: txn.completedSale.completedAt,
+        items: txn.cartItems,
+        payment: txn.completedSale,
+      });
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Receipt Reprint',
+        detail: `Reprinted receipt for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`,
+      }).catch(() => {});
+      showNotification(`Receipt reprinted for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
+    } catch (err) {
+      showNotification(err.message || 'Unable to reprint receipt.');
     }
   };
 
@@ -660,6 +950,75 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
+  const renderApprovalFields = ({
+    name,
+    method,
+    setMethod,
+    code,
+    setCode,
+    email,
+    setEmail,
+    password,
+    setPassword,
+    disabled = false,
+  }) => (
+    <div className={styles['approval-panel']}>
+      <div className={styles['approval-methods']} role="radiogroup" aria-label="Approval method">
+        <label className={`${styles['approval-option']} ${method === 'barcode' ? styles.active : ''}`}>
+          <input
+            type="radio"
+            name={`approval-${name}`}
+            value="barcode"
+            checked={method === 'barcode'}
+            onChange={() => setMethod('barcode')}
+            disabled={disabled}
+          />
+          Manager barcode
+        </label>
+        <label className={`${styles['approval-option']} ${method === 'admin' ? styles.active : ''}`}>
+          <input
+            type="radio"
+            name={`approval-${name}`}
+            value="admin"
+            checked={method === 'admin'}
+            onChange={() => setMethod('admin')}
+            disabled={disabled}
+          />
+          Admin password
+        </label>
+      </div>
+
+      {method === 'barcode' ? (
+        <Input
+          label="Manager Barcode"
+          placeholder="Scan or enter manager barcode"
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          disabled={disabled}
+        />
+      ) : (
+        <div className={styles['approval-admin-grid']}>
+          <Input
+            label="Admin Email"
+            type="email"
+            placeholder="Enter admin email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={disabled}
+          />
+          <Input
+            label="Admin Password"
+            type="password"
+            placeholder="Enter admin password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            disabled={disabled}
+          />
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div className={styles['cashier-layout']}>
       <div className={styles['cashier-header']}>
@@ -674,6 +1033,15 @@ const Cashier = ({ onLogout, user }) => {
           >
             <ClockHistory size={16} />
             History
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles['history-button']}
+            onClick={handleOpenReceiptLookup}
+          >
+            <Receipt size={16} />
+            Receipt Lookup
           </Button>
           <Button
             variant="outline"
@@ -764,7 +1132,7 @@ const Cashier = ({ onLogout, user }) => {
                     : (activeTxn.completedSale?.completedAt ? ` at ${formatTransactionTime(activeTxn.completedSale.completedAt)}` : '')}.
                 </span>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className={styles['completed-banner-actions']}>
                 <Badge variant={isVoidedTxn ? 'danger' : (activeTxn.completedSale?.pendingSync ? 'info' : 'success')} size="sm">
                   {isVoidedTxn ? 'Voided' : (activeTxn.completedSale?.pendingSync ? 'Pending sync' : 'Completed')}
                 </Badge>
@@ -772,6 +1140,17 @@ const Cashier = ({ onLogout, user }) => {
                   <Badge variant="warning" size="sm">
                     Discounted {activeTxn.completedSale.discountPercent}%
                   </Badge>
+                )}
+                {isCompletedTxn && !isVoidedTxn && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={styles['receipt-reprint-button']}
+                    onClick={() => handleReprintReceipt(activeTxn)}
+                  >
+                    <Printer size={14} />
+                    Reprint
+                  </Button>
                 )}
                 {isCompletedTxn && !isVoidedTxn && (
                   <Button
@@ -970,6 +1349,7 @@ const Cashier = ({ onLogout, user }) => {
               <span>Need manager approval for a discount?</span>
               <Button variant="outline" onClick={() => {
                 setShowDiscountModal(true);
+                setDiscountApprovalMethod('barcode');
                 setDiscountApprovalCode('');
                 setDiscountApprovalEmail('');
                 setDiscountApprovalPassword('');
@@ -1086,6 +1466,7 @@ const Cashier = ({ onLogout, user }) => {
         onClose={() => {
           setShowDiscountModal(false);
           setDiscountApproved(false);
+          setDiscountApprovalMethod('barcode');
           setDiscountApprovalCode('');
           setDiscountApprovalEmail('');
           setDiscountApprovalPassword('');
@@ -1098,6 +1479,7 @@ const Cashier = ({ onLogout, user }) => {
             <button className="btn btn-outline" onClick={() => {
               setShowDiscountModal(false);
               setDiscountApproved(false);
+              setDiscountApprovalMethod('barcode');
               setDiscountApprovalCode('');
               setDiscountApprovalEmail('');
               setDiscountApprovalPassword('');
@@ -1109,11 +1491,14 @@ const Cashier = ({ onLogout, user }) => {
             {!discountApproved ? (
               <button className="btn btn-primary" onClick={async () => {
                 try {
-                  const authorization = discountApprovalCode.trim()
-                    ? { code: discountApprovalCode.trim() }
-                    : { email: discountApprovalEmail.trim(), password: discountApprovalPassword };
+                  const authorization = approvalPayload({
+                    method: discountApprovalMethod,
+                    code: discountApprovalCode,
+                    email: discountApprovalEmail,
+                    password: discountApprovalPassword,
+                  });
                   if (!authorization.code && (!authorization.email || !authorization.password)) {
-                    setDiscountError('Enter a manager barcode or admin email and password.');
+                    setDiscountError(approvalError(discountApprovalMethod));
                     return;
                   }
                   await cashierApi.authorizeVoid(authorization);
@@ -1135,6 +1520,7 @@ const Cashier = ({ onLogout, user }) => {
                 updateActiveTransaction({ discount: amount });
                 setShowDiscountModal(false);
                 setDiscountApproved(false);
+                setDiscountApprovalMethod('barcode');
                 setDiscountApprovalCode('');
                 setDiscountApprovalEmail('');
                 setDiscountApprovalPassword('');
@@ -1150,27 +1536,18 @@ const Cashier = ({ onLogout, user }) => {
       >
         {!discountApproved ? (
           <>
-            <p>Please enter a manager barcode or admin account to permit discount changes.</p>
-            <Input label="Manager Approval Code" placeholder="Enter manager barcode" value={discountApprovalCode} onChange={(e) => setDiscountApprovalCode(e.target.value)} />
-            <p style={{ margin: '4px 0 12px', color: 'var(--text-muted)', fontSize: 13 }}>
-              Or use an admin account if the barcode is unavailable.
-            </p>
-            <Input
-              label="Admin Email"
-              type="email"
-              placeholder="Enter admin email"
-              value={discountApprovalEmail}
-              onChange={(e) => setDiscountApprovalEmail(e.target.value)}
-              disabled={Boolean(discountApprovalCode.trim())}
-            />
-            <Input
-              label="Admin Password"
-              type="password"
-              placeholder="Enter admin password"
-              value={discountApprovalPassword}
-              onChange={(e) => setDiscountApprovalPassword(e.target.value)}
-              disabled={Boolean(discountApprovalCode.trim())}
-            />
+            <p>Select how this discount will be approved.</p>
+            {renderApprovalFields({
+              name: 'discount',
+              method: discountApprovalMethod,
+              setMethod: setDiscountApprovalMethod,
+              code: discountApprovalCode,
+              setCode: setDiscountApprovalCode,
+              email: discountApprovalEmail,
+              setEmail: setDiscountApprovalEmail,
+              password: discountApprovalPassword,
+              setPassword: setDiscountApprovalPassword,
+            })}
           </>
         ) : (
           <>
@@ -1216,7 +1593,12 @@ const Cashier = ({ onLogout, user }) => {
                 </div>
                 <div className={styles['history-meta']}>
                   <Badge variant="info" size="sm">{sale.paymentMethod || 'payment'}</Badge>
-                  <Badge variant={sale.status === 'Voided' ? 'danger' : 'success'} size="sm">{sale.status}</Badge>
+                  <Badge
+                    variant={sale.status === 'Voided' ? 'danger' : (sale.status === 'Adjusted' ? 'warning' : 'success')}
+                    size="sm"
+                  >
+                    {sale.status}
+                  </Badge>
                   {(Number(sale.discountPercent) > 0 || Number(sale.discountAmount) > 0) && (
                     <Badge variant="warning" size="sm">
                       Discounted {Number(sale.discountPercent) || 0}%
@@ -1233,6 +1615,243 @@ const Cashier = ({ onLogout, user }) => {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={showReceiptLookup}
+        onClose={resetReceiptLookupState}
+        title="Receipt Lookup"
+        className={styles['lookup-modal']}
+        footer={(
+          <div className={styles['lookup-footer']}>
+            <button className="btn btn-outline" onClick={resetReceiptLookupState} disabled={lookupActionLoading}>
+              Close
+            </button>
+            {lookupSale && lookupMode !== 'verify' && (
+              <button
+                className={`btn ${lookupMode === 'void' ? 'btn-danger' : 'btn-primary'}`}
+                onClick={handleLookupApprovalAction}
+                disabled={lookupActionLoading || lookupSale.rawStatus === 'voided'}
+              >
+                {lookupActionLoading
+                  ? 'Processing...'
+                  : (lookupMode === 'void' ? 'Confirm Void' : `Confirm ${lookupMode === 'exchange' ? 'Exchange' : 'Refund'}`)}
+              </button>
+            )}
+          </div>
+        )}
+      >
+        <div className={styles['lookup-search']}>
+          <Input
+            label="Scan Barcode or Enter Transaction No."
+            placeholder="Example: 202606220001"
+            value={lookupQuery}
+            onChange={(e) => setLookupQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleReceiptLookup();
+              }
+            }}
+            disabled={lookupLoading}
+          />
+          <Button variant="primary" onClick={handleReceiptLookup} disabled={lookupLoading}>
+            {lookupLoading ? 'Searching...' : 'Search'}
+          </Button>
+        </div>
+
+        {lookupError && <div className={styles['lookup-error']}>{lookupError}</div>}
+
+        {!lookupSale && !lookupLoading && (
+          <div className={styles['history-empty']}>
+            Scan the receipt barcode or type the transaction number to verify, reprint, void, refund, or exchange.
+          </div>
+        )}
+
+        {lookupSale && (
+          <div className={styles['lookup-result']}>
+            <div className={styles['lookup-summary']}>
+              <div>
+                <span>Transaction</span>
+                <strong>{lookupSale.transactionNo}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <Badge
+                  variant={lookupSale.rawStatus === 'voided' || lookupSale.status === 'Voided'
+                    ? 'danger'
+                    : (lookupSale.adjustments?.length ? 'warning' : 'success')}
+                  size="sm"
+                >
+                  {lookupSale.status || 'Completed'}
+                </Badge>
+              </div>
+              <div>
+                <span>Date</span>
+                <strong>{formatTransactionDate(lookupSale.createdAt)}</strong>
+              </div>
+              <div>
+                <span>Total</span>
+                <strong>{money(lookupSale.totalAmount)}</strong>
+              </div>
+              <div>
+                <span>Cashier</span>
+                <strong>{lookupSale.cashierName || 'Cashier'}</strong>
+              </div>
+              <div>
+                <span>Payment</span>
+                <strong>{lookupSale.paymentMethod || 'Payment'}</strong>
+              </div>
+            </div>
+
+            <div className={styles['lookup-actions']}>
+              <button
+                type="button"
+                className={lookupMode === 'verify' ? styles.active : ''}
+                onClick={() => {
+                  setLookupMode('verify');
+                  setLookupError('');
+                  resetLookupApproval();
+                }}
+              >
+                Verify
+              </button>
+              <button type="button" onClick={handleLookupReprint}>
+                Reprint
+              </button>
+              <button
+                type="button"
+                className={lookupMode === 'void' ? styles.active : ''}
+                onClick={() => {
+                  setLookupMode('void');
+                  setLookupError('');
+                  resetLookupApproval();
+                }}
+                disabled={lookupSale.rawStatus === 'voided'}
+              >
+                Void
+              </button>
+              <button
+                type="button"
+                className={lookupMode === 'refund' ? styles.active : ''}
+                onClick={() => {
+                  setLookupMode('refund');
+                  setLookupError('');
+                  resetLookupApproval();
+                }}
+                disabled={lookupSale.rawStatus === 'voided'}
+              >
+                Refund Items
+              </button>
+              <button
+                type="button"
+                className={lookupMode === 'exchange' ? styles.active : ''}
+                onClick={() => {
+                  setLookupMode('exchange');
+                  setLookupError('');
+                  resetLookupApproval();
+                }}
+                disabled={lookupSale.rawStatus === 'voided'}
+              >
+                Exchange
+              </button>
+            </div>
+
+            {lookupMode === 'verify' && (
+              <div className={styles['lookup-verification']}>
+                <strong>
+                  {lookupSale.rawStatus === 'voided' || lookupSale.status === 'Voided'
+                    ? 'Receipt found, but this transaction is voided.'
+                    : 'Valid receipt. Transaction exists in this terminal.'}
+                </strong>
+                {lookupSale.adjustments?.length > 0 && (
+                  <span>
+                    This receipt has {lookupSale.adjustments.length} refund/exchange adjustment(s), total adjusted {money(lookupSale.adjustedAmount)}.
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className={styles['lookup-items']}>
+              <div className={styles['lookup-items-head']}>
+                <span>Item</span>
+                <span>Sold</span>
+                <span>Available</span>
+                <span>Amount</span>
+                {(lookupMode === 'refund' || lookupMode === 'exchange') && <span>Return Qty</span>}
+              </div>
+              {(lookupSale.items || []).map((item) => {
+                const productId = String(item.productId || item.id || '');
+                const returnedQty = returnedQuantityForItem(lookupSale, productId);
+                const soldQty = Number(item.quantity) || 0;
+                const availableQty = Math.max(0, soldQty - returnedQty);
+                return (
+                  <div key={productId || item.name} className={styles['lookup-item-row']}>
+                    <span>{item.name}</span>
+                    <span>{soldQty}</span>
+                    <span>{availableQty}</span>
+                    <span>{money(Number(item.price || 0) * soldQty)}</span>
+                    {(lookupMode === 'refund' || lookupMode === 'exchange') && (
+                      <input
+                        type="number"
+                        min="0"
+                        max={availableQty}
+                        value={lookupReturnQty[productId] || ''}
+                        onChange={(e) => {
+                          const requested = Math.floor(Number(e.target.value) || 0);
+                          setLookupReturnQty((current) => ({
+                            ...current,
+                            [productId]: Math.max(0, Math.min(availableQty, requested)),
+                          }));
+                        }}
+                        disabled={availableQty <= 0}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {(lookupMode === 'void' || lookupMode === 'refund' || lookupMode === 'exchange') && (
+              <div className={styles['lookup-approval']}>
+                {lookupMode !== 'void' && (
+                  <div className={styles['lookup-adjust-total']}>
+                    <span>{lookupMode === 'exchange' ? 'Exchange value' : 'Refund amount'}</span>
+                    <strong>{money(selectedLookupReturnTotal())}</strong>
+                  </div>
+                )}
+                {renderApprovalFields({
+                  name: 'lookup',
+                  method: lookupApprovalMethod,
+                  setMethod: setLookupApprovalMethod,
+                  code: lookupApprovalCode,
+                  setCode: setLookupApprovalCode,
+                  email: lookupApprovalEmail,
+                  setEmail: setLookupApprovalEmail,
+                  password: lookupApprovalPassword,
+                  setPassword: setLookupApprovalPassword,
+                  disabled: lookupActionLoading,
+                })}
+                <Input
+                  label="Reason"
+                  placeholder={lookupMode === 'void' ? 'Reason for voiding' : 'Reason for refund/exchange'}
+                  value={lookupReason}
+                  onChange={(e) => setLookupReason(e.target.value)}
+                  disabled={lookupActionLoading}
+                />
+                {lookupMode === 'exchange' && (
+                  <Input
+                    label="Exchange Note"
+                    placeholder="Example: Replacement item will be sold in a new transaction"
+                    value={lookupNote}
+                    onChange={(e) => setLookupNote(e.target.value)}
+                    disabled={lookupActionLoading}
+                  />
+                )}
+              </div>
+            )}
           </div>
         )}
       </Modal>
@@ -1255,32 +1874,18 @@ const Cashier = ({ onLogout, user }) => {
         <p>
           Void transaction <strong>{completedVoidTarget?.transactionNo || ''}</strong> with manager approval.
         </p>
-        <Input
-          label="Manager Barcode"
-          placeholder="Scan or enter manager barcode"
-          value={completedVoidCode}
-          onChange={(e) => setCompletedVoidCode(e.target.value)}
-          disabled={completedVoidLoading}
-        />
-        <p style={{ margin: '4px 0 12px', color: 'var(--text-muted)', fontSize: 13 }}>
-          Or use an admin account if the barcode is unavailable.
-        </p>
-        <Input
-          label="Admin Email"
-          type="email"
-          placeholder="Enter admin email"
-          value={completedVoidEmail}
-          onChange={(e) => setCompletedVoidEmail(e.target.value)}
-          disabled={completedVoidLoading || Boolean(completedVoidCode.trim())}
-        />
-        <Input
-          label="Admin Password"
-          type="password"
-          placeholder="Enter admin password"
-          value={completedVoidPassword}
-          onChange={(e) => setCompletedVoidPassword(e.target.value)}
-          disabled={completedVoidLoading || Boolean(completedVoidCode.trim())}
-        />
+        {renderApprovalFields({
+          name: 'completed-void',
+          method: completedVoidApprovalMethod,
+          setMethod: setCompletedVoidApprovalMethod,
+          code: completedVoidCode,
+          setCode: setCompletedVoidCode,
+          email: completedVoidEmail,
+          setEmail: setCompletedVoidEmail,
+          password: completedVoidPassword,
+          setPassword: setCompletedVoidPassword,
+          disabled: completedVoidLoading,
+        })}
         <Input
           label="Reason"
           placeholder="Reason for voiding this sale"

@@ -45,8 +45,18 @@ export default function AdminLayout() {
         api.dashboard(),
         api.activityLogs(),
       ])
+      const eventMeta = {
+        Discount: { tone: 'warning', title: 'Discount applied' },
+        'Transaction Void': { tone: 'danger', title: 'Voided transaction' },
+        'Transaction Refund': { tone: 'warning', title: 'Refund recorded' },
+        'Transaction Exchange': { tone: 'warning', title: 'Exchange recorded' },
+        Refund: { tone: 'warning', title: 'Refund recorded' },
+        Exchange: { tone: 'warning', title: 'Exchange recorded' },
+        'Receipt Reprint': { tone: 'info', title: 'Receipt reprinted' },
+        'Receipt Lookup': { tone: 'info', title: 'Receipt checked' },
+      }
       const recentEvents = activityLogs
-        .filter((log) => log.action === 'Discount' || log.action === 'Transaction Void')
+        .filter((log) => eventMeta[log.action])
         .slice(0, 5)
       const alerts = [
         ...(dashboard.criticalAlerts || []).map((item) => ({
@@ -60,15 +70,15 @@ export default function AdminLayout() {
           detail: `${item.units} unit(s) sold`,
         }))),
         ...recentEvents.map((log) => ({
-          tone: log.action === 'Transaction Void' ? 'danger' : 'warning',
-          title: log.action === 'Transaction Void' ? 'Voided transaction' : 'Discount applied',
+          tone: eventMeta[log.action]?.tone || 'info',
+          title: eventMeta[log.action]?.title || log.action,
           detail: `${log.user || 'System'} - ${log.detail || new Date(log.time).toLocaleString()}`,
         })),
       ]
       setNotifications(alerts.length ? alerts : [{
         tone: 'success',
         title: 'All clear',
-        detail: 'No critical stock, discount, void, or sales alerts right now.',
+        detail: 'No critical stock, discount, void, refund, exchange, receipt, or sales alerts right now.',
       }])
     } catch (error) {
       setNotifications([{

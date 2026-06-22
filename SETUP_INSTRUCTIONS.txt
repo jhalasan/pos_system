@@ -54,6 +54,13 @@ DEVELOPER SETUP FOR CODE EDITS
 
    VITE_APP_TARGET=cashier-desktop
    VITE_POCKETBASE_URL=https://nexasystems.pockethost.io
+   VITE_RECEIPT_PRINTER_NAME=XP-58H
+   VITE_RECEIPT_COPIES=2
+
+   Receipt printing is enabled in the Tauri cashier app. Install the XP-58H
+   thermal printer in Windows and make sure the Windows printer name matches
+   VITE_RECEIPT_PRINTER_NAME. If Windows shows a different name, use that exact
+   name here before building the cashier app.
 
 5. Run the normal web/admin development app.
 

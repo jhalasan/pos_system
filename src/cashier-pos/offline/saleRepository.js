@@ -144,6 +144,21 @@ export async function findLocalSale(clientSaleId) {
   return completedSale || pendingSale || null
 }
 
+export async function findLocalSaleByTransactionNo(transactionNo) {
+  await initializeCashierDb()
+  const value = String(transactionNo || '').trim()
+  if (!value) return null
+
+  if (await hasTable('completedSales')) {
+    const completedSale = await cashierDb.completedSales.get({ transactionNo: value })
+    if (completedSale) return completedSale
+  }
+
+  return cashierDb.pendingSales
+    .filter((sale) => String(sale.transactionNo || '') === value)
+    .first()
+}
+
 export async function voidLocalSale(clientSaleId, metadata = {}) {
   await initializeCashierDb()
   const sale = await findLocalSale(clientSaleId)
@@ -177,5 +192,83 @@ export async function voidLocalSale(clientSaleId, metadata = {}) {
     voidedAt: metadata.voidedAt || new Date().toISOString(),
     voidedBy: metadata.voidedBy || '',
     voidReason: metadata.reason || '',
+  }
+}
+
+export async function adjustLocalSale(clientSaleId, adjustment = {}) {
+  await initializeCashierDb()
+  const sale = await findLocalSale(clientSaleId)
+  if (!sale) throw new Error(`Completed sale "${clientSaleId}" was not found locally.`)
+  if (sale.status === 'voided') throw new Error('This transaction has already been voided.')
+
+  const type = adjustment.type === 'exchange' ? 'exchange' : 'refund'
+  const selectedItems = Array.isArray(adjustment.items) ? adjustment.items : []
+  const selectedByProduct = new Map(selectedItems.map((item) => [
+    String(item.productId || item.id || ''),
+    Math.max(0, Number(item.quantity) || 0),
+  ]))
+
+  const returnedItems = sale.items
+    .map((item) => {
+      const productId = String(item.productId || item.id || '')
+      const requestedQty = selectedByProduct.get(productId) || 0
+      const alreadyAdjusted = (sale.adjustments || [])
+        .flatMap((entry) => entry.items || [])
+        .filter((entry) => String(entry.productId || entry.id || '') === productId)
+        .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
+      const availableQty = Math.max(0, (Number(item.quantity) || 0) - alreadyAdjusted)
+      const quantity = Math.min(availableQty, requestedQty)
+
+      return quantity > 0
+        ? {
+            productId,
+            name: String(item.name || ''),
+            barcode: String(item.barcode || ''),
+            quantity,
+            price: Number(item.price) || 0,
+          }
+        : null
+    })
+    .filter(Boolean)
+
+  if (returnedItems.length === 0) {
+    throw new Error('Select at least one refundable item quantity.')
+  }
+
+  const amount = returnedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0)
+  const entry = {
+    id: globalThis.crypto?.randomUUID?.() || `${type}_${Date.now()}`,
+    type,
+    reason: String(adjustment.reason || '').trim(),
+    approvedBy: String(adjustment.approvedBy || ''),
+    cashierId: String(adjustment.cashierId || ''),
+    createdAt: adjustment.createdAt || new Date().toISOString(),
+    amount,
+    items: returnedItems,
+    note: String(adjustment.note || '').trim(),
+  }
+
+  const canStoreCompletedSales = await hasTable('completedSales')
+  const transactionTables = [cashierDb.products]
+  if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
+
+  await cashierDb.transaction('rw', ...transactionTables, async () => {
+    await restoreProductStock(returnedItems)
+
+    if (canStoreCompletedSales) {
+      await cashierDb.completedSales.put({
+        ...sale,
+        status: 'adjusted',
+        adjustments: [...(sale.adjustments || []), entry],
+        adjustedAt: entry.createdAt,
+      })
+    }
+  })
+
+  return {
+    ...sale,
+    status: 'adjusted',
+    adjustments: [...(sale.adjustments || []), entry],
+    adjustedAt: entry.createdAt,
   }
 }

@@ -1,0 +1,88 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 164 556] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>
+endobj
+5 0 obj
+<< /Length 1845 >>
+stream
+BT
+/F1 7.5 Tf
+18 538 Td
+10 TL
+(            NEXA POS) Tj
+T* (         Sales Receipt) Tj
+T* (         Customer Copy) Tj
+T* (--------------------------------) Tj
+T* (Txn              202606220001) Tj
+T* (Date        6/22/2026, 2:35 PM) Tj
+T* (Cashier                  Maria) Tj
+T* (--------------------------------) Tj
+T* (Premium Rice 5kg) Tj
+T* (1 x 325.00              325.00) Tj
+T* (Instant Coffee Sachet) Tj
+T* (3 x 12.50                37.50) Tj
+T* (Canned Tuna) Tj
+T* (2 x 48.00                96.00) Tj
+T* (--------------------------------) Tj
+T* (Items                        6) Tj
+T* (Subtotal               458.50) Tj
+T* (Discount 5%            -22.93) Tj
+T* (TOTAL                  435.57) Tj
+T* (--------------------------------) Tj
+T* (Payment                  Cash) Tj
+T* (Cash                   500.00) Tj
+T* (Change                  64.43) Tj
+T* (--------------------------------) Tj
+T* (          Thank you!) Tj
+T* () Tj
+T* () Tj
+T* (            NEXA POS) Tj
+T* (         Sales Receipt) Tj
+T* (          Store Copy) Tj
+T* (--------------------------------) Tj
+T* (Txn              202606220001) Tj
+T* (Date        6/22/2026, 2:35 PM) Tj
+T* (Cashier                  Maria) Tj
+T* (--------------------------------) Tj
+T* (Premium Rice 5kg) Tj
+T* (1 x 325.00              325.00) Tj
+T* (Instant Coffee Sachet) Tj
+T* (3 x 12.50                37.50) Tj
+T* (Canned Tuna) Tj
+T* (2 x 48.00                96.00) Tj
+T* (--------------------------------) Tj
+T* (Items                        6) Tj
+T* (Subtotal               458.50) Tj
+T* (Discount 5%            -22.93) Tj
+T* (TOTAL                  435.57) Tj
+T* (--------------------------------) Tj
+T* (Payment                  Cash) Tj
+T* (Cash                   500.00) Tj
+T* (Change                  64.43) Tj
+T* (--------------------------------) Tj
+T* (          Thank you!) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000309 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+2206
+%%EOF

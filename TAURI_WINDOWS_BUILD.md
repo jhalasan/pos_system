@@ -32,10 +32,14 @@ Create `.env.cashier` beside `package.json`:
 
 ```dotenv
 VITE_POCKETBASE_URL=https://your-pocketbase.example.com
+VITE_RECEIPT_PRINTER_NAME=XP-58H
+VITE_RECEIPT_COPIES=2
 ```
 
-This URL is compiled into the cashier frontend and is not a secret. Never put a
-PocketBase superuser password or other server credential in a `VITE_` variable.
+These `VITE_` values are compiled into the cashier frontend and are not secrets.
+Never put a PocketBase superuser password or other server credential in a `VITE_`
+variable. If Windows installed the thermal printer under a different name, set
+`VITE_RECEIPT_PRINTER_NAME` to that exact printer name before building.
 
 PocketBase must use HTTPS in production. Its API rules must allow an authenticated
 cashier to create sales and read products. The `sales.client_sale_id` field should

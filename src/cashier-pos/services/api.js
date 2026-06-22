@@ -51,6 +51,12 @@ const webCashierApi = {
   salesHistory: ({ cashierId, q = '' }) => request(
     `/cashier/sales?cashierId=${encodeURIComponent(cashierId || '')}&q=${encodeURIComponent(q)}`
   ),
+  saleLookup: async ({ transactionNo }) => {
+    const records = await request(`/cashier/sales?q=${encodeURIComponent(transactionNo || '')}`)
+    const match = records.find((sale) => String(sale.transactionNo || '') === String(transactionNo || '').trim())
+    if (!match) throw new Error(`No completed transaction found for "${transactionNo}".`)
+    return { ...match, saleId: match.id }
+  },
   authorizeVoid: (authorization) => request('/cashier/authorize-void', {
     method: 'POST',
     body: JSON.stringify(typeof authorization === 'string' ? { code: authorization } : authorization),
@@ -71,7 +77,10 @@ const webCashierApi = {
       reason,
       ...(typeof authorization === 'string' ? { code: authorization } : authorization),
     }),
-  }),
+  }).then((payload) => payload?.sale || payload),
+  adjustCompletedSale: () => {
+    throw new Error('Refund and exchange adjustments are available in the desktop cashier app.')
+  },
 }
 
 export const cashierApi = isDesktopCashier ? desktopCashierApi : {

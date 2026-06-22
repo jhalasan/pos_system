@@ -16,12 +16,34 @@ const actionBadge = {
   Cashier: 'badge-info',
   Sync: 'badge-info',
   'Transaction Void': 'badge-danger',
+  'Transaction Refund': 'badge-warning',
+  'Transaction Exchange': 'badge-warning',
+  Refund: 'badge-warning',
+  Exchange: 'badge-warning',
+  'Receipt Lookup': 'badge-info',
+  'Receipt Reprint': 'badge-info',
   Discount: 'badge-success',
   Discounts: 'badge-success',
   'Stock Update': 'badge-warning',
   'Password Reset': 'badge-info',
   'Cloud Sync': 'badge-info',
 }
+
+const baseActionTypes = [
+  'Discounts',
+  'Transaction Void',
+  'Transaction Refund',
+  'Transaction Exchange',
+  'Receipt Lookup',
+  'Receipt Reprint',
+  'Sale',
+  'Product',
+  'Stock Update',
+  'Cashier',
+  'Settings',
+  'Login',
+  'Logout',
+]
 
 function getDateRange(range) {
   const now = new Date()
@@ -58,9 +80,9 @@ function getCustomDateRange(from, to) {
 }
 
 function logMatchesFilters(log, filters) {
+  const label = actionLabel(log.action)
   const mu = filters.userType === 'All' || log.userType === filters.userType
-  const ma = filters.action === 'All' || log.action === filters.action ||
-    (filters.action === 'Discounts' && log.action === 'Discount')
+  const ma = filters.action === 'All' || label === filters.action
   const dt = new Date(log.time)
   const md = (!filters.range.start || dt >= filters.range.start) &&
     (!filters.range.end || dt <= filters.range.end)
@@ -68,7 +90,10 @@ function logMatchesFilters(log, filters) {
 }
 
 function actionLabel(action) {
-  return action === 'Discount' ? 'Discounts' : action
+  if (action === 'Discount') return 'Discounts'
+  if (action === 'Refund') return 'Transaction Refund'
+  if (action === 'Exchange') return 'Transaction Exchange'
+  return action
 }
 
 export default function ActivityLogs() {
@@ -87,7 +112,7 @@ export default function ActivityLogs() {
     to: '',
   })
 
-  const actionTypes = [...new Set(['Discounts', ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
+  const actionTypes = [...new Set([...baseActionTypes, ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
 
   const selectedRange = useMemo(() => getDateRange(dateRange), [dateRange])
 

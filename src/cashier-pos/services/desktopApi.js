@@ -4,8 +4,10 @@ import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { getAllProducts, getProductByBarcode } from '../offline/productRepository'
 import {
+  adjustLocalSale,
   finalizeSaleLocally,
   findLocalSale,
+  findLocalSaleByTransactionNo,
   getCompletedSales,
   getPendingSales,
   voidLocalSale,
@@ -65,6 +67,45 @@ function toCashierProduct(product) {
     ...product,
     qty: product.quantity,
     lowStock: product.minStock,
+  }
+}
+
+function saleItemCount(sale) {
+  return (sale.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+}
+
+function saleAdjustmentAmount(sale) {
+  return (sale.adjustments || []).reduce((sum, adjustment) => sum + (Number(adjustment.amount) || 0), 0)
+}
+
+function toCashierSale(sale, pendingIds = new Set()) {
+  const adjusted = Array.isArray(sale.adjustments) && sale.adjustments.length > 0
+  return {
+    id: sale.clientSaleId,
+    saleId: sale.clientSaleId,
+    transactionNo: sale.transactionNo,
+    totalAmount: sale.totalAmount,
+    subtotalAmount: sale.subtotalAmount,
+    discountPercent: Number(sale.discountPercent) || 0,
+    discountAmount: Number(sale.discountAmount) || 0,
+    paymentMethod: sale.paymentMethod,
+    refNumber: sale.refNumber || '',
+    status: sale.status === 'voided'
+      ? 'Voided'
+      : (adjusted ? 'Adjusted' : (pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed')),
+    rawStatus: sale.status || 'completed',
+    syncStatus: sale.syncStatus || (pendingIds.has(sale.clientSaleId) ? 'pending' : ''),
+    createdAt: sale.createdAt,
+    itemCount: saleItemCount(sale),
+    items: sale.items || [],
+    cashierId: sale.cashierId || '',
+    cashierName: sale.cashierName || '',
+    approvedBy: sale.voidedBy || '',
+    voidedAt: sale.voidedAt || '',
+    voidReason: sale.voidReason || '',
+    adjustments: sale.adjustments || [],
+    adjustedAt: sale.adjustedAt || '',
+    adjustedAmount: saleAdjustmentAmount(sale),
   }
 }
 
@@ -244,24 +285,14 @@ export const desktopCashierApi = {
     const sales = completedSales.length ? completedSales : pendingSales
     return sales
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
-      .map((sale) => ({
-        id: sale.clientSaleId,
-        transactionNo: sale.transactionNo,
-        totalAmount: sale.totalAmount,
-        subtotalAmount: sale.subtotalAmount,
-        discountPercent: Number(sale.discountPercent) || 0,
-        discountAmount: Number(sale.discountAmount) || 0,
-        paymentMethod: sale.paymentMethod,
-        status: sale.status === 'voided'
-          ? 'Voided'
-          : (pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed'),
-        createdAt: sale.createdAt,
-        itemCount: sale.items.reduce((sum, item) => sum + item.quantity, 0),
-        items: sale.items,
-        cashierName: sale.cashierName || '',
-        approvedBy: sale.voidedBy || '',
-        voidedAt: sale.voidedAt || '',
-      }))
+      .map((sale) => toCashierSale(sale, pendingIds))
+  },
+
+  async saleLookup({ transactionNo }) {
+    const sale = await findLocalSaleByTransactionNo(transactionNo)
+    if (!sale) throw new Error(`No completed transaction found for "${transactionNo}".`)
+    const pendingSales = await getPendingSales()
+    return toCashierSale(sale, new Set(pendingSales.map((entry) => entry.clientSaleId)))
   },
 
   async completeSale(sale) {
@@ -362,5 +393,61 @@ export const desktopCashierApi = {
       approvedBy: approver.name,
       voidedAt: voidedSale.voidedAt,
     }
+  },
+
+  async adjustCompletedSale({ saleId, cashierId, authorization, type, items, reason, note }) {
+    const localSale = await findLocalSale(saleId)
+    if (!localSale) throw new Error('Completed sale not found on this device.')
+    if (localSale.status === 'voided') throw new Error('This transaction has already been voided.')
+
+    const approver = await authorizeManagerApproval(authorization)
+
+    if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
+      const activeRuntime = await runtime()
+      const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
+        activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
+          transactionNo: localSale.transactionNo,
+          cashierId: localSale.cashierId,
+        }),
+        { requestKey: null },
+      ).catch(() => null)
+
+      if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
+        for (const item of items || []) {
+          const productId = String(item.productId || item.id || '')
+          const quantity = Math.max(0, Number(item.quantity) || 0)
+          if (!productId || quantity <= 0) continue
+          const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
+          await activeRuntime.pb.collection('products').update(product.id, {
+            quantity: (Number(product.quantity) || 0) + quantity,
+          }, { requestKey: null })
+        }
+
+        await activeRuntime.pb.collection('sales').update(cloudSale.id, {
+          status: 'adjusted',
+        }, { requestKey: null }).catch(() => null)
+      }
+    } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
+      throw new Error('Internet is required to refund or exchange a synced transaction.')
+    }
+
+    const adjustedSale = await adjustLocalSale(saleId, {
+      type,
+      items,
+      reason,
+      note,
+      approvedBy: approver.name,
+      cashierId,
+      createdAt: new Date().toISOString(),
+    })
+
+    const latestAdjustment = adjustedSale.adjustments?.at(-1)
+    await createCloudActivityLog({
+      cashierId: cashierId || localSale.cashierId,
+      action: type === 'exchange' ? 'Transaction Exchange' : 'Transaction Refund',
+      detail: `${type === 'exchange' ? 'Recorded exchange' : 'Refunded'} transaction ${localSale.transactionNo} for PHP ${Number(latestAdjustment?.amount || 0).toFixed(2)} approved by ${approver.name}${reason ? ` (${reason})` : ''}`,
+    })
+
+    return toCashierSale(adjustedSale)
   },
 }
