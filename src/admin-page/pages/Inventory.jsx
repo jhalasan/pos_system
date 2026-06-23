@@ -77,6 +77,26 @@ export default function Inventory() {
     window.setTimeout(() => setToast(''), 2400)
   }
 
+  function mergeUpdatedProduct(list, updated) {
+    let matched = false
+    const next = list.map((product) => {
+      const sameProduct = product.id === updated.id
+        || (updated.barcode && product.barcode === updated.barcode)
+      if (!sameProduct) return product
+      matched = true
+      return updated
+    })
+    return matched ? next : [updated, ...next]
+  }
+
+  function mergeUpdatedFsnProduct(list, updated) {
+    return list.map((product) => (
+      product.id === updated.id || (updated.barcode && product.barcode === updated.barcode)
+        ? { ...product, ...updated }
+        : product
+    ))
+  }
+
   function addToBatch(product, count) {
     setBatchItems((items) => {
       const existing = items.find((item) => item.id === product.id)
@@ -127,8 +147,8 @@ export default function Inventory() {
 
     try {
       const updated = await api.scanInventory({ barcode: code, qty: stockInQty })
-      setProducts(products.map((p) => (p.id === updated.id ? updated : p)))
-      setFsnProducts(fsnProducts.map((p) => (p.id === updated.id ? { ...p, ...updated } : p)))
+      setProducts((current) => mergeUpdatedProduct(current, updated))
+      setFsnProducts((current) => mergeUpdatedFsnProduct(current, updated))
       setFeed((f) => [
         {
           key: `${Date.now()}-${updated.id}`,
@@ -164,8 +184,8 @@ export default function Inventory() {
 
       for (const item of batchItems) {
         const updated = await api.scanInventory({ barcode: item.barcode, qty: item.qty })
-        nextProducts = nextProducts.map((p) => (p.id === updated.id ? updated : p))
-        nextFsnProducts = nextFsnProducts.map((p) => (p.id === updated.id ? { ...p, ...updated } : p))
+        nextProducts = mergeUpdatedProduct(nextProducts, updated)
+        nextFsnProducts = mergeUpdatedFsnProduct(nextFsnProducts, updated)
         confirmedFeed.push({
           key: `${Date.now()}-${updated.id}`,
           name: updated.name,

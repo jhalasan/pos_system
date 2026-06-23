@@ -18,6 +18,18 @@ function emitSyncStatus(state, message) {
 }
 
 function errorMessage(error) {
+  const fieldErrors = error?.response?.data || error?.data?.data || {}
+  const details = Object.entries(fieldErrors)
+    .map(([field, value]) => {
+      const message = value?.message || value?.code || String(value || '')
+      return message ? `${field}: ${message}` : ''
+    })
+    .filter(Boolean)
+
+  if (details.length) return details.join(' ')
+  if (error?.response?.message || error?.data?.message) {
+    return error.response?.message || error.data?.message
+  }
   return error instanceof Error ? error.message : String(error)
 }
 
@@ -45,14 +57,17 @@ async function getOrCreateCategoryId(pb, name) {
 }
 
 async function productBody(pb, data) {
+  const qty = Number(data.qty)
+  const lowStock = Number(data.lowStock)
+  const price = Number(data.price)
   const payload = {
     name: String(data.name || '').trim(),
     barcode: String(data.barcode || '').trim(),
     category: data.categoryId || await getOrCreateCategoryId(pb, data.category),
-    quantity: Number(data.qty) || 0,
+    quantity: Number.isFinite(qty) ? Math.max(0, qty) : 0,
     base_unit: data.unit || 'Piece',
-    min_stock: Number(data.lowStock) || 0,
-    price: Number(data.price) || 0,
+    min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
+    price: Number.isFinite(price) ? Math.max(0, price) : 0,
   }
 
   const imageBlob = data.imageBlob || data.imageFile
@@ -79,14 +94,56 @@ async function findCloudProductByBarcode(pb, barcode) {
   })
 }
 
-async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb) {
+async function resolveCloudProductForLocalProduct(pb, productId, payload = {}) {
+  const product = await pb.collection('products').getOne(productId, {
+    expand: 'category',
+    requestKey: null,
+  }).catch((error) => {
+    if (error.status === 404) return null
+    throw error
+  })
+
+  if (product) return product
+
+  const localProduct = await adminDb.products.get(productId).catch(() => null)
+  const barcode = payload.barcode || localProduct?.barcode
+  return findCloudProductByBarcode(pb, barcode)
+}
+
+async function createCloudProductFromLocal(pb, productId, payload = {}, requestKey = null) {
+  const localProduct = await adminDb.products.get(productId).catch(() => null)
+  const source = localProduct || payload
+  if (!source?.name || !source?.barcode) return null
+
+  return pb.collection('products').create(await productBody(pb, source), {
+    expand: 'category',
+    requestKey,
+  }).catch(async (error) => {
+    if (error.status !== 400 && error.status !== 409) throw error
+    return findCloudProductByBarcode(pb, source.barcode)
+  })
+}
+
+async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, options = {}) {
   const normalized = normalizeProduct(cloudRecord, pb)
 
   await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
-    await adminDb.products.delete(localProductId)
-    await adminDb.products.put(normalized)
-
+    const localProduct = await adminDb.products.get(localProductId)
     const laterOps = await adminDb.pendingOps.where('productId').equals(localProductId).toArray()
+    const remainingOps = laterOps.filter((laterOp) => laterOp.id !== options.currentOpId)
+    const hasLaterStockIns = remainingOps.some((laterOp) => laterOp.type === 'scanInventory')
+    const nextProduct = options.preservePendingStock && hasLaterStockIns && localProduct
+      ? {
+          ...normalized,
+          qty: Math.max(Number(normalized.qty) || 0, Number(localProduct.qty) || 0),
+          pendingSync: true,
+          status: localProduct.status,
+        }
+      : normalized
+
+    await adminDb.products.delete(localProductId)
+    await adminDb.products.put(nextProduct)
+
     for (const laterOp of laterOps) {
       await adminDb.pendingOps.update(laterOp.id, {
         productId: cloudRecord.id,
@@ -265,11 +322,15 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     if (op.type === 'updateProduct') {
-      const updated = await this.pb.collection('products').update(op.productId, await productBody(this.pb, op.payload), {
+      const target = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
+        || await createCloudProductFromLocal(this.pb, op.productId, op.payload, `${op.id}:create-missing`)
+      if (!target) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+
+      const updated = await this.pb.collection('products').update(target.id, await productBody(this.pb, op.payload), {
         expand: 'category',
         requestKey: op.id,
       })
-      await adminDb.products.put(normalizeProduct(updated, this.pb))
+      await replaceLocalProductWithCloud(op.productId, updated, this.pb)
       await adminDb.pendingOps.delete(op.id)
       return
     }
@@ -284,14 +345,28 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     if (op.type === 'scanInventory') {
-      const product = await this.pb.collection('products').getOne(op.productId, { requestKey: null })
-      const updated = await this.pb.collection('products').update(op.productId, {
+      const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
+      if (!product) {
+        const created = await createCloudProductFromLocal(this.pb, op.productId, op.payload, `${op.id}:create-missing`)
+        if (!created) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+        await replaceLocalProductWithCloud(op.productId, created, this.pb, {
+          preservePendingStock: true,
+          currentOpId: op.id,
+        })
+        await adminDb.pendingOps.delete(op.id)
+        return
+      }
+
+      const updated = await this.pb.collection('products').update(product.id, {
         quantity: (Number(product.quantity) || 0) + Number(op.payload.qty || 0),
       }, {
         expand: 'category',
         requestKey: op.id,
       })
-      await adminDb.products.put(normalizeProduct(updated, this.pb))
+      await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
+        preservePendingStock: true,
+        currentOpId: op.id,
+      })
       await adminDb.pendingOps.delete(op.id)
       return
     }

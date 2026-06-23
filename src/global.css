@@ -38,6 +38,34 @@
   --font: 'Segoe UI', Roboto, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+:root.theme-dark,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --primary: #818cf8;
+  --primary-dark: #6366f1;
+  --primary-soft: rgba(129, 140, 248, 0.18);
+
+  --bg: #0f172a;
+  --surface: #111827;
+  --surface-2: #1f2937;
+
+  --text: #e5e7eb;
+  --text-muted: #94a3b8;
+  --text-faint: #64748b;
+
+  --border: #263244;
+  --border-strong: #334155;
+
+  --success-soft: rgba(34, 197, 94, 0.16);
+  --warning-soft: rgba(245, 158, 11, 0.16);
+  --danger-soft: rgba(239, 68, 68, 0.16);
+  --info-soft: rgba(14, 165, 233, 0.16);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24);
+  --shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  --shadow-lg: 0 18px 46px rgba(0, 0, 0, 0.38);
+}
+
 /* ---- Reset ---- */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -669,6 +697,59 @@ table.data tbody tr:hover { background: var(--surface-2); }
   box-shadow: var(--shadow-lg);
   display: flex; align-items: center; gap: 9px;
   animation: pop .18s ease;
+}
+
+:root.theme-dark .auth-wrap,
+:root[data-theme="dark"] .auth-wrap {
+  background: linear-gradient(160deg, #111827 0%, #0f172a 60%, #1e1b4b 100%);
+}
+
+:root.theme-dark .modal,
+:root[data-theme="dark"] .modal {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:root.theme-dark .modal-head,
+:root.theme-dark .modal-foot,
+:root[data-theme="dark"] .modal-head,
+:root[data-theme="dark"] .modal-foot {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.settings-toggle-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.settings-toggle-card input {
+  margin-top: 3px;
+}
+
+.settings-toggle-card span,
+.settings-toggle-card strong,
+.settings-toggle-card small {
+  display: block;
+}
+
+.settings-toggle-card strong {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.settings-toggle-card small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .sync-indicator {

@@ -2,11 +2,12 @@ import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
-import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage, IconDownload } from '../components/Icons'
+import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage, IconDownload, IconPrint } from '../components/Icons'
 import { api, defaultCategories, statusLabel, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
+import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
 
 export default function ProductManagement() {
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
@@ -20,6 +21,7 @@ export default function ProductManagement() {
   const [categorySaving, setCategorySaving] = useState(false)
   const [toast, setToast] = useState('')
   const [exporting, setExporting] = useState(false)
+  const [printing, setPrinting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
 
   const categories = useMemo(() => {
@@ -124,6 +126,20 @@ export default function ProductManagement() {
     }
   }
 
+  async function printProducts() {
+    setPrinting(true)
+    try {
+      await printInventoryProducts(filtered, {
+        title: cat === 'All' ? 'Inventory Report' : `${cat} Inventory`,
+      })
+      flash(`Printed ${filtered.length} product(s).`)
+    } catch (err) {
+      flash((typeof err === 'string' ? err : err.message) || 'Unable to print products.')
+    } finally {
+      setPrinting(false)
+    }
+  }
+
   if (loading) {
     return (
       <>
@@ -148,6 +164,9 @@ export default function ProductManagement() {
         title="Product Management"
         subtitle="Add, edit, and organize products in your catalog."
       >
+        <button className="btn btn-outline" onClick={printProducts} disabled={printing || filtered.length === 0}>
+          <IconPrint size={16} /> {printing ? 'Printing...' : 'Print Inventory'}
+        </button>
         <button className="btn btn-outline" onClick={exportProducts} disabled={exporting}>
           <IconDownload size={16} /> {exporting ? 'Exporting...' : 'Export Products'}
         </button>

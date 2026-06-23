@@ -370,10 +370,118 @@
   gap: 8px;
 }
 
-.receipt-settings-panel {
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.payment-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.payment-btn .shortcut-hint,
+.complete-button .shortcut-hint,
+.transaction-new .shortcut-hint {
+  margin-left: 0;
+}
+
+.payment-btn.active .shortcut-hint,
+.complete-button .shortcut-hint,
+.transaction-new .shortcut-hint {
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.settings-modal {
+  max-width: 820px;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 18px;
+  min-height: 430px;
+}
+
+.settings-tabs {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 8px;
+  padding-right: 12px;
+  border-right: 1px solid #e5e7eb;
+}
+
+.settings-tabs button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-tabs button:hover {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.settings-tabs button.active {
+  border-color: #c7d2fe;
+  background: #eef2ff;
+  color: #312e81;
+}
+
+.settings-tabs strong {
+  color: inherit;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.settings-tabs small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.receipt-settings-panel,
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-section-head h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.settings-section-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
 }
 
 .receipt-settings-toggle {
@@ -416,6 +524,59 @@
   gap: 10px;
 }
 
+.shortcut-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.shortcut-row span,
+.shortcut-row strong,
+.shortcut-row small {
+  display: block;
+}
+
+.shortcut-row strong {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.shortcut-row small {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.shortcut-input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+}
+
+.shortcut-input:focus {
+  border-color: #4f46e5;
+  outline: 2px solid rgba(79, 70, 229, 0.16);
+}
+
 @media (max-width: 1200px) {
   .cashier-content {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 40%);
@@ -445,6 +606,31 @@
 
   .transaction-actions {
     padding-left: 8px;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .settings-tabs {
+    flex-direction: row;
+    padding-right: 0;
+    padding-bottom: 10px;
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .settings-tabs button {
+    flex: 1;
+  }
+
+  .shortcut-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shortcut-row {
+    grid-template-columns: 1fr;
   }
 
 }
@@ -498,10 +684,6 @@
   flex-wrap: wrap;
 }
 
-.register-button {
-  white-space: nowrap;
-}
-
 .action-row {
   display: grid;
   gap: 12px;
@@ -531,24 +713,6 @@
 
 .void-zone button:hover {
   background: #fef2f2;
-}
-
-.discount-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 10px;
-  background-color: #f8fafc;
-  border: 1px solid #e2e8f0;
-  margin-top: 12px;
-}
-
-.discount-row span {
-  color: #334155;
-  font-size: 14px;
-  font-weight: 500;
 }
 
 .notification-toast {
@@ -947,6 +1111,12 @@
   gap: 12px;
 }
 
+.quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .filter-label {
   font-size: 14px;
   font-weight: 500;
@@ -970,9 +1140,14 @@
   transition: all 0.2s ease;
 }
 
-.payment-btn:hover {
+.payment-btn:hover:not(:disabled) {
   border-color: #9ca3af;
   background-color: #f8fafc;
+}
+
+.payment-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .payment-btn.active {
@@ -1469,4 +1644,169 @@
   .history-item-head {
     flex-direction: column;
   }
+}
+
+:global(:root.theme-dark) .cashier-layout,
+:global(:root[data-theme="dark"]) .cashier-layout {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .cashier-header,
+:global(:root.theme-dark) .add-product-section,
+:global(:root.theme-dark) .cart-section,
+:global(:root.theme-dark) .payment-card,
+:global(:root.theme-dark) .transaction-summary-strip,
+:global(:root.theme-dark) .search-result-item,
+:global(:root.theme-dark) .receipt-settings-toggle,
+:global(:root.theme-dark) .shortcut-row,
+:global(:root[data-theme="dark"]) .cashier-header,
+:global(:root[data-theme="dark"]) .add-product-section,
+:global(:root[data-theme="dark"]) .cart-section,
+:global(:root[data-theme="dark"]) .payment-card,
+:global(:root[data-theme="dark"]) .transaction-summary-strip,
+:global(:root[data-theme="dark"]) .search-result-item,
+:global(:root[data-theme="dark"]) .receipt-settings-toggle,
+:global(:root[data-theme="dark"]) .shortcut-row {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .transaction-tabs-bar,
+:global(:root[data-theme="dark"]) .transaction-tabs-bar {
+  background-color: #111827;
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .transaction-tab.active,
+:global(:root[data-theme="dark"]) .transaction-tab.active {
+  background-color: var(--surface);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .header-title,
+:global(:root.theme-dark) .section-title,
+:global(:root.theme-dark) .product-name,
+:global(:root.theme-dark) .cart-item-name,
+:global(:root.theme-dark) .cart-item-total,
+:global(:root.theme-dark) .summary-row,
+:global(:root.theme-dark) .filter-label,
+:global(:root.theme-dark) .settings-section-head h4,
+:global(:root.theme-dark) .receipt-settings-toggle strong,
+:global(:root.theme-dark) .shortcut-row strong,
+:global(:root.theme-dark) .shortcut-input,
+:global(:root[data-theme="dark"]) .header-title,
+:global(:root[data-theme="dark"]) .section-title,
+:global(:root[data-theme="dark"]) .product-name,
+:global(:root[data-theme="dark"]) .cart-item-name,
+:global(:root[data-theme="dark"]) .cart-item-total,
+:global(:root[data-theme="dark"]) .summary-row,
+:global(:root[data-theme="dark"]) .filter-label,
+:global(:root[data-theme="dark"]) .settings-section-head h4,
+:global(:root[data-theme="dark"]) .receipt-settings-toggle strong,
+:global(:root[data-theme="dark"]) .shortcut-row strong,
+:global(:root[data-theme="dark"]) .shortcut-input {
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .cashier-name,
+:global(:root.theme-dark) .product-meta,
+:global(:root.theme-dark) .cart-item-meta,
+:global(:root.theme-dark) .settings-section-head p,
+:global(:root.theme-dark) .receipt-settings-toggle small,
+:global(:root.theme-dark) .shortcut-row small,
+:global(:root.theme-dark) .history-lines div,
+:global(:root[data-theme="dark"]) .cashier-name,
+:global(:root[data-theme="dark"]) .product-meta,
+:global(:root[data-theme="dark"]) .cart-item-meta,
+:global(:root[data-theme="dark"]) .settings-section-head p,
+:global(:root[data-theme="dark"]) .receipt-settings-toggle small,
+:global(:root[data-theme="dark"]) .shortcut-row small,
+:global(:root[data-theme="dark"]) .history-lines div {
+  color: var(--text-muted);
+}
+
+:global(:root.theme-dark) .payment-btn,
+:global(:root.theme-dark) .logout-button,
+:global(:root.theme-dark) .shortcut-input,
+:global(:root.theme-dark) .quantity-control,
+:global(:root.theme-dark) .history-item,
+:global(:root.theme-dark) .lookup-summary-card,
+:global(:root.theme-dark) .lookup-item-row,
+:global(:root[data-theme="dark"]) .payment-btn,
+:global(:root[data-theme="dark"]) .logout-button,
+:global(:root[data-theme="dark"]) .shortcut-input,
+:global(:root[data-theme="dark"]) .quantity-control,
+:global(:root[data-theme="dark"]) .history-item,
+:global(:root[data-theme="dark"]) .lookup-summary-card,
+:global(:root[data-theme="dark"]) .lookup-item-row {
+  background-color: var(--surface-2);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .payment-btn:hover:not(:disabled),
+:global(:root.theme-dark) .search-result-item:hover,
+:global(:root[data-theme="dark"]) .payment-btn:hover:not(:disabled),
+:global(:root[data-theme="dark"]) .search-result-item:hover {
+  background-color: #263244;
+  border-color: #475569;
+}
+
+:global(:root.theme-dark) .payment-btn.active,
+:global(:root[data-theme="dark"]) .payment-btn.active {
+  background-color: #15803d;
+  border-color: #22c55e;
+  color: #ffffff;
+}
+
+:global(:root.theme-dark) .cart-item,
+:global(:root.theme-dark) .change-display,
+:global(:root.theme-dark) .total-display,
+:global(:root.theme-dark) .settings-tabs button:hover,
+:global(:root.theme-dark) .search-results,
+:global(:root[data-theme="dark"]) .cart-item,
+:global(:root[data-theme="dark"]) .change-display,
+:global(:root[data-theme="dark"]) .total-display,
+:global(:root[data-theme="dark"]) .settings-tabs button:hover,
+:global(:root[data-theme="dark"]) .search-results {
+  background-color: var(--surface-2);
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .payment-summary,
+:global(:root.theme-dark) .summary-total,
+:global(:root.theme-dark) .settings-tabs,
+:global(:root.theme-dark) .settings-tabs button.active,
+:global(:root.theme-dark) .void-zone,
+:global(:root.theme-dark) .history-lines,
+:global(:root[data-theme="dark"]) .payment-summary,
+:global(:root[data-theme="dark"]) .summary-total,
+:global(:root[data-theme="dark"]) .settings-tabs,
+:global(:root[data-theme="dark"]) .settings-tabs button.active,
+:global(:root[data-theme="dark"]) .void-zone,
+:global(:root[data-theme="dark"]) .history-lines {
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .settings-tabs button.active,
+:global(:root[data-theme="dark"]) .settings-tabs button.active {
+  background-color: var(--primary-soft);
+  color: var(--primary);
+}
+
+:global(:root.theme-dark) .shortcut-hint,
+:global(:root[data-theme="dark"]) .shortcut-hint {
+  background-color: #0f172a;
+  border-color: var(--border-strong);
+  color: var(--text-muted);
+}
+
+:global(:root.theme-dark) .register-status,
+:global(:root.theme-dark) .transaction-label,
+:global(:root[data-theme="dark"]) .register-status,
+:global(:root[data-theme="dark"]) .transaction-label {
+  background-color: var(--surface-2);
+  color: var(--text-muted);
 }

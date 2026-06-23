@@ -9,6 +9,7 @@ import {
   getExportLocations,
   saveExportLocations,
 } from '../utils/exportSettings'
+import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 
 export default function Settings() {
   const {
@@ -20,6 +21,7 @@ export default function Settings() {
   const { data: cashiers, setData: setCashiers, loading, error } = useApi(api.settingsCashiers, [])
   const [toast, setToast] = useState('')
   const [exportLocations, setExportLocations] = useState(getExportLocations)
+  const [theme, setTheme] = useState(getStoredTheme)
 
   function flash(message) {
     setToast(message)
@@ -51,6 +53,12 @@ export default function Settings() {
   function updateExportLocation(type, value) {
     const saved = saveExportLocations({ ...exportLocations, [type]: value })
     setExportLocations(saved)
+  }
+
+  function updateTheme(enabled) {
+    const nextTheme = saveTheme(enabled ? THEMES.dark : THEMES.light)
+    setTheme(nextTheme)
+    flash(`${nextTheme === THEMES.dark ? 'Dark' : 'Light'} mode enabled.`)
   }
 
   async function chooseExportFolder(type) {
@@ -96,6 +104,30 @@ export default function Settings() {
       />
 
       <div className="grid-gap">
+        <div className="card">
+          <div className="panel-head">
+            <div>
+              <h3>Appearance</h3>
+              <span className="sub">Use dark mode across the admin and cashier screens on this device.</span>
+            </div>
+            <span className="stat-icon ic-indigo"><IconSettings size={18} /></span>
+          </div>
+
+          <div className="panel-body">
+            <label className="settings-toggle-card">
+              <input
+                type="checkbox"
+                checked={theme === THEMES.dark}
+                onChange={(event) => updateTheme(event.target.checked)}
+              />
+              <span>
+                <strong>Dark mode</strong>
+                <small>Applies to the whole POS system on this computer.</small>
+              </span>
+            </label>
+          </div>
+        </div>
+
         <div className="card">
           <div className="panel-head">
             <div>

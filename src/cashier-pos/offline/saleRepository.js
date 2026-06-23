@@ -39,6 +39,9 @@ export async function finalizeSaleLocally(sale) {
     discountPercent: Number(sale.discountPercent) || 0,
     discountAmount: Number(sale.discountAmount) || 0,
     paymentMethod: sale.paymentMethod === 'gcash' ? 'gcash' : 'cash',
+    cashAmount: Number(sale.cashAmount) || 0,
+    gcashAmount: Number(sale.gcashAmount) || 0,
+    splitPayments: sale.splitPayments || null,
     refNumber: String(sale.refNumber || ''),
     items: sale.items.map((item) => ({
       productId: String(item.productId || item.id || ''),

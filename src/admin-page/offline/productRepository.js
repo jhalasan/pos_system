@@ -7,6 +7,7 @@ function firstRelation(value) {
 export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
   const lowStock = Number(product.lowStock ?? product.min_stock ?? 10)
+  if (qty <= 0) return 'out-of-stock'
   if (qty <= 5) return 'critical'
   if (qty <= lowStock) return 'low'
   return 'in-stock'
@@ -45,11 +46,55 @@ export function normalizeProduct(record, pb) {
 export async function replaceProductsFromCloud(records, pb) {
   const products = records.map((record) => normalizeProduct(record, pb))
 
-  await adminDb.transaction('rw', adminDb.products, async () => {
-    const pending = await adminDb.products.where('pendingSync').equals(true).toArray()
+  await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+    const localProducts = await adminDb.products.toArray()
+    const pendingOps = await adminDb.pendingOps
+      .filter((op) => ['pending', 'failed'].includes(op.status))
+      .toArray()
+    const localById = new Map(localProducts.map((product) => [product.id, product]))
+    const localByBarcode = new Map(localProducts
+      .filter((product) => product.barcode)
+      .map((product) => [product.barcode, product]))
+    const pendingLocalProducts = new Set()
+
+    const hasPendingStockOp = (cloudProduct, localProduct) => pendingOps.some((op) => (
+      op.type === 'scanInventory'
+      && (
+        op.productId === cloudProduct.id
+        || op.productId === localProduct?.id
+        || (cloudProduct.barcode && op.payload?.barcode === cloudProduct.barcode)
+        || (localProduct?.barcode && op.payload?.barcode === localProduct.barcode)
+      )
+    ))
+
+    const mergedProducts = products.map((cloudProduct) => {
+      const localProduct = localById.get(cloudProduct.id) || localByBarcode.get(cloudProduct.barcode)
+      if (!localProduct || localProduct.deleted) return cloudProduct
+
+      const shouldPreserveLocal = localProduct.pendingSync || hasPendingStockOp(cloudProduct, localProduct)
+      if (!shouldPreserveLocal) return cloudProduct
+
+      pendingLocalProducts.add(localProduct.id)
+      const qty = Math.max(Number(cloudProduct.qty) || 0, Number(localProduct.qty) || 0)
+      return {
+        ...cloudProduct,
+        qty,
+        pendingSync: true,
+        status: deriveStatus({ ...cloudProduct, qty }),
+      }
+    })
+
+    const unmatchedPending = localProducts.filter((product) => (
+      product.pendingSync
+      && !product.deleted
+      && !pendingLocalProducts.has(product.id)
+      && !products.some((cloudProduct) => (
+        cloudProduct.id === product.id || (cloudProduct.barcode && cloudProduct.barcode === product.barcode)
+      ))
+    ))
+
     await adminDb.products.clear()
-    await adminDb.products.bulkPut(products)
-    if (pending.length) await adminDb.products.bulkPut(pending)
+    await adminDb.products.bulkPut([...mergedProducts, ...unmatchedPending])
   })
 
   return products

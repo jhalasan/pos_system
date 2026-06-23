@@ -1,6 +1,7 @@
 export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
   const lowStock = Number(product.lowStock ?? product.min_stock ?? 10)
+  if (qty <= 0) return 'out-of-stock'
   if (qty <= 5) return 'critical'
   if (qty <= lowStock) return 'low'
   return 'in-stock'
@@ -57,14 +58,17 @@ export function toProduct(record) {
 }
 
 export function productPayload(input, categoryId) {
+  const qty = Number(input.qty)
+  const lowStock = Number(input.lowStock)
+  const price = Number(input.price)
   return {
     name: String(input.name || '').trim(),
     barcode: String(input.barcode || '').trim(),
     category: categoryId || '',
-    quantity: Number(input.qty) || 0,
+    quantity: Number.isFinite(qty) ? Math.max(0, qty) : 0,
     base_unit: input.unit || 'Piece',
-    min_stock: Number(input.lowStock) || 0,
-    price: Number(input.price) || 0,
+    min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
+    price: Number.isFinite(price) ? Math.max(0, price) : 0,
   }
 }
 

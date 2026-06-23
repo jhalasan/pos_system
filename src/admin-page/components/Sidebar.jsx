@@ -4,7 +4,7 @@ import { logout } from '../auth'
 import { api } from '../services/api'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
-  IconCloud, IconUserPlus, IconLogout, IconSettings, IconBarcode,
+  IconCloud, IconUserPlus, IconLogout, IconSettings, IconBarcode, IconWallet,
 } from './Icons'
 
 const navItems = [
@@ -14,6 +14,7 @@ const navItems = [
   { to: '/admin/barcodes', label: 'Barcode Tools', icon: IconBarcode },
   { to: '/admin/cashiers', label: 'Cashier Management', icon: IconUsers },
   { to: '/admin/analytics', label: 'Analytics', icon: IconChart },
+  { to: '/admin/gcash-payments', label: 'GCash Payments', icon: IconWallet },
   { to: '/admin/logs', label: 'Activity Logs', icon: IconList },
   { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]

@@ -115,6 +115,7 @@ const webApi = {
   scanInventory: (data) => request('/inventory/scan', { method: 'POST', body: JSON.stringify(data) }),
   fsnInventory: () => request('/inventory/fsn'),
   cashiers: () => request('/cashiers'),
+  gcashPayments: () => request('/gcash-payments'),
   createCashier: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
   updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
   deleteCashier: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),

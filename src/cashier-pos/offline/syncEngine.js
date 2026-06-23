@@ -1,7 +1,9 @@
 import PocketBase from 'pocketbase'
 import { cashierDb } from './db'
+import { refreshLocalProductCatalog } from './cloudBootstrap'
 
 const DEFAULT_INTERVAL_MS = 5_000
+const PRODUCT_REFRESH_INTERVAL_MS = 30_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
 
@@ -126,6 +128,7 @@ export class CashierSyncEngine extends EventTarget {
     this.timer = null
     this.syncPromise = null
     this.stopped = true
+    this.lastProductRefreshAt = 0
   }
 
   start() {
@@ -164,10 +167,10 @@ export class CashierSyncEngine extends EventTarget {
     }
   }
 
-  async syncNow() {
+  async syncNow(options = {}) {
     if (this.syncPromise) return this.syncPromise
 
-    this.syncPromise = this.runSync()
+    this.syncPromise = this.runSync(options)
       .finally(() => {
         this.syncPromise = null
         this.schedule()
@@ -176,28 +179,42 @@ export class CashierSyncEngine extends EventTarget {
     return this.syncPromise
   }
 
-  async runSync() {
+  async runSync({ forceProductRefresh = false } = {}) {
     const now = Date.now()
     const queuedSales = await cashierDb.pendingSales
       .where('status')
       .equals('pending')
       .filter((sale) => (Number(sale.nextAttemptAt) || 0) <= now)
       .sortBy('createdAt')
+    const shouldRefreshProducts = forceProductRefresh
+      || queuedSales.length > 0
+      || now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS
 
-    if (queuedSales.length === 0) {
-      return { uploaded: 0, failed: 0 }
+    if (queuedSales.length === 0 && !shouldRefreshProducts) {
+      return { uploaded: 0, failed: 0, products: 0 }
     }
 
     if (!(await this.isCloudReachable())) {
       emitSyncStatus('offline', 'Auto-Sync Waiting for Connection')
       this.dispatchEvent(new CustomEvent('offline'))
-      return { uploaded: 0, failed: 0 }
+      return { uploaded: 0, failed: 0, products: 0 }
     }
 
     emitSyncStatus('running', 'Auto-Sync Running')
 
     let uploaded = 0
     let failed = 0
+    let products = 0
+
+    try {
+      products = await refreshLocalProductCatalog({ pb: this.pb })
+      this.lastProductRefreshAt = Date.now()
+    } catch (error) {
+      failed += 1
+      this.dispatchEvent(new CustomEvent('syncerror', {
+        detail: { error },
+      }))
+    }
 
     for (const sale of queuedSales) {
       if (this.stopped) break
@@ -229,7 +246,7 @@ export class CashierSyncEngine extends EventTarget {
         ? `Auto-Sync Finished with ${failed} Failed`
         : 'Auto-Sync Succeeded',
     )
-    return { uploaded, failed }
+    return { uploaded, failed, products }
   }
 
   async uploadSale(sale) {

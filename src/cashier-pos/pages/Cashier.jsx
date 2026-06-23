@@ -8,6 +8,7 @@ import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
 import { printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
+import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -43,8 +44,9 @@ function createTransaction(id, transactionNo = `${todayPrefix()}${String(id).pad
     discount: 0,
     paymentMethod: 'cash',
     isSplitPayment: false,
-    splitPayments: { cash: '', gcash: '' },
+    splitPayments: { cash: '', gcash: '', gcashRef: '' },
     cashAmount: '',
+    gcashAmount: '',
     gcashRef: '',
     lastScanned: null,
     status: 'open',
@@ -79,11 +81,34 @@ function returnedQuantityForItem(sale, productId) {
 }
 
 const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings';
+const CASHIER_SHORTCUT_SETTINGS_KEY = 'nexa_cashier_shortcut_settings';
 const DEFAULT_RECEIPT_SETTINGS = {
   autoPrint: false,
   storeCopyDelaySeconds: 5,
   showPdfTestButton: false,
   receiptPdfDirectory: '',
+};
+const CASHIER_SHORTCUTS = [
+  { action: 'focusBarcode', label: 'Focus barcode scan', defaultKeys: 'F1' },
+  { action: 'requestDiscount', label: 'Request discount', defaultKeys: 'F2' },
+  { action: 'focusSearch', label: 'Focus product search', defaultKeys: 'F3' },
+  { action: 'focusQuantity', label: 'Focus item quantity', defaultKeys: 'F4' },
+  { action: 'newTransaction', label: 'New transaction', defaultKeys: 'Ctrl+N' },
+  { action: 'completeTransaction', label: 'Complete transaction / Pay', defaultKeys: 'F10' },
+  { action: 'voidTransaction', label: 'Void current transaction', defaultKeys: 'Ctrl+Backspace' },
+  { action: 'openRegister', label: 'Open cash register', defaultKeys: 'Ctrl+R' },
+  { action: 'paymentCash', label: 'Select cash payment', defaultKeys: 'Ctrl+1' },
+  { action: 'paymentGcash', label: 'Select GCash payment', defaultKeys: 'Ctrl+2' },
+  { action: 'reprintReceipt', label: 'Print receipt copy', defaultKeys: 'Ctrl+P' },
+  { action: 'receiptLookup', label: 'Receipt lookup', defaultKeys: 'F6' },
+  { action: 'history', label: 'Transaction history', defaultKeys: 'F7' },
+  { action: 'sync', label: 'Sync now', defaultKeys: 'Ctrl+S' },
+  { action: 'settings', label: 'Open settings', defaultKeys: 'Ctrl+,' },
+];
+const DEFAULT_SHORTCUT_SETTINGS = {
+  version: 3,
+  showLabels: true,
+  shortcuts: CASHIER_SHORTCUTS.reduce((map, item) => ({ ...map, [item.action]: item.defaultKeys }), {}),
 };
 
 function loadReceiptSettings() {
@@ -95,6 +120,65 @@ function loadReceiptSettings() {
   } catch {
     return DEFAULT_RECEIPT_SETTINGS;
   }
+}
+
+function loadShortcutSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CASHIER_SHORTCUT_SETTINGS_KEY) || '{}');
+    if (saved.version !== DEFAULT_SHORTCUT_SETTINGS.version) {
+      return {
+        ...DEFAULT_SHORTCUT_SETTINGS,
+        showLabels: saved.showLabels ?? DEFAULT_SHORTCUT_SETTINGS.showLabels,
+      };
+    }
+    return {
+      ...DEFAULT_SHORTCUT_SETTINGS,
+      ...saved,
+      shortcuts: {
+        ...DEFAULT_SHORTCUT_SETTINGS.shortcuts,
+        ...(saved.shortcuts || {}),
+      },
+    };
+  } catch {
+    return DEFAULT_SHORTCUT_SETTINGS;
+  }
+}
+
+function normalizeShortcut(value) {
+  return String(value || '')
+    .split('+')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('+');
+}
+
+function shortcutFromEvent(e) {
+  const keyMap = {
+    ' ': 'Space',
+    ArrowDown: 'ArrowDown',
+    ArrowLeft: 'ArrowLeft',
+    ArrowRight: 'ArrowRight',
+    ArrowUp: 'ArrowUp',
+    Escape: 'Escape',
+  };
+  const key = keyMap[e.key] || e.key;
+  if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) return '';
+
+  const parts = [];
+  if (e.ctrlKey) parts.push('Ctrl');
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  if (e.metaKey) parts.push('Meta');
+
+  const printableKey = key.length === 1 ? key.toUpperCase() : key;
+  parts.push(printableKey);
+  return parts.join('+');
+}
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tagName = target.tagName;
+  return target.isContentEditable || tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
 }
 
 function receiptStepLabel(step) {
@@ -122,6 +206,8 @@ function tauriInvoke() {
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
+  const searchProductInputRef = useRef(null);
+  const quantityInputRefs = useRef(new Map());
   const cashAmountInputRef = useRef(null);
   const splitCashInputRef = useRef(null);
   const splitGcashInputRef = useRef(null);
@@ -178,6 +264,9 @@ const Cashier = ({ onLogout, user }) => {
   const [lookupActionLoading, setLookupActionLoading] = useState(false);
   const [showReceiptSettings, setShowReceiptSettings] = useState(false);
   const [receiptSettings, setReceiptSettings] = useState(loadReceiptSettings);
+  const [shortcutSettings, setShortcutSettings] = useState(loadShortcutSettings);
+  const [settingsTab, setSettingsTab] = useState('shortcuts');
+  const [theme, setTheme] = useState(getStoredTheme);
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -188,6 +277,7 @@ const Cashier = ({ onLogout, user }) => {
   const isSplitPayment = activeTxn.isSplitPayment;
   const splitPayments = activeTxn.splitPayments;
   const cashAmount = activeTxn.cashAmount;
+  const gcashAmount = activeTxn.gcashAmount;
   const gcashRef = activeTxn.gcashRef;
   const lastScanned = activeTxn.lastScanned;
   const isCompletedTxn = activeTxn.status === 'completed';
@@ -270,6 +360,62 @@ const Cashier = ({ onLogout, user }) => {
       localStorage.setItem(RECEIPT_SETTINGS_KEY, JSON.stringify(next));
       return next;
     });
+  };
+
+  const saveShortcutSettings = (updates) => {
+    setShortcutSettings((current) => {
+      const next = {
+        ...current,
+        ...updates,
+        shortcuts: {
+          ...current.shortcuts,
+          ...(updates.shortcuts || {}),
+        },
+      };
+      localStorage.setItem(CASHIER_SHORTCUT_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const setShortcut = (action, value) => {
+    saveShortcutSettings({
+      shortcuts: {
+        [action]: normalizeShortcut(value),
+      },
+    });
+  };
+
+  const shortcutFor = (action) => normalizeShortcut(shortcutSettings.shortcuts[action]);
+
+  const ShortcutHint = ({ action }) => {
+    const value = shortcutFor(action);
+    if (!shortcutSettings.showLabels || !value) return null;
+    return <span className={styles['shortcut-hint']}>{value}</span>;
+  };
+
+  const withShortcut = (label, action) => (
+    <>
+      <span>{label}</span>
+      <ShortcutHint action={action} />
+    </>
+  );
+
+  const focusLatestQuantityInput = () => {
+    const latestItem = cartItems[cartItems.length - 1];
+    if (!latestItem) {
+      showNotification('Add an item before editing quantity.');
+      return;
+    }
+
+    const input = quantityInputRefs.current.get(latestItem.id);
+    input?.focus();
+    input?.select?.();
+  };
+
+  const updateTheme = (enabled) => {
+    const nextTheme = saveTheme(enabled ? THEMES.dark : THEMES.light);
+    setTheme(nextTheme);
+    showNotification(`${nextTheme === THEMES.dark ? 'Dark' : 'Light'} mode enabled.`);
   };
 
   const selectReceiptPdfDirectory = async () => {
@@ -419,8 +565,9 @@ const Cashier = ({ onLogout, user }) => {
   const resetPaymentState = () => {
     updateActiveTransaction({
       cashAmount: '',
+      gcashAmount: '',
       gcashRef: '',
-      splitPayments: { cash: '', gcash: '' },
+      splitPayments: { cash: '', gcash: '', gcashRef: '' },
       isSplitPayment: false,
     });
   };
@@ -435,6 +582,18 @@ const Cashier = ({ onLogout, user }) => {
     setCompletedVoidReason('');
     setCompletedVoidError('');
     setCompletedVoidLoading(false);
+  };
+
+  const openDiscountModal = () => {
+    if (isLockedTxn) return;
+    setShowDiscountModal(true);
+    setDiscountApprovalMethod('barcode');
+    setDiscountApprovalCode('');
+    setDiscountApprovalEmail('');
+    setDiscountApprovalPassword('');
+    setDiscountAmountInput('');
+    setDiscountError('');
+    setDiscountApproved(false);
   };
 
   const approvalPayload = ({ method, code, email, password }) => {
@@ -539,8 +698,14 @@ const Cashier = ({ onLogout, user }) => {
           subtotalAmount: lookupSale.subtotalAmount || lookupSale.totalAmount,
           discountPercent: lookupSale.discountPercent,
           discountAmount: lookupSale.discountAmount,
+          cashAmount: lookupSale.cashAmount,
+          gcashAmount: lookupSale.gcashAmount,
+          splitPayments: lookupSale.splitPayments,
+          change: lookupSale.change,
           gcashRef: lookupSale.refNumber,
         },
+      }, {
+        copyLabels: ['Reprint Copy'],
       });
       cashierApi.logActivity({
         cashierId: user?.id,
@@ -568,6 +733,7 @@ const Cashier = ({ onLogout, user }) => {
           discountPercent: lookupSale.discountPercent,
           discountAmount: lookupSale.discountAmount,
           cashAmount: lookupSale.cashAmount,
+          gcashAmount: lookupSale.gcashAmount,
           change: lookupSale.change,
           splitPayments: lookupSale.splitPayments,
           gcashRef: lookupSale.refNumber,
@@ -957,6 +1123,10 @@ const Cashier = ({ onLogout, user }) => {
         alert('Split payment total is less than the transaction total.');
         return false;
       }
+      if ((parseFloat(splitPayments.gcash) || 0) > 0 && !String(splitPayments.gcashRef || '').trim()) {
+        alert('Please enter GCash reference number for the split payment.');
+        return false;
+      }
       return true;
     }
 
@@ -969,9 +1139,16 @@ const Cashier = ({ onLogout, user }) => {
       }
     }
 
-    if (paymentMethod === 'gcash' && !gcashRef.trim()) {
-      alert('Please enter GCash reference number.');
-      return false;
+    if (paymentMethod === 'gcash') {
+      const paid = parseFloat(gcashAmount) || 0;
+      if (!gcashAmount || paid < total) {
+        alert('Please enter a GCash amount large enough to cover the total.');
+        return false;
+      }
+      if (!gcashRef.trim()) {
+        alert('Please enter GCash reference number.');
+        return false;
+      }
     }
 
     return true;
@@ -984,11 +1161,13 @@ const Cashier = ({ onLogout, user }) => {
     const completedTransactionNo = activeTxn.transactionNo;
     const completedAt = new Date().toISOString();
     const paidCash = parseFloat(cashAmountInputRef.current?.value ?? cashAmount) || 0;
+    const paidGcash = parseFloat(gcashAmount) || 0;
     const paidSplitCash = parseFloat(splitCashInputRef.current?.value ?? splitPayments.cash) || 0;
     const paidSplitGcash = parseFloat(splitGcashInputRef.current?.value ?? splitPayments.gcash) || 0;
     const completedSplitPayments = {
       cash: paidSplitCash,
       gcash: paidSplitGcash,
+      gcashRef: String(splitPayments.gcashRef || '').trim(),
     };
     const completedItems = cartItems.map((item) => ({
       productId: item.productId,
@@ -1005,9 +1184,12 @@ const Cashier = ({ onLogout, user }) => {
       discountPercent: discount,
       discountAmount,
       cashAmount: isSplitPayment ? paidSplitCash : paidCash,
+      gcashAmount: isSplitPayment ? paidSplitGcash : paidGcash,
       gcashRef,
       splitPayments: completedSplitPayments,
-      change: isSplitPayment ? Math.max(0, paidSplitCash + paidSplitGcash - total) : paidCash - total,
+      change: isSplitPayment
+        ? Math.max(0, paidSplitCash + paidSplitGcash - total)
+        : (paymentMethod === 'cash' ? paidCash - total : Math.max(0, paidGcash - total)),
       completedAt,
     };
 
@@ -1021,6 +1203,9 @@ const Cashier = ({ onLogout, user }) => {
         discountAmount,
         totalAmount: total,
         paymentMethod: isSplitPayment ? 'cash' : paymentMethod,
+        cashAmount: completedPayment.cashAmount,
+        gcashAmount: completedPayment.gcashAmount,
+        splitPayments: completedSplitPayments,
         refNumber: isSplitPayment ? `split:${JSON.stringify(completedSplitPayments)}` : gcashRef,
         items: completedItems,
       });
@@ -1115,6 +1300,62 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
+  useEffect(() => {
+    const modalOpen = showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings;
+
+    const actions = {
+      focusBarcode: () => {
+        barcodeInputRef.current?.focus();
+        barcodeInputRef.current?.select?.();
+      },
+      focusSearch: () => {
+        searchProductInputRef.current?.focus();
+        searchProductInputRef.current?.select?.();
+      },
+      focusQuantity: focusLatestQuantityInput,
+      newTransaction: handleNewTransaction,
+      completeTransaction: handleCompleteTransaction,
+      voidTransaction: handleVoidTransaction,
+      openRegister: handleOpenCashRegister,
+      paymentCash: () => {
+        if (isLockedTxn) return;
+        updateActiveTransaction({ isSplitPayment: false, paymentMethod: 'cash' });
+        window.requestAnimationFrame(() => cashAmountInputRef.current?.focus());
+      },
+      paymentGcash: () => {
+        if (isLockedTxn) return;
+        updateActiveTransaction({ isSplitPayment: false, paymentMethod: 'gcash' });
+      },
+      requestDiscount: openDiscountModal,
+      reprintReceipt: () => handleReprintReceipt(activeTxn),
+      receiptLookup: handleOpenReceiptLookup,
+      history: handleOpenHistory,
+      sync: handleSyncNow,
+      settings: () => setShowReceiptSettings(true),
+    };
+
+    const handleShortcutKeyDown = (e) => {
+      if (e.target?.dataset?.hotkeyCapture === 'true' || modalOpen) return;
+
+      const combo = shortcutFromEvent(e);
+      if (!combo) return;
+
+      const editable = isEditableTarget(e.target);
+      const modified = e.ctrlKey || e.altKey || e.metaKey;
+      const functionKey = /^F\d{1,2}$/.test(combo);
+      if (editable && !modified && !functionKey) return;
+
+      const match = CASHIER_SHORTCUTS.find((item) => shortcutFor(item.action) === combo);
+      if (!match || !actions[match.action]) return;
+
+      e.preventDefault();
+      actions[match.action]();
+    };
+
+    window.addEventListener('keydown', handleShortcutKeyDown);
+    return () => window.removeEventListener('keydown', handleShortcutKeyDown);
+  });
+
   const renderApprovalFields = ({
     name,
     method,
@@ -1197,7 +1438,7 @@ const Cashier = ({ onLogout, user }) => {
             onClick={handleOpenHistory}
           >
             <ClockHistory size={16} />
-            History
+            {withShortcut('History', 'history')}
           </Button>
           <Button
             variant="outline"
@@ -1206,7 +1447,7 @@ const Cashier = ({ onLogout, user }) => {
             onClick={handleOpenReceiptLookup}
           >
             <Receipt size={16} />
-            Receipt Lookup
+            {withShortcut('Receipt Lookup', 'receiptLookup')}
           </Button>
           <Button
             variant="outline"
@@ -1216,7 +1457,7 @@ const Cashier = ({ onLogout, user }) => {
             disabled={syncing}
           >
             <ArrowRepeat size={16} className={syncing ? styles['spin-icon'] : ''} />
-            {syncing ? 'Syncing' : 'Sync'}
+            {withShortcut(syncing ? 'Syncing' : 'Sync', 'sync')}
           </Button>
           <Button
             variant="outline"
@@ -1225,7 +1466,7 @@ const Cashier = ({ onLogout, user }) => {
             onClick={() => setShowReceiptSettings(true)}
           >
             <Gear size={16} />
-            Settings
+            {withShortcut('Settings', 'settings')}
           </Button>
         </div>
         <div className={styles['header-actions']}>
@@ -1268,7 +1509,7 @@ const Cashier = ({ onLogout, user }) => {
         <div className={styles['transaction-actions']}>
           <button className={styles['transaction-new']} onClick={handleNewTransaction}>
             <Plus size={14} />
-            New Transaction
+            {withShortcut('New Transaction', 'newTransaction')}
           </button>
         </div>
       </div>
@@ -1340,7 +1581,7 @@ const Cashier = ({ onLogout, user }) => {
 
             <div className={styles['input-group']}>
               <Input
-                label="Scan Barcode"
+                label={withShortcut('Scan Barcode', 'focusBarcode')}
                 placeholder="Scan or enter barcode"
                 inputRef={barcodeInputRef}
                 value={barcode}
@@ -1357,8 +1598,9 @@ const Cashier = ({ onLogout, user }) => {
             </div>
 
             <Input
-              label="Search Product"
+              label={withShortcut('Search Product', 'focusSearch')}
               placeholder="Search by product name or barcode"
+              inputRef={searchProductInputRef}
               value={searchProduct}
               onChange={handleSearchProductChange}
               onKeyDown={handleSearchKeyDown}
@@ -1415,6 +1657,7 @@ const Cashier = ({ onLogout, user }) => {
               <h3 className={styles['section-title']}>
                 Cart
                 <Badge variant="info" size="sm">{cartItems.length} Items</Badge>
+                <ShortcutHint action="focusQuantity" />
               </h3>
             </div>
 
@@ -1448,6 +1691,10 @@ const Cashier = ({ onLogout, user }) => {
                           <Dash size={14} />
                         </button>
                         <input
+                          ref={(node) => {
+                            if (node) quantityInputRefs.current.set(item.id, node);
+                            else quantityInputRefs.current.delete(item.id);
+                          }}
                           type="number"
                           min="1"
                           max={maxQty}
@@ -1484,14 +1731,6 @@ const Cashier = ({ onLogout, user }) => {
                 <span className={styles['register-status']}>
                   {cashRegisterOpen ? 'Register Open' : 'Register Closed'}
                 </span>
-                <Button
-                  variant="success"
-                  size="sm"
-                  className={styles['register-button']}
-                  onClick={handleOpenCashRegister}
-                >
-                  Open Register
-                </Button>
               </div>
             </div>
 
@@ -1508,20 +1747,25 @@ const Cashier = ({ onLogout, user }) => {
               <div className={`${styles['summary-row']} ${styles['summary-total']}`}><span>Total:</span><span>{money(total)}</span></div>
             </div>
 
-            <div className={styles['discount-row']}>
-              <span>Need manager approval for a discount?</span>
-              <Button variant="outline" onClick={() => {
-                setShowDiscountModal(true);
-                setDiscountApprovalMethod('barcode');
-                setDiscountApprovalCode('');
-                setDiscountApprovalEmail('');
-                setDiscountApprovalPassword('');
-                setDiscountAmountInput('');
-                setDiscountError('');
-                setDiscountApproved(false);
-              }}>
-                Request Discount
-              </Button>
+            <div className={styles['quick-actions']}>
+              <label className={styles['filter-label']}>Quick Actions</label>
+              <div className={styles['payment-buttons']}>
+                <button
+                  type="button"
+                  className={styles['payment-btn']}
+                  onClick={handleOpenCashRegister}
+                >
+                  {withShortcut('Open Register', 'openRegister')}
+                </button>
+                <button
+                  type="button"
+                  className={styles['payment-btn']}
+                  onClick={openDiscountModal}
+                  disabled={isLockedTxn}
+                >
+                  {withShortcut('Discount', 'requestDiscount')}
+                </button>
+              </div>
             </div>
 
             <div className={styles['payment-method']}>
@@ -1537,8 +1781,8 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['payment-method']}>
                   <label className={styles['filter-label']}>Payment Method</label>
                   <div className={styles['payment-buttons']}>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isLockedTxn}>Cash</button>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isLockedTxn}>GCash</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isLockedTxn}>{withShortcut('Cash', 'paymentCash')}</button>
+                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isLockedTxn}>{withShortcut('GCash', 'paymentGcash')}</button>
                   </div>
                 </div>
 
@@ -1559,6 +1803,7 @@ const Cashier = ({ onLogout, user }) => {
 
                 {paymentMethod === 'gcash' && (
                   <>
+                    <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={gcashAmount} onChange={(e) => updateActiveTransaction({ gcashAmount: e.target.value })} disabled={isLockedTxn} />
                     <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isLockedTxn} />
                     <div className={styles['total-display']}><span>Total amount: {money(total)}</span></div>
                   </>
@@ -1569,6 +1814,7 @@ const Cashier = ({ onLogout, user }) => {
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
                 <Input inputRef={splitCashInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
                 <Input inputRef={splitGcashInputRef} label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
+                <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={splitPayments.gcashRef || ''} onChange={(e) => handleSplitPaymentChange('gcashRef', e.target.value)} disabled={isLockedTxn} />
                 <div className={styles['change-display']}>
                   <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
                   <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
@@ -1583,7 +1829,7 @@ const Cashier = ({ onLogout, user }) => {
               onClick={handleCompleteTransaction}
               disabled={cartItems.length === 0 || isLockedTxn}
             >
-              {isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : 'Complete Transaction')}
+              {isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : withShortcut('Complete Transaction', 'completeTransaction'))}
             </Button>
 
             {isCompletedTxn && !isVoidedTxn && (
@@ -1595,7 +1841,7 @@ const Cashier = ({ onLogout, user }) => {
                   onClick={() => handleReprintReceipt(activeTxn)}
                 >
                   <Printer size={14} />
-                  {receiptButtonText(activeTxn.completedSale)}
+                  {withShortcut(receiptButtonText(activeTxn.completedSale), 'reprintReceipt')}
                 </Button>
                 {receiptSettings.showPdfTestButton && (
                   <Button
@@ -1615,7 +1861,7 @@ const Cashier = ({ onLogout, user }) => {
               <div className={styles['void-zone']}>
                 <button type="button" onClick={handleVoidTransaction}>
                   <Trash size={14} />
-                  Void this transaction
+                  {withShortcut('Void this transaction', 'voidTransaction')}
                 </button>
               </div>
             )}
@@ -2052,60 +2298,185 @@ const Cashier = ({ onLogout, user }) => {
       <Modal
         isOpen={showReceiptSettings}
         onClose={() => setShowReceiptSettings(false)}
-        title="Receipt Settings"
+        title="Cashier Settings"
+        className={styles['settings-modal']}
         footer={(
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            {settingsTab === 'shortcuts' && (
+              <button
+                className="btn btn-outline"
+                onClick={() => saveShortcutSettings(DEFAULT_SHORTCUT_SETTINGS)}
+              >
+                Reset Shortcuts
+              </button>
+            )}
             <button className="btn btn-primary" onClick={() => setShowReceiptSettings(false)}>
               Done
             </button>
           </div>
         )}
       >
-        <div className={styles['receipt-settings-panel']}>
-          <label className={styles['receipt-settings-toggle']}>
-            <input
-              type="checkbox"
-              checked={receiptSettings.autoPrint}
-              onChange={(e) => saveReceiptSettings({ autoPrint: e.target.checked })}
-            />
-            <span>
-              <strong>Automatic receipt printing</strong>
-              <small>Prints the customer copy, waits, then prints the store copy.</small>
-            </span>
-          </label>
-          <label className={styles['receipt-settings-toggle']}>
-            <input
-              type="checkbox"
-              checked={receiptSettings.showPdfTestButton}
-              onChange={(e) => saveReceiptSettings({ showPdfTestButton: e.target.checked })}
-            />
-            <span>
-              <strong>Show PDF test button</strong>
-              <small>Shows a test-only button that saves a receipt PDF instead of using the receipt printer.</small>
-            </span>
-          </label>
-          {receiptSettings.showPdfTestButton && (
-            <div className={styles['receipt-pdf-location']}>
-              <Input
-                label="PDF Test Save Location"
-                value={receiptSettings.receiptPdfDirectory || ''}
-                placeholder="Choose a folder for test PDFs"
-                readOnly
-              />
-              <Button variant="outline" onClick={selectReceiptPdfDirectory}>
-                Browse
-              </Button>
-            </div>
-          )}
-          <Input
-            label="Store Copy Delay Seconds"
-            type="number"
-            min="1"
-            max="30"
-            value={receiptSettings.storeCopyDelaySeconds}
-            onChange={(e) => saveReceiptSettings({ storeCopyDelaySeconds: e.target.value })}
-            disabled={!receiptSettings.autoPrint}
-          />
+        <div className={styles['settings-layout']}>
+          <div className={styles['settings-tabs']} role="tablist" aria-label="Cashier settings sections">
+            <button
+              type="button"
+              className={settingsTab === 'appearance' ? styles.active : ''}
+              onClick={() => setSettingsTab('appearance')}
+              role="tab"
+              aria-selected={settingsTab === 'appearance'}
+            >
+              <strong>Appearance</strong>
+              <small>Light or dark</small>
+            </button>
+            <button
+              type="button"
+              className={settingsTab === 'shortcuts' ? styles.active : ''}
+              onClick={() => setSettingsTab('shortcuts')}
+              role="tab"
+              aria-selected={settingsTab === 'shortcuts'}
+            >
+              <strong>Shortcuts</strong>
+              <small>Hotkeys and labels</small>
+            </button>
+            <button
+              type="button"
+              className={settingsTab === 'receipt' ? styles.active : ''}
+              onClick={() => setSettingsTab('receipt')}
+              role="tab"
+              aria-selected={settingsTab === 'receipt'}
+            >
+              <strong>Receipt</strong>
+              <small>Printer copies</small>
+            </button>
+          </div>
+
+          <div className={styles['receipt-settings-panel']}>
+            {settingsTab === 'appearance' && (
+              <div className={styles['settings-section']}>
+                <div className={styles['settings-section-head']}>
+                  <div>
+                    <h4>Appearance</h4>
+                    <p>Use dark mode across the cashier and admin screens on this device.</p>
+                  </div>
+                </div>
+                <label className={styles['receipt-settings-toggle']}>
+                  <input
+                    type="checkbox"
+                    checked={theme === THEMES.dark}
+                    onChange={(e) => updateTheme(e.target.checked)}
+                  />
+                  <span>
+                    <strong>Dark mode</strong>
+                    <small>Applies to the whole POS system on this computer.</small>
+                  </span>
+                </label>
+              </div>
+            )}
+
+            {settingsTab === 'shortcuts' && (
+              <div className={styles['settings-section']}>
+                <div className={styles['settings-section-head']}>
+                  <div>
+                    <h4>Cashier Shortcuts</h4>
+                    <p>Based on the previous POS flow: F1 scan, F2 discount, F3 search, F4 quantity, and F10 pay.</p>
+                  </div>
+                </div>
+                <label className={styles['receipt-settings-toggle']}>
+                  <input
+                    type="checkbox"
+                    checked={shortcutSettings.showLabels}
+                    onChange={(e) => saveShortcutSettings({ showLabels: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Show shortcut labels</strong>
+                    <small>Shows the assigned hotkeys beside cashier controls.</small>
+                  </span>
+                </label>
+                <div className={styles['shortcut-grid']}>
+                  {CASHIER_SHORTCUTS.map((item) => (
+                    <label className={styles['shortcut-row']} key={item.action}>
+                      <span>
+                        <strong>{item.label}</strong>
+                        <small>Default: {item.defaultKeys}</small>
+                      </span>
+                      <input
+                        data-hotkey-capture="true"
+                        className={styles['shortcut-input']}
+                        value={shortcutFor(item.action)}
+                        placeholder="No shortcut"
+                        readOnly
+                        onKeyDown={(e) => {
+                          e.preventDefault();
+                          if (e.key === 'Backspace' && !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey) {
+                            setShortcut(item.action, '');
+                            return;
+                          }
+                          const combo = shortcutFromEvent(e);
+                          if (combo) setShortcut(item.action, combo);
+                        }}
+                        onFocus={(e) => e.currentTarget.select()}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {settingsTab === 'receipt' && (
+              <div className={styles['settings-section']}>
+                <div className={styles['settings-section-head']}>
+                  <div>
+                    <h4>Receipt Printing</h4>
+                    <p>Controls automatic receipt copies and PDF test output.</p>
+                  </div>
+                </div>
+                <label className={styles['receipt-settings-toggle']}>
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.autoPrint}
+                    onChange={(e) => saveReceiptSettings({ autoPrint: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Automatic receipt printing</strong>
+                    <small>Prints the customer copy, waits, then prints the store copy.</small>
+                  </span>
+                </label>
+                <label className={styles['receipt-settings-toggle']}>
+                  <input
+                    type="checkbox"
+                    checked={receiptSettings.showPdfTestButton}
+                    onChange={(e) => saveReceiptSettings({ showPdfTestButton: e.target.checked })}
+                  />
+                  <span>
+                    <strong>Show PDF test button</strong>
+                    <small>Shows a test-only button that saves a receipt PDF instead of using the receipt printer.</small>
+                  </span>
+                </label>
+                {receiptSettings.showPdfTestButton && (
+                  <div className={styles['receipt-pdf-location']}>
+                    <Input
+                      label="PDF Test Save Location"
+                      value={receiptSettings.receiptPdfDirectory || ''}
+                      placeholder="Choose a folder for test PDFs"
+                      readOnly
+                    />
+                    <Button variant="outline" onClick={selectReceiptPdfDirectory}>
+                      Browse
+                    </Button>
+                  </div>
+                )}
+                <Input
+                  label="Store Copy Delay Seconds"
+                  type="number"
+                  min="1"
+                  max="30"
+                  value={receiptSettings.storeCopyDelaySeconds}
+                  onChange={(e) => saveReceiptSettings({ storeCopyDelaySeconds: e.target.value })}
+                  disabled={!receiptSettings.autoPrint}
+                />
+              </div>
+            )}
+          </div>
         </div>
       </Modal>
 

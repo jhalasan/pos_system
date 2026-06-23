@@ -84,6 +84,20 @@ function firstRelation(value) {
 
 function toCashierSale(sale, pendingIds = new Set()) {
   const adjusted = Array.isArray(sale.adjustments) && sale.adjustments.length > 0
+  let paymentMethod = sale.paymentMethod
+  let refNumber = sale.refNumber || ''
+  let splitPayments = sale.splitPayments
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+
   return {
     id: sale.clientSaleId,
     saleId: sale.clientSaleId,
@@ -92,11 +106,12 @@ function toCashierSale(sale, pendingIds = new Set()) {
     subtotalAmount: sale.subtotalAmount,
     discountPercent: Number(sale.discountPercent) || 0,
     discountAmount: Number(sale.discountAmount) || 0,
-    paymentMethod: sale.paymentMethod,
+    paymentMethod,
     cashAmount: sale.cashAmount,
+    gcashAmount: sale.gcashAmount,
     change: sale.change,
-    splitPayments: sale.splitPayments,
-    refNumber: sale.refNumber || '',
+    splitPayments,
+    refNumber,
     status: sale.status === 'voided'
       ? 'Voided'
       : (adjusted ? 'Adjusted' : (pendingIds.has(sale.clientSaleId) || sale.syncStatus === 'pending' ? 'Pending sync' : 'Completed')),
@@ -140,7 +155,7 @@ function cloudSaleItemToLocal(item) {
 function toCashierCloudSale(sale, items = []) {
   let paymentMethod = sale.payment_method || sale.paymentMethod || 'cash'
   let refNumber = sale.ref_number || sale.refNumber || ''
-  let splitPayments = { cash: '', gcash: '' }
+  let splitPayments = { cash: '', gcash: '', gcashRef: '' }
 
   if (String(refNumber).startsWith('split:')) {
     try {
@@ -161,6 +176,7 @@ function toCashierCloudSale(sale, items = []) {
     discountAmount: Number(sale.discount_amount ?? sale.discountAmount) || 0,
     paymentMethod,
     cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : '',
+    gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : '',
     change: 0,
     refNumber,
     splitPayments,
@@ -376,7 +392,12 @@ export const desktopCashierApi = {
 
   async productByBarcode(barcode) {
     await initializeCashierDb()
-    const product = await getProductByBarcode(barcode)
+    let product = await getProductByBarcode(barcode)
+    if (!product && (!globalThis.navigator || globalThis.navigator.onLine)) {
+      const activeRuntime = await runtime()
+      await refreshLocalProductCatalog({ pb: activeRuntime.pb })
+      product = await getProductByBarcode(barcode)
+    }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
     if (product.quantity <= 0) throw new Error(`"${product.name}" is out of stock.`)
     return toCashierProduct(product)
@@ -431,7 +452,7 @@ export const desktopCashierApi = {
 
   async syncNow() {
     const activeRuntime = await runtime()
-    return activeRuntime.syncEngine.syncNow()
+    return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
   },
 
   async authorizeVoid(code) {

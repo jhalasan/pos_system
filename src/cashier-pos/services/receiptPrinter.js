@@ -62,19 +62,23 @@ function paymentRows(payment = {}) {
   if (payment.paymentMethod === 'split') {
     const cash = Number(payment.splitPayments?.cash) || 0
     const gcash = Number(payment.splitPayments?.gcash) || 0
+    const gcashRef = payment.splitPayments?.gcashRef
     const paid = cash + gcash
     return [
       columns('Payment', 'Split'),
       columns('Cash', moneyValue(cash)),
       columns('GCash', moneyValue(gcash)),
+      gcashRef ? columns('GCash Ref', gcashRef) : '',
       columns('Paid', moneyValue(paid)),
       columns('Change', moneyValue(Math.max(0, paid - Number(payment.totalAmount || 0)))),
-    ]
+    ].filter(Boolean)
   }
 
   if (payment.paymentMethod === 'gcash') {
+    const gcashAmount = Number(payment.gcashAmount) || Number(payment.totalAmount) || 0
     return [
       columns('Payment', 'GCash'),
+      columns('GCash Amount', moneyValue(gcashAmount)),
       payment.gcashRef ? columns('Ref', payment.gcashRef) : '',
     ].filter(Boolean)
   }

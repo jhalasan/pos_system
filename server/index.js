@@ -144,6 +144,44 @@ async function getSalesByCashier() {
   return totals
 }
 
+function gcashPaymentFromSale(sale) {
+  let paymentMethod = sale.payment_method || ''
+  let refNumber = sale.ref_number || ''
+  let splitPayments = null
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+
+  const totalAmount = Number(sale.total_amount) || 0
+  const splitGcash = Number(splitPayments?.gcash) || 0
+  const amount = paymentMethod === 'split' ? splitGcash : totalAmount
+  if (paymentMethod !== 'gcash' && splitGcash <= 0) return null
+
+  const cashier = Array.isArray(sale.expand?.cashier_id)
+    ? sale.expand.cashier_id[0]
+    : sale.expand?.cashier_id
+
+  return {
+    id: sale.id,
+    transactionNo: sale.transaction_no || sale.id,
+    createdAt: sale.created_at || sale.created,
+    cashierName: cashier?.name || cashier?.email || String(sale.cashier_id || ''),
+    paymentType: paymentMethod === 'split' ? 'Split' : 'GCash',
+    amount,
+    totalAmount,
+    cashAmount: paymentMethod === 'split' ? Number(splitPayments?.cash) || 0 : 0,
+    referenceNumber: paymentMethod === 'split' ? String(splitPayments?.gcashRef || '') : refNumber,
+    status: sale.status || 'completed',
+  }
+}
+
 async function createLog(log) {
   try {
     await (await pbCollection('activity_logs')).create(activityLogPayload(log))
@@ -302,6 +340,14 @@ function saleDate(sale) {
   return new Date(sale.created_at || sale.created)
 }
 
+function dateKey(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
 function productRelationId(value) {
   return Array.isArray(value) ? value[0] : value
 }
@@ -389,6 +435,54 @@ function lastMonths(count, now = new Date()) {
     return {
       key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
       label: date.toLocaleString('en-US', { month: 'short' }),
+      value: 0,
+    }
+  })
+}
+
+function lastDays(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now)
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() - (count - 1 - index))
+    return {
+      key: dateKey(date),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      value: 0,
+    }
+  })
+}
+
+function weekStart(date) {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  start.setDate(start.getDate() - start.getDay())
+  return start
+}
+
+function weekKey(date) {
+  return dateKey(weekStart(date))
+}
+
+function lastWeeks(count, now = new Date()) {
+  const currentWeek = weekStart(now)
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(currentWeek)
+    date.setDate(date.getDate() - (7 * (count - 1 - index)))
+    return {
+      key: dateKey(date),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      value: 0,
+    }
+  })
+}
+
+function lastYears(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const year = now.getFullYear() - (count - 1 - index)
+    return {
+      key: String(year),
+      label: String(year),
       value: 0,
     }
   })
@@ -525,6 +619,19 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
   const history = []
 
   for (const sale of todaysSales) {
+    let paymentMethod = sale.payment_method || ''
+    let refNumber = sale.ref_number || ''
+    let splitPayments = null
+    if (String(refNumber).startsWith('split:')) {
+      try {
+        splitPayments = JSON.parse(String(refNumber).slice(6))
+        paymentMethod = 'split'
+        refNumber = ''
+      } catch {
+        paymentMethod = 'split'
+      }
+    }
+
     const items = await saleItems.getFullList({
       sort: 'created',
       filter: pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
@@ -538,7 +645,10 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
       subtotalAmount: Number(sale.total_amount) || 0,
       discountPercent: 0,
       discountAmount: 0,
-      paymentMethod: sale.payment_method || '',
+      paymentMethod,
+      refNumber,
+      splitPayments,
+      gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount) || 0 : '',
       status: sale.status || 'completed',
       createdAt: sale.created_at || sale.created,
       cashierName: (Array.isArray(sale.expand?.cashier_id) ? sale.expand.cashier_id[0] : sale.expand?.cashier_id)?.name
@@ -1052,12 +1162,25 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     hourlySales[created.getHours()].value += Number(sale.total_amount) || 0
   }
   const monthlyTrend = lastMonths(8, now)
+  const dailyTrend = lastDays(7, now)
+  const weeklyTrend = lastWeeks(8, now)
+  const yearlyTrend = lastYears(5, now)
   const monthlyTrendByKey = new Map(monthlyTrend.map((item) => [item.key, item]))
+  const dailyTrendByKey = new Map(dailyTrend.map((item) => [item.key, item]))
+  const weeklyTrendByKey = new Map(weeklyTrend.map((item) => [item.key, item]))
+  const yearlyTrendByKey = new Map(yearlyTrend.map((item) => [item.key, item]))
   for (const sale of completedSales) {
     const created = saleDate(sale)
+    const amount = Number(sale.total_amount) || 0
+    const day = dailyTrendByKey.get(dateKey(created))
+    if (day) day.value += amount
+    const week = weeklyTrendByKey.get(weekKey(created))
+    if (week) week.value += amount
     const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`
     const month = monthlyTrendByKey.get(key)
-    if (month) month.value += Number(sale.total_amount) || 0
+    if (month) month.value += amount
+    const year = yearlyTrendByKey.get(String(created.getFullYear()))
+    if (year) year.value += amount
   }
   const trend = (current, previous) => {
     if (!previous) return current > 0 ? 100 : 0
@@ -1082,8 +1205,21 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     ],
     topProducts,
     hourlySales,
+    dailySales: dailyTrend,
+    weeklySales: weeklyTrend,
     monthlySales: monthlyTrend,
+    yearlySales: yearlyTrend,
   })
+}))
+
+app.get('/api/gcash-payments', asyncRoute(async (_req, res) => {
+  const records = await (await pbCollection('sales')).getFullList({
+    sort: '-created_at,-created',
+    filter: 'status!="voided"',
+    expand: 'cashier_id',
+  })
+
+  res.json(records.map(gcashPaymentFromSale).filter(Boolean))
 }))
 
 app.use(express.static(DIST_DIR))

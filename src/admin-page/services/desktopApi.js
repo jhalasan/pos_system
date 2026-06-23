@@ -23,6 +23,7 @@ let adminSession = null
 let runtimePromise = null
 let syncEngine = null
 let lastProductRefreshAt = 0
+let inventoryScanQueue = Promise.resolve()
 
 function newId(prefix = 'local') {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`
@@ -225,6 +226,58 @@ async function salesByCashier() {
   return totals
 }
 
+function gcashPaymentFromSale(sale) {
+  let paymentMethod = sale.payment_method || sale.paymentMethod || ''
+  let refNumber = sale.ref_number || sale.refNumber || ''
+  let splitPayments = null
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+
+  const totalAmount = Number(sale.total_amount ?? sale.totalAmount) || 0
+  const splitGcash = Number(splitPayments?.gcash) || 0
+  const amount = paymentMethod === 'split' ? splitGcash : totalAmount
+  if (paymentMethod !== 'gcash' && splitGcash <= 0) return null
+
+  const cashier = Array.isArray(sale.expand?.cashier_id)
+    ? sale.expand.cashier_id[0]
+    : sale.expand?.cashier_id
+
+  return {
+    id: sale.id,
+    transactionNo: sale.transaction_no || sale.transactionNo || sale.id,
+    createdAt: sale.created_at || sale.createdAt || sale.created,
+    cashierName: cashier?.name || cashier?.email || firstRelation(sale.cashier_id) || '',
+    paymentType: paymentMethod === 'split' ? 'Split' : 'GCash',
+    amount,
+    totalAmount,
+    cashAmount: paymentMethod === 'split' ? Number(splitPayments?.cash) || 0 : 0,
+    referenceNumber: paymentMethod === 'split' ? String(splitPayments?.gcashRef || '') : refNumber,
+    status: sale.status || 'completed',
+  }
+}
+
+async function fetchGcashPayments() {
+  await startAdminRuntime()
+  if (!(await isCloudReachable())) return []
+
+  const records = await pb.collection('sales').getFullList({
+    sort: '-created_at,-created',
+    filter: 'status != "voided"',
+    expand: 'cashier_id',
+    requestKey: null,
+  }).catch(() => [])
+
+  return records.map(gcashPaymentFromSale).filter(Boolean)
+}
+
 function cashierPayload(data) {
   const payload = {
     name: String(data.name || '').trim(),
@@ -290,12 +343,68 @@ function saleDate(sale) {
   return new Date(sale.created_at || sale.createdAt || sale.created)
 }
 
+function dateKey(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
 function lastMonths(count, now = new Date()) {
   return Array.from({ length: count }, (_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth() - (count - 1 - index), 1)
     return {
       key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
       label: date.toLocaleString('en-US', { month: 'short' }),
+      value: 0,
+    }
+  })
+}
+
+function lastDays(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(now)
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() - (count - 1 - index))
+    return {
+      key: dateKey(date),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      value: 0,
+    }
+  })
+}
+
+function weekStart(date) {
+  const start = new Date(date)
+  start.setHours(0, 0, 0, 0)
+  start.setDate(start.getDate() - start.getDay())
+  return start
+}
+
+function weekKey(date) {
+  return dateKey(weekStart(date))
+}
+
+function lastWeeks(count, now = new Date()) {
+  const currentWeek = weekStart(now)
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(currentWeek)
+    date.setDate(date.getDate() - (7 * (count - 1 - index)))
+    return {
+      key: dateKey(date),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      value: 0,
+    }
+  })
+}
+
+function lastYears(count, now = new Date()) {
+  return Array.from({ length: count }, (_, index) => {
+    const year = now.getFullYear() - (count - 1 - index)
+    return {
+      key: String(year),
+      label: String(year),
       value: 0,
     }
   })
@@ -375,12 +484,25 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   }
 
   const monthlyTrend = lastMonths(8, now)
+  const dailyTrend = lastDays(7, now)
+  const weeklyTrend = lastWeeks(8, now)
+  const yearlyTrend = lastYears(5, now)
   const monthlyTrendByKey = new Map(monthlyTrend.map((item) => [item.key, item]))
+  const dailyTrendByKey = new Map(dailyTrend.map((item) => [item.key, item]))
+  const weeklyTrendByKey = new Map(weeklyTrend.map((item) => [item.key, item]))
+  const yearlyTrendByKey = new Map(yearlyTrend.map((item) => [item.key, item]))
   for (const sale of completedSales) {
     const created = saleDate(sale)
+    const amount = Number(sale.total_amount ?? sale.totalAmount) || 0
+    const day = dailyTrendByKey.get(dateKey(created))
+    if (day) day.value += amount
+    const week = weeklyTrendByKey.get(weekKey(created))
+    if (week) week.value += amount
     const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`
     const month = monthlyTrendByKey.get(key)
-    if (month) month.value += Number(sale.total_amount ?? sale.totalAmount) || 0
+    if (month) month.value += amount
+    const year = yearlyTrendByKey.get(String(created.getFullYear()))
+    if (year) year.value += amount
   }
 
   const criticalAlerts = products
@@ -409,7 +531,10 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
       .sort((a, b) => b.units - a.units)
       .slice(0, 5),
     hourlySales,
+    dailySales: dailyTrend,
+    weeklySales: weeklyTrend,
     monthlySales: monthlyTrend,
+    yearlySales: yearlyTrend,
   }
 }
 
@@ -460,6 +585,9 @@ async function imageData(data) {
 }
 
 async function localProductFromForm(data, id = newId('product')) {
+  const qty = Number(data.qty)
+  const lowStock = Number(data.lowStock)
+  const price = Number(data.price)
   return {
     id,
     sku: id,
@@ -467,10 +595,10 @@ async function localProductFromForm(data, id = newId('product')) {
     barcode: String(data.barcode || '').trim(),
     category: String(data.category || '').trim(),
     categoryId: data.categoryId || '',
-    qty: Number(data.qty) || 0,
+    qty: Number.isFinite(qty) ? Math.max(0, qty) : 0,
     unit: data.unit || 'Piece',
-    lowStock: Number(data.lowStock) || 0,
-    price: Number(data.price) || 0,
+    lowStock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
+    price: Number.isFinite(price) ? Math.max(0, price) : 0,
     image: '',
     tiers: data.tiers || [{ label: 'Retail', price: Number(data.price) || 0 }],
     status: deriveStatus(data),
@@ -496,6 +624,12 @@ async function queueOperation(type, productId, payload) {
   await adminDb.pendingOps.add(op)
   syncEngine?.schedule(0)
   return op
+}
+
+function enqueueInventoryScan(task) {
+  const queued = inventoryScanQueue.then(task, task)
+  inventoryScanQueue = queued.catch(() => {})
+  return queued
 }
 
 function currentAdminUser() {
@@ -738,28 +872,41 @@ export const desktopAdminApi = {
   },
 
   async scanInventory({ barcode, qty = 1 }) {
-    assertAdmin()
-    await startAdminRuntime()
-    const stockInQty = Math.max(1, Number(qty) || 1)
-    let product = await getProductByBarcode(barcode)
-    if (!product && (await isCloudReachable())) {
-      await refreshAdminLocalCache({ pb })
-      product = await getProductByBarcode(barcode)
-    }
-    if (!product) throw new Error(`No product found for barcode "${barcode}".`)
-    const updated = {
-      ...product,
-      qty: Number(product.qty) + stockInQty,
-      pendingSync: true,
-      updated: new Date().toISOString(),
-    }
-    updated.status = deriveStatus(updated)
-    await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
-      await adminDb.products.put(updated)
-      await queueOperation('scanInventory', updated.id, { id: updated.id, qty: stockInQty })
+    return enqueueInventoryScan(async () => {
+      assertAdmin()
+      await startAdminRuntime()
+      const stockInQty = Math.max(1, Number(qty) || 1)
+      let product = await getProductByBarcode(barcode)
+      if (!product && (await isCloudReachable())) {
+        await refreshAdminLocalCache({ pb })
+        product = await getProductByBarcode(barcode)
+      }
+      if (!product) throw new Error(`No product found for barcode "${barcode}".`)
+
+      let updated
+      await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+        const currentProduct = await adminDb.products.get(product.id)
+        if (!currentProduct || currentProduct.deleted) {
+          throw new Error(`No product found for barcode "${barcode}".`)
+        }
+
+        updated = {
+          ...currentProduct,
+          qty: Number(currentProduct.qty) + stockInQty,
+          pendingSync: true,
+          updated: new Date().toISOString(),
+        }
+        updated.status = deriveStatus(updated)
+        await adminDb.products.put(updated)
+        await queueOperation('scanInventory', updated.id, {
+          id: updated.id,
+          barcode: updated.barcode,
+          qty: stockInQty,
+        })
+      })
+      await recordActivity('Stock Update', `Added ${stockInQty} ${updated.unit || 'unit(s)'} to "${updated.name}".`)
+      return updated
     })
-    await recordActivity('Stock Update', `Added ${stockInQty} ${updated.unit || 'unit(s)'} to "${updated.name}".`)
-    return updated
   },
 
   async fsnInventory() {
@@ -924,6 +1071,7 @@ export const desktopAdminApi = {
 
     return localLogs
   },
+  gcashPayments: fetchGcashPayments,
   async settingsAdmins() {
     await startAdminRuntime()
     if (await isCloudReachable()) {

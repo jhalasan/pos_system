@@ -13,14 +13,58 @@ const emptyAnalytics = {
   productInOut: [],
   topProducts: [],
   hourlySales: [],
+  dailySales: [],
+  weeklySales: [],
   monthlySales: [],
+  yearlySales: [],
+}
+
+const salesRanges = {
+  hourlySales: {
+    label: 'Hourly Sales',
+    subtitle: 'Revenue per hour - today (PHP)',
+    empty: 'No hourly sales yet',
+    chart: 'bar',
+    color: '#4f46e5',
+  },
+  dailySales: {
+    label: 'Daily Sales',
+    subtitle: 'Revenue trend - last 7 days (PHP)',
+    empty: 'No daily sales yet',
+    chart: 'line',
+    color: '#4f46e5',
+  },
+  weeklySales: {
+    label: 'Weekly Sales',
+    subtitle: 'Revenue trend - last 8 weeks (PHP)',
+    empty: 'No weekly sales yet',
+    chart: 'line',
+    color: '#0891b2',
+  },
+  monthlySales: {
+    label: 'Monthly Sales',
+    subtitle: 'Revenue trend - last 8 months (PHP)',
+    empty: 'No monthly sales yet',
+    chart: 'line',
+    color: '#16a34a',
+  },
+  yearlySales: {
+    label: 'Yearly Sales',
+    subtitle: 'Revenue trend - last 5 years (PHP)',
+    empty: 'No yearly sales yet',
+    chart: 'line',
+    color: '#9333ea',
+  },
 }
 
 export default function Analytics() {
   const { data, loading, error } = useApi(api.dashboard, emptyAnalytics)
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
+  const [salesRange, setSalesRange] = useState('hourlySales')
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
+  const activeSalesRange = salesRanges[salesRange] || salesRanges.hourlySales
+  const activeSalesData = data[salesRange] || []
 
   async function exportReport() {
     setExporting(true)
@@ -30,8 +74,9 @@ export default function Analytics() {
         ['Section', 'Label', 'Value'],
         ...data.productInOut.map((item) => ['Product In/Out', item.label, item.value]),
         ...data.topProducts.map((item) => ['Top Products', item.name, item.units]),
-        ...data.hourlySales.map((item) => ['Hourly Sales', item.label, item.value]),
-        ...data.monthlySales.map((item) => ['Monthly Sales', item.label, item.value]),
+        ...Object.entries(salesRanges).flatMap(([key, range]) => (
+          (data[key] || []).map((item) => [range.label, item.label, item.value])
+        )),
       ], { directory: getExportLocation(exportLocationKeys.reports) })
       setExportStatus(`Exported in - "${result.path}"`)
     } catch (err) {
@@ -71,8 +116,8 @@ export default function Analytics() {
       </PageHeader>
       {exportStatus && <div className="export-status">{exportStatus}</div>}
 
-      <div className="grid-2-wide" style={{ marginBottom: 18 }}>
-        <div className="card">
+      <div className="grid-2-wide analytics-overview" style={{ marginBottom: 18 }}>
+        <div className="card compact-chart-card">
           <div className="panel-head">
             <h3>Product In / Out</h3>
             <span className="sub">Stock movement</span>
@@ -110,28 +155,23 @@ export default function Analytics() {
 
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="panel-head">
-          <h3>Hourly Sales</h3>
-          <span className="sub">Revenue per hour - today (PHP)</span>
+          <div>
+            <h3>{activeSalesRange.label}</h3>
+            <span className="sub">{activeSalesRange.subtitle}</span>
+          </div>
+          <select className="select" value={salesRange} onChange={(e) => setSalesRange(e.target.value)}>
+            {Object.entries(salesRanges).map(([key, range]) => (
+              <option key={key} value={key}>{range.label}</option>
+            ))}
+          </select>
         </div>
         <div className="panel-body">
-          {data.hourlySales.length === 0 ? (
-            <div className="empty"><h4>No hourly sales yet</h4></div>
+          {activeSalesData.length === 0 ? (
+            <div className="empty"><h4>{activeSalesRange.empty}</h4></div>
+          ) : activeSalesRange.chart === 'bar' ? (
+            <BarChart data={activeSalesData} color={activeSalesRange.color} unit=" PHP" />
           ) : (
-            <BarChart data={data.hourlySales} color="#4f46e5" unit=" PHP" />
-          )}
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="panel-head">
-          <h3>Monthly Sales</h3>
-          <span className="sub">Revenue trend - last 8 months (PHP)</span>
-        </div>
-        <div className="panel-body">
-          {data.monthlySales.length === 0 ? (
-            <div className="empty"><h4>No monthly sales yet</h4></div>
-          ) : (
-            <LineChart data={data.monthlySales} color="#16a34a" />
+            <LineChart data={activeSalesData} color={activeSalesRange.color} />
           )}
         </div>
       </div>
