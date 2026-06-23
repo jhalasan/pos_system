@@ -31,18 +31,22 @@ export async function replaceProductsFromCloud(records) {
 }
 
 export function getAllProducts() {
-  return cashierDb.products.orderBy('name').toArray()
+  return cashierDb.products
+    .toArray()
+    .then((products) => products.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))))
 }
 
 export async function getProductByBarcode(barcode) {
   const normalizedBarcode = String(barcode || '').trim()
   if (!normalizedBarcode) return undefined
-  return cashierDb.products.get({ barcode: normalizedBarcode })
+  return cashierDb.products
+    .filter((product) => String(product.barcode || '').trim() === normalizedBarcode)
+    .first()
 }
 
 export function searchProducts(query, limit = 50) {
   const normalizedQuery = String(query || '').trim().toLocaleLowerCase()
-  if (!normalizedQuery) return cashierDb.products.orderBy('name').limit(limit).toArray()
+  if (!normalizedQuery) return getAllProducts().then((products) => products.slice(0, limit))
 
   return cashierDb.products
     .filter((product) => (

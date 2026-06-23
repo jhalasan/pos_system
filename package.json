@@ -19,7 +19,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build --bundles nsis"
+    "tauri:build": "node scripts/tauri-build.mjs"
   },
   "dependencies": {
     "cors": "^2.8.6",

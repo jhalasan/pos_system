@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowRepeat, ClockHistory, Dash, Plus, Printer, Receipt, Trash, XLg, Cart } from 'react-bootstrap-icons';
+import { ArrowRepeat, ClockHistory, Dash, Gear, Plus, Printer, Receipt, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/common/Input';
 import Button from '../../components/common/Button';
@@ -7,7 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
-import { printCompletedReceipt } from '../services/receiptPrinter';
+import { printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -78,9 +78,53 @@ function returnedQuantityForItem(sale, productId) {
     .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
 }
 
+const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings';
+const DEFAULT_RECEIPT_SETTINGS = {
+  autoPrint: false,
+  storeCopyDelaySeconds: 5,
+  showPdfTestButton: false,
+  receiptPdfDirectory: '',
+};
+
+function loadReceiptSettings() {
+  try {
+    return {
+      ...DEFAULT_RECEIPT_SETTINGS,
+      ...JSON.parse(localStorage.getItem(RECEIPT_SETTINGS_KEY) || '{}'),
+    };
+  } catch {
+    return DEFAULT_RECEIPT_SETTINGS;
+  }
+}
+
+function receiptStepLabel(step) {
+  if (step === 'store') return 'Store Copy';
+  return 'Customer Copy';
+}
+
+function nextReceiptStep(step) {
+  if (step === 'customer') return 'store';
+  if (step === 'store') return 'done';
+  return 'store';
+}
+
+function receiptButtonText(sale) {
+  const step = sale?.receiptPrintStep || (sale?.receiptPrinted ? 'done' : 'customer');
+  if (step === 'store') return 'Print Store Copy';
+  if (step === 'done') return 'Print Again';
+  return 'Print Customer Copy';
+}
+
+function tauriInvoke() {
+  return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+}
+
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
+  const cashAmountInputRef = useRef(null);
+  const splitCashInputRef = useRef(null);
+  const splitGcashInputRef = useRef(null);
   const [transactions, setTransactions] = useState(() => [createTransaction(1)]);
   const [activeTransaction, setActiveTransaction] = useState(1);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
@@ -132,6 +176,8 @@ const Cashier = ({ onLogout, user }) => {
   const [lookupNote, setLookupNote] = useState('');
   const [lookupReturnQty, setLookupReturnQty] = useState({});
   const [lookupActionLoading, setLookupActionLoading] = useState(false);
+  const [showReceiptSettings, setShowReceiptSettings] = useState(false);
+  const [receiptSettings, setReceiptSettings] = useState(loadReceiptSettings);
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -152,7 +198,8 @@ const Cashier = ({ onLogout, user }) => {
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const discountAmount = (subtotal * discount) / 100;
   const total = subtotal - discountAmount;
-  const change = paymentMethod === 'cash' ? (parseFloat(cashAmount) || 0) - total : 0;
+  const cashTendered = parseFloat(cashAmount) || 0;
+  const change = paymentMethod === 'cash' ? cashTendered - total : 0;
 
   const filteredProducts = useMemo(() => {
     const query = searchProduct.trim().toLowerCase();
@@ -211,6 +258,93 @@ const Cashier = ({ onLogout, user }) => {
   const showNotification = (message) => {
     setNotification(message);
     window.setTimeout(() => setNotification(''), 3200);
+  };
+
+  const saveReceiptSettings = (updates) => {
+    setReceiptSettings((current) => {
+      const next = {
+        ...current,
+        ...updates,
+        storeCopyDelaySeconds: Math.min(30, Math.max(1, Number(updates.storeCopyDelaySeconds ?? current.storeCopyDelaySeconds) || 5)),
+      };
+      localStorage.setItem(RECEIPT_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const selectReceiptPdfDirectory = async () => {
+    const invoke = tauriInvoke();
+    if (!invoke) {
+      showNotification('Folder browsing is only available in the desktop app.');
+      return;
+    }
+
+    const selected = await invoke('select_export_folder');
+    if (selected) saveReceiptSettings({ receiptPdfDirectory: selected });
+  };
+
+  const updateReceiptPrintState = (transactionId, printedStep) => {
+    updateTransactionById(transactionId, (current) => ({
+      completedSale: {
+        ...current.completedSale,
+        receiptPrintStep: nextReceiptStep(printedStep),
+        receiptPrinted: printedStep === 'store',
+      },
+    }));
+  };
+
+  const receiptDataForTransaction = (txn, copyLabel) => ({
+    transactionNo: txn.completedSale.transactionNo || txn.transactionNo,
+    cashierName: user?.name || user?.email || 'Cashier',
+    completedAt: txn.completedSale.completedAt,
+    items: txn.cartItems,
+    payment: txn.completedSale,
+    copyLabel,
+  });
+
+  const printReceiptCopy = async (txn, step) => {
+    const copyStep = step === 'store' ? 'store' : 'customer';
+    const copyLabel = receiptStepLabel(copyStep);
+    await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
+      copyLabels: [copyLabel],
+    });
+    updateReceiptPrintState(txn.id, copyStep);
+    return copyLabel;
+  };
+
+  const handlePrintReceiptPdf = async (txn = activeTxn) => {
+    if (!txn?.completedSale || txn.status !== 'completed') return;
+
+    const requestedStep = txn.completedSale.receiptPrintStep === 'store' ? 'store' : 'customer';
+    const copyLabel = receiptStepLabel(requestedStep);
+    try {
+      const result = await printReceiptPdf(receiptDataForTransaction(txn, copyLabel), {
+        copyLabels: [copyLabel],
+        directory: receiptSettings.receiptPdfDirectory,
+      });
+      showNotification(`${copyLabel} PDF test saved to ${result.path}.`);
+    } catch (err) {
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to open PDF test print.');
+    }
+  };
+
+  const autoPrintCompletedReceipt = async (txn) => {
+    if (!txn?.completedSale) return;
+
+    try {
+      await printReceiptCopy(txn, 'customer');
+      showNotification(`Customer copy printed. Store copy will print in ${receiptSettings.storeCopyDelaySeconds} seconds.`);
+      window.setTimeout(async () => {
+        try {
+          await printReceiptCopy(txn, 'store');
+          showNotification(`Store copy printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
+        } catch (err) {
+          showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print store copy.');
+        }
+      }, receiptSettings.storeCopyDelaySeconds * 1000);
+    } catch (err) {
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print customer copy.');
+    }
   };
 
   async function loadProducts() {
@@ -273,7 +407,9 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const getTotalSplitPayment = () => {
-    return (parseFloat(splitPayments.cash) || 0) + (parseFloat(splitPayments.gcash) || 0);
+    const cash = splitCashInputRef.current?.value ?? splitPayments.cash;
+    const gcash = splitGcashInputRef.current?.value ?? splitPayments.gcash;
+    return (parseFloat(cash) || 0) + (parseFloat(gcash) || 0);
   };
 
   const getRemainingAmount = () => {
@@ -413,7 +549,36 @@ const Cashier = ({ onLogout, user }) => {
       }).catch(() => {});
       showNotification(`Receipt reprinted for transaction ${lookupSale.transactionNo}.`);
     } catch (err) {
-      setLookupError(err.message || 'Unable to reprint receipt.');
+      setLookupError((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.');
+    }
+  };
+
+  const handleLookupPrintPdf = async () => {
+    if (!lookupSale) return;
+    try {
+      const result = await printReceiptPdf({
+        transactionNo: lookupSale.transactionNo,
+        cashierName: lookupSale.cashierName || user?.name || user?.email || 'Cashier',
+        completedAt: lookupSale.createdAt,
+        items: lookupSale.items || [],
+        payment: {
+          paymentMethod: lookupSale.paymentMethod,
+          totalAmount: lookupSale.totalAmount,
+          subtotalAmount: lookupSale.subtotalAmount || lookupSale.totalAmount,
+          discountPercent: lookupSale.discountPercent,
+          discountAmount: lookupSale.discountAmount,
+          cashAmount: lookupSale.cashAmount,
+          change: lookupSale.change,
+          splitPayments: lookupSale.splitPayments,
+          gcashRef: lookupSale.refNumber,
+        },
+      }, {
+        copyLabels: ['Customer Copy'],
+        directory: receiptSettings.receiptPdfDirectory,
+      });
+      showNotification(`PDF test saved to ${result.path}.`);
+    } catch (err) {
+      setLookupError((typeof err === 'string' ? err : err.message) || 'Unable to open PDF test print.');
     }
   };
 
@@ -796,8 +961,9 @@ const Cashier = ({ onLogout, user }) => {
     }
 
     if (paymentMethod === 'cash') {
-      const paid = parseFloat(cashAmount) || 0;
-      if (!cashAmount || paid < total) {
+      const enteredCash = cashAmountInputRef.current?.value ?? cashAmount;
+      const paid = parseFloat(enteredCash) || 0;
+      if (!enteredCash || paid < total) {
         alert('Please enter a cash amount large enough to cover the total.');
         return false;
       }
@@ -817,6 +983,13 @@ const Cashier = ({ onLogout, user }) => {
     const completingTransactionId = activeTxn.id;
     const completedTransactionNo = activeTxn.transactionNo;
     const completedAt = new Date().toISOString();
+    const paidCash = parseFloat(cashAmountInputRef.current?.value ?? cashAmount) || 0;
+    const paidSplitCash = parseFloat(splitCashInputRef.current?.value ?? splitPayments.cash) || 0;
+    const paidSplitGcash = parseFloat(splitGcashInputRef.current?.value ?? splitPayments.gcash) || 0;
+    const completedSplitPayments = {
+      cash: paidSplitCash,
+      gcash: paidSplitGcash,
+    };
     const completedItems = cartItems.map((item) => ({
       productId: item.productId,
       name: item.name,
@@ -831,10 +1004,10 @@ const Cashier = ({ onLogout, user }) => {
       subtotalAmount: subtotal,
       discountPercent: discount,
       discountAmount,
-      cashAmount,
+      cashAmount: isSplitPayment ? paidSplitCash : paidCash,
       gcashRef,
-      splitPayments,
-      change,
+      splitPayments: completedSplitPayments,
+      change: isSplitPayment ? Math.max(0, paidSplitCash + paidSplitGcash - total) : paidCash - total,
       completedAt,
     };
 
@@ -848,47 +1021,44 @@ const Cashier = ({ onLogout, user }) => {
         discountAmount,
         totalAmount: total,
         paymentMethod: isSplitPayment ? 'cash' : paymentMethod,
-        refNumber: isSplitPayment ? `split:${JSON.stringify(splitPayments)}` : gcashRef,
+        refNumber: isSplitPayment ? `split:${JSON.stringify(completedSplitPayments)}` : gcashRef,
         items: completedItems,
       });
-
-      let printError = '';
-      try {
-        await printCompletedReceipt({
-          transactionNo: sale.transactionNo || completedTransactionNo,
-          cashierName: user?.name || user?.email || 'Cashier',
-          completedAt,
-          items: completedItems,
-          payment: completedPayment,
-        });
-      } catch (err) {
-        printError = err.message || 'Receipt printer did not respond.';
-      }
 
       await loadProducts();
       const result = await cashierApi.nextTransactionNumber();
       const transactionNo = result.transactionNo || nextLocalTransactionNo(completedTransactionNo);
       setNextTransactionNo(transactionNo);
       const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
+      const completedSale = {
+        ...completedPayment,
+        saleId: sale.id,
+        transactionNo: sale.transactionNo || completedTransactionNo,
+        pendingSync: sale.pendingSync,
+        discounted: discount > 0,
+        receiptPrintStep: 'customer',
+        receiptPrinted: false,
+      };
+      const completedTxn = {
+        ...activeTxn,
+        status: 'completed',
+        completedSale,
+      };
       updateTransactionById(completingTransactionId, {
         status: 'completed',
-        completedSale: {
-          ...completedPayment,
-          saleId: sale.id,
-          transactionNo: sale.transactionNo || completedTransactionNo,
-          pendingSync: sale.pendingSync,
-          discounted: discount > 0,
-        },
+        completedSale,
       });
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
-      setActiveTransaction(newId);
+      setActiveTransaction(completingTransactionId);
       setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
-      showNotification(printError
-        ? `Transaction No. ${sale.transactionNo || sale.id} completed, but receipt printing failed: ${printError}`
-        : `Transaction No. ${sale.transactionNo || sale.id} completed and receipt printed.`
-      );
+      if (receiptSettings.autoPrint) {
+        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Printing customer copy.`);
+        autoPrintCompletedReceipt(completedTxn);
+      } else {
+        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Print the customer copy when ready.`);
+      }
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
     }
@@ -898,21 +1068,16 @@ const Cashier = ({ onLogout, user }) => {
     if (!txn?.completedSale || txn.status !== 'completed') return;
 
     try {
-      await printCompletedReceipt({
-        transactionNo: txn.completedSale.transactionNo || txn.transactionNo,
-        cashierName: user?.name || user?.email || 'Cashier',
-        completedAt: txn.completedSale.completedAt,
-        items: txn.cartItems,
-        payment: txn.completedSale,
-      });
+      const requestedStep = txn.completedSale.receiptPrintStep === 'store' ? 'store' : 'customer';
+      const copyLabel = await printReceiptCopy(txn, requestedStep);
       cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Receipt Reprint',
-        detail: `Reprinted receipt for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`,
+        detail: `Printed ${copyLabel.toLowerCase()} for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`,
       }).catch(() => {});
-      showNotification(`Receipt reprinted for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
+      showNotification(`${copyLabel} printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
     } catch (err) {
-      showNotification(err.message || 'Unable to reprint receipt.');
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.');
     }
   };
 
@@ -1053,6 +1218,15 @@ const Cashier = ({ onLogout, user }) => {
             <ArrowRepeat size={16} className={syncing ? styles['spin-icon'] : ''} />
             {syncing ? 'Syncing' : 'Sync'}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles['history-button']}
+            onClick={() => setShowReceiptSettings(true)}
+          >
+            <Gear size={16} />
+            Settings
+          </Button>
         </div>
         <div className={styles['header-actions']}>
           <button className={styles['logout-button']} onClick={handleLogout}>
@@ -1140,17 +1314,6 @@ const Cashier = ({ onLogout, user }) => {
                   <Badge variant="warning" size="sm">
                     Discounted {activeTxn.completedSale.discountPercent}%
                   </Badge>
-                )}
-                {isCompletedTxn && !isVoidedTxn && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={styles['receipt-reprint-button']}
-                    onClick={() => handleReprintReceipt(activeTxn)}
-                  >
-                    <Printer size={14} />
-                    Reprint
-                  </Button>
                 )}
                 {isCompletedTxn && !isVoidedTxn && (
                   <Button
@@ -1381,10 +1544,10 @@ const Cashier = ({ onLogout, user }) => {
 
                 {paymentMethod === 'cash' && (
                   <>
-                    <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
+                    <Input inputRef={cashAmountInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
                     {cashAmount && (
                       <div className={styles['change-display']}>
-                        <div className={styles['change-row']}><span>Total Payment:</span><span>{money(total)}</span></div>
+                        <div className={styles['change-row']}><span>Cash Tendered:</span><span>{money(cashTendered)}</span></div>
                         <div className={`${styles['change-due']} ${change < 0 ? styles.negative : ''}`}>
                           <span>{change >= 0 ? 'Change Due' : 'Short By'}</span>
                           <strong>{money(Math.abs(change))}</strong>
@@ -1404,8 +1567,8 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <div className={styles['payment-method']}>
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
-                <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
+                <Input inputRef={splitCashInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
+                <Input inputRef={splitGcashInputRef} label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
                 <div className={styles['change-display']}>
                   <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
                   <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
@@ -1422,6 +1585,31 @@ const Cashier = ({ onLogout, user }) => {
             >
               {isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : 'Complete Transaction')}
             </Button>
+
+            {isCompletedTxn && !isVoidedTxn && (
+              <div className={styles['receipt-print-actions']}>
+                <Button
+                  variant="outline"
+                  fullWidth
+                  className={styles['receipt-print-action']}
+                  onClick={() => handleReprintReceipt(activeTxn)}
+                >
+                  <Printer size={14} />
+                  {receiptButtonText(activeTxn.completedSale)}
+                </Button>
+                {receiptSettings.showPdfTestButton && (
+                  <Button
+                    variant="outline"
+                    fullWidth
+                    className={styles['receipt-print-action']}
+                    onClick={() => handlePrintReceiptPdf(activeTxn)}
+                  >
+                    <Receipt size={14} />
+                    Print PDF Test
+                  </Button>
+                )}
+              </div>
+            )}
 
             {!isLockedTxn && cartItems.length > 0 && (
               <div className={styles['void-zone']}>
@@ -1721,6 +1909,11 @@ const Cashier = ({ onLogout, user }) => {
               <button type="button" onClick={handleLookupReprint}>
                 Reprint
               </button>
+              {receiptSettings.showPdfTestButton && (
+                <button type="button" onClick={handleLookupPrintPdf}>
+                  Print PDF
+                </button>
+              )}
               <button
                 type="button"
                 className={lookupMode === 'void' ? styles.active : ''}
@@ -1854,6 +2047,66 @@ const Cashier = ({ onLogout, user }) => {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        isOpen={showReceiptSettings}
+        onClose={() => setShowReceiptSettings(false)}
+        title="Receipt Settings"
+        footer={(
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" onClick={() => setShowReceiptSettings(false)}>
+              Done
+            </button>
+          </div>
+        )}
+      >
+        <div className={styles['receipt-settings-panel']}>
+          <label className={styles['receipt-settings-toggle']}>
+            <input
+              type="checkbox"
+              checked={receiptSettings.autoPrint}
+              onChange={(e) => saveReceiptSettings({ autoPrint: e.target.checked })}
+            />
+            <span>
+              <strong>Automatic receipt printing</strong>
+              <small>Prints the customer copy, waits, then prints the store copy.</small>
+            </span>
+          </label>
+          <label className={styles['receipt-settings-toggle']}>
+            <input
+              type="checkbox"
+              checked={receiptSettings.showPdfTestButton}
+              onChange={(e) => saveReceiptSettings({ showPdfTestButton: e.target.checked })}
+            />
+            <span>
+              <strong>Show PDF test button</strong>
+              <small>Shows a test-only button that saves a receipt PDF instead of using the receipt printer.</small>
+            </span>
+          </label>
+          {receiptSettings.showPdfTestButton && (
+            <div className={styles['receipt-pdf-location']}>
+              <Input
+                label="PDF Test Save Location"
+                value={receiptSettings.receiptPdfDirectory || ''}
+                placeholder="Choose a folder for test PDFs"
+                readOnly
+              />
+              <Button variant="outline" onClick={selectReceiptPdfDirectory}>
+                Browse
+              </Button>
+            </div>
+          )}
+          <Input
+            label="Store Copy Delay Seconds"
+            type="number"
+            min="1"
+            max="30"
+            value={receiptSettings.storeCopyDelaySeconds}
+            onChange={(e) => saveReceiptSettings({ storeCopyDelaySeconds: e.target.value })}
+            disabled={!receiptSettings.autoPrint}
+          />
+        </div>
       </Modal>
 
       <Modal

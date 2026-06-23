@@ -79,10 +79,13 @@ function paymentRows(payment = {}) {
     ].filter(Boolean)
   }
 
+  const cashAmount = Number(payment.cashAmount) || Number(payment.totalAmount) || 0
+  const change = Number(payment.change)
+
   return [
     columns('Payment', 'Cash'),
-    columns('Cash', moneyValue(payment.cashAmount)),
-    columns('Change', moneyValue(Math.max(0, Number(payment.change) || 0))),
+    columns('Cash', moneyValue(cashAmount)),
+    columns('Change', moneyValue(Math.max(0, Number.isFinite(change) ? change : cashAmount - Number(payment.totalAmount || 0)))),
   ]
 }
 
@@ -144,32 +147,148 @@ function buildPrintableHtml(receipts) {
 </html>`
 }
 
-function printWithBrowser(receipts) {
-  const popup = window.open('', 'receipt-print', 'width=360,height=640')
+function receiptTexts(receiptData, options = {}) {
+  const copies = envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
+  const labels = options.copyLabels || ['Customer Copy', 'Store Copy'].slice(0, copies)
+  return labels.map((copyLabel, index) => buildReceiptText({
+    ...receiptData,
+    copyLabel: copyLabel || `Copy ${index + 1}`,
+  }))
+}
+
+function printWithBrowser(receipts, windowName = 'receipt-print') {
+  const popup = window.open('', windowName, 'width=360,height=640')
   if (!popup) throw new Error('Receipt popup was blocked.')
   popup.document.open()
   popup.document.write(buildPrintableHtml(receipts))
   popup.document.close()
 }
 
-export async function printCompletedReceipt(receiptData) {
+function pdfEscape(value) {
+  return String(value ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+}
+
+function pdfObject(id, body) {
+  return `${id} 0 obj\n${body}\nendobj\n`
+}
+
+function buildReceiptPdf(receipts) {
+  const pages = []
+  const objects = [
+    pdfObject(1, '<< /Type /Catalog /Pages 2 0 R >>'),
+  ]
+  const pageRefs = []
+  const fontId = 3 + (receipts.length * 2)
+  let nextObjectId = 3
+
+  for (const receipt of receipts) {
+    const lines = String(receipt)
+      .replace(/\{\{BARCODE:([^}]+)\}\}/g, 'BARCODE: $1')
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '')
+    const pageHeight = Math.max(300, (lines.length * 10) + 40)
+    const content = [
+      'BT',
+      '/F1 8 Tf',
+      '10 TL',
+      `10 ${pageHeight - 20} Td`,
+      ...lines.map((line) => `(${pdfEscape(line)}) Tj T*`),
+      'ET',
+    ].join('\n')
+    const pageId = nextObjectId++
+    const contentId = nextObjectId++
+    pageRefs.push(`${pageId} 0 R`)
+    pages.push(pdfObject(pageId, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 164 ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`))
+    pages.push(pdfObject(contentId, `<< /Length ${content.length} >>\nstream\n${content}\nendstream`))
+  }
+
+  objects.push(pdfObject(2, `<< /Type /Pages /Kids [${pageRefs.join(' ')}] /Count ${pageRefs.length} >>`))
+  objects.push(...pages)
+  objects.push(pdfObject(fontId, '<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>'))
+
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  for (const object of objects) {
+    offsets.push(pdf.length)
+    pdf += object
+  }
+  const xrefOffset = pdf.length
+  pdf += `xref\n0 ${objects.length + 1}\n`
+  pdf += '0000000000 65535 f \n'
+  for (const offset of offsets.slice(1)) {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`
+  return pdf
+}
+
+function receiptPdfFilename(receiptData, copyLabels = []) {
+  const transactionNo = String(receiptData.transactionNo || 'receipt').replace(/[^A-Za-z0-9_-]/g, '-')
+  const label = String(copyLabels[0] || 'receipt').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return `${transactionNo}-${label || 'receipt'}.pdf`
+}
+
+function downloadPdf(filename, contents) {
+  const blob = new Blob([contents], { type: 'application/pdf' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
+}
+
+export async function printCompletedReceipt(receiptData, options = {}) {
   const printerName = import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME
-  const copies = envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
-  const labels = ['Customer Copy', 'Store Copy']
-  const receipts = Array.from({ length: copies }, (_, index) => buildReceiptText({
-    ...receiptData,
-    copyLabel: labels[index] || `Copy ${index + 1}`,
-  }))
+  const receipts = receiptTexts(receiptData, options)
   const invoke = tauriInvoke()
 
   if (invoke) {
-    return invoke('print_receipt', {
-      printerName,
-      contents: receipts.join('\n'),
-      copies: 1,
-    })
+    const contents = receipts.join('\n')
+    try {
+      return await invoke('print_receipt', {
+        printerName,
+        contents,
+        copies: 1,
+      })
+    } catch (error) {
+      const message = typeof error === 'string' ? error : error?.message || ''
+      if (printerName && /deleted|1905|open printer/i.test(message)) {
+        return invoke('print_receipt', {
+          printerName: '',
+          contents,
+          copies: 1,
+        })
+      }
+      throw error
+    }
   }
 
   printWithBrowser(receipts)
-  return { printerName: 'browser print dialog', copies }
+  return { printerName: 'browser print dialog', copies: receipts.length }
+}
+
+export async function printReceiptPdf(receiptData, options = {}) {
+  const receipts = receiptTexts(receiptData, options)
+  const pdf = buildReceiptPdf(receipts)
+  const filename = options.filename || receiptPdfFilename(receiptData, options.copyLabels)
+  const directory = String(options.directory || '').trim()
+  const invoke = tauriInvoke()
+
+  if (invoke && directory) {
+    const path = await invoke('write_export_file', {
+      directory,
+      filename,
+      contents: pdf,
+    })
+    return { path, method: 'file', copies: receipts.length }
+  }
+
+  downloadPdf(filename, pdf)
+  return { path: filename, method: 'download', copies: receipts.length }
 }

@@ -72,17 +72,23 @@ export async function replaceCategoriesFromCloud(records) {
 
 export function getAllProducts() {
   return adminDb.products
-    .filter((product) => !product.deleted)
-    .sortBy('name')
+    .toArray()
+    .then((products) => products
+      .filter((product) => !product.deleted)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))))
 }
 
 export async function getProductByBarcode(barcode) {
   const normalizedBarcode = String(barcode || '').trim()
   if (!normalizedBarcode) return undefined
-  const product = await adminDb.products.get({ barcode: normalizedBarcode })
+  const product = await adminDb.products
+    .filter((product) => String(product.barcode || '').trim() === normalizedBarcode)
+    .first()
   return product?.deleted ? undefined : product
 }
 
 export async function getLocalCategories() {
-  return (await adminDb.categories.orderBy('name').toArray()).map((category) => category.name)
+  return (await adminDb.categories.toArray())
+    .map((category) => category.name)
+    .sort((a, b) => String(a || '').localeCompare(String(b || '')))
 }

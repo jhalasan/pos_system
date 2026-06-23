@@ -1,4 +1,3 @@
-import Dexie from 'dexie'
 import PocketBase from 'pocketbase'
 import { adminDb } from './db'
 import { normalizeProduct } from './productRepository'
@@ -172,8 +171,9 @@ export class AdminSyncEngine extends EventTarget {
   async runSync() {
     const now = Date.now()
     const queuedOps = await adminDb.pendingOps
-      .where('[status+nextAttemptAt]')
-      .between(['pending', Dexie.minKey], ['pending', now])
+      .where('status')
+      .equals('pending')
+      .filter((op) => (Number(op.nextAttemptAt) || 0) <= now)
       .sortBy('createdAt')
     const queuedLogs = await adminDb.activityLogs
       .filter((log) => !log.cloudId)

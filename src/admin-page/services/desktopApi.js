@@ -185,6 +185,30 @@ function pocketBaseErrorMessage(error, fallback = 'PocketBase rejected the reque
   return error?.response?.message || error?.data?.message || error?.message || fallback
 }
 
+function localStorageErrorMessage(error) {
+  if (typeof error === 'string') return error
+  return error?.message || String(error || '')
+}
+
+function isIndexedDbKeyRangeError(error) {
+  return /IDBKeyRange|valid key|bound/i.test(localStorageErrorMessage(error))
+}
+
+async function fetchCloudProducts() {
+  const records = await pb.collection('products').getFullList({
+    sort: 'name',
+    expand: 'category',
+    requestKey: null,
+  })
+
+  await replaceProductsFromCloud(records, pb).catch((error) => {
+    if (!isIndexedDbKeyRangeError(error)) throw error
+    console.warn('Unable to refresh the local product cache; using cloud products for this view.', error)
+  })
+
+  return records.map(toProduct)
+}
+
 async function salesByCashier() {
   const totals = new Map()
   const records = await pb.collection('sales').getFullList({
@@ -517,20 +541,21 @@ async function listDesktopProducts() {
   assertAdmin()
   await startAdminRuntime()
 
-  const localProducts = await getAllProducts()
+  let localProducts = []
+  try {
+    localProducts = await getAllProducts()
+  } catch (error) {
+    if (!isIndexedDbKeyRangeError(error)) throw error
+    console.warn('Unable to read the local product cache; falling back to PocketBase.', error)
+  }
+
   if (localProducts.length > 0) {
     refreshProductsInBackground()
     return localProducts
   }
 
   if (await isCloudReachable()) {
-    const records = await pb.collection('products').getFullList({
-      sort: 'name',
-      expand: 'category',
-      requestKey: null,
-    })
-    await replaceProductsFromCloud(records, pb)
-    return records.map(toProduct)
+    return fetchCloudProducts()
   }
 
   return getAllProducts()
@@ -664,7 +689,7 @@ export const desktopAdminApi = {
     assertAdmin()
     await startAdminRuntime()
     const product = await localProductFromForm(data)
-    const existing = product.barcode ? await adminDb.products.get({ barcode: product.barcode }) : null
+    const existing = product.barcode ? await getProductByBarcode(product.barcode) : null
     if (existing && !existing.deleted) {
       throw new Error(`Barcode ${product.barcode} already belongs to "${existing.name}". Edit that product instead of adding a duplicate.`)
     }

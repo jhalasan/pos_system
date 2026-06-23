@@ -356,6 +356,66 @@
   white-space: nowrap;
 }
 
+.receipt-print-actions {
+  margin-top: -12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.receipt-print-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.receipt-settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.receipt-settings-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  cursor: pointer;
+}
+
+.receipt-settings-toggle input {
+  margin-top: 3px;
+}
+
+.receipt-settings-toggle span,
+.receipt-settings-toggle strong,
+.receipt-settings-toggle small {
+  display: block;
+}
+
+.receipt-settings-toggle strong {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.receipt-settings-toggle small {
+  margin-top: 3px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.receipt-pdf-location {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+}
+
 @media (max-width: 1200px) {
   .cashier-content {
     grid-template-columns: minmax(0, 1fr) minmax(320px, 40%);

@@ -1,4 +1,3 @@
-import Dexie from 'dexie'
 import PocketBase from 'pocketbase'
 import { cashierDb } from './db'
 
@@ -180,8 +179,9 @@ export class CashierSyncEngine extends EventTarget {
   async runSync() {
     const now = Date.now()
     const queuedSales = await cashierDb.pendingSales
-      .where('[status+nextAttemptAt]')
-      .between(['pending', Dexie.minKey], ['pending', now])
+      .where('status')
+      .equals('pending')
+      .filter((sale) => (Number(sale.nextAttemptAt) || 0) <= now)
       .sortBy('createdAt')
 
     if (queuedSales.length === 0) {

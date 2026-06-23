@@ -78,6 +78,10 @@ function saleAdjustmentAmount(sale) {
   return (sale.adjustments || []).reduce((sum, adjustment) => sum + (Number(adjustment.amount) || 0), 0)
 }
 
+function firstRelation(value) {
+  return Array.isArray(value) ? value[0] : value
+}
+
 function toCashierSale(sale, pendingIds = new Set()) {
   const adjusted = Array.isArray(sale.adjustments) && sale.adjustments.length > 0
   return {
@@ -89,6 +93,9 @@ function toCashierSale(sale, pendingIds = new Set()) {
     discountPercent: Number(sale.discountPercent) || 0,
     discountAmount: Number(sale.discountAmount) || 0,
     paymentMethod: sale.paymentMethod,
+    cashAmount: sale.cashAmount,
+    change: sale.change,
+    splitPayments: sale.splitPayments,
     refNumber: sale.refNumber || '',
     status: sale.status === 'voided'
       ? 'Voided'
@@ -107,6 +114,106 @@ function toCashierSale(sale, pendingIds = new Set()) {
     adjustedAt: sale.adjustedAt || '',
     adjustedAmount: saleAdjustmentAmount(sale),
   }
+}
+
+function cloudCashierName(sale) {
+  const cashier = Array.isArray(sale.expand?.cashier_id)
+    ? sale.expand.cashier_id[0]
+    : sale.expand?.cashier_id
+  return cashier?.name || cashier?.email || firstRelation(sale.cashier_id) || ''
+}
+
+function cloudSaleItemToLocal(item) {
+  const product = Array.isArray(item.expand?.product_id)
+    ? item.expand.product_id[0]
+    : item.expand?.product_id
+
+  return {
+    productId: firstRelation(item.product_id) || '',
+    name: product?.name || item.name || firstRelation(item.product_id) || 'Item',
+    barcode: product?.barcode || item.barcode || '',
+    quantity: Number(item.quantity_sold ?? item.quantity) || 0,
+    price: Number(item.price_at_sale ?? item.price) || 0,
+  }
+}
+
+function toCashierCloudSale(sale, items = []) {
+  let paymentMethod = sale.payment_method || sale.paymentMethod || 'cash'
+  let refNumber = sale.ref_number || sale.refNumber || ''
+  let splitPayments = { cash: '', gcash: '' }
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+
+  return toCashierSale({
+    clientSaleId: sale.id,
+    transactionNo: sale.transaction_no || sale.transactionNo || sale.id,
+    totalAmount: Number(sale.total_amount ?? sale.totalAmount) || 0,
+    subtotalAmount: Number(sale.subtotal_amount ?? sale.subtotalAmount ?? sale.total_amount) || 0,
+    discountPercent: Number(sale.discount_percent ?? sale.discountPercent) || 0,
+    discountAmount: Number(sale.discount_amount ?? sale.discountAmount) || 0,
+    paymentMethod,
+    cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : '',
+    change: 0,
+    refNumber,
+    splitPayments,
+    status: sale.status || 'completed',
+    syncStatus: 'synced',
+    createdAt: sale.created_at || sale.createdAt || sale.created,
+    cashierId: firstRelation(sale.cashier_id) || '',
+    cashierName: cloudCashierName(sale),
+    items,
+    adjustments: [],
+  })
+}
+
+async function cloudSaleItems(pb, saleId) {
+  return pb.collection('sale_items').getFullList({
+    filter: pb.filter('sale_id = {:saleId}', { saleId }),
+    expand: 'product_id',
+    requestKey: null,
+  }).then((items) => items.map(cloudSaleItemToLocal))
+}
+
+async function cloudSalesHistory({ cashierId } = {}) {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return []
+
+  const activeRuntime = await runtime()
+  const filter = cashierId
+    ? activeRuntime.pb.filter('cashier_id = {:cashierId}', { cashierId })
+    : ''
+  const sales = await activeRuntime.pb.collection('sales').getFullList({
+    filter,
+    sort: '-created_at,-created',
+    expand: 'cashier_id',
+    requestKey: null,
+  }).catch(() => [])
+
+  const withItems = await Promise.all(sales.map(async (sale) => (
+    toCashierCloudSale(sale, await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => []))
+  )))
+
+  return withItems
+}
+
+async function cloudSaleLookup(transactionNo) {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return null
+
+  const activeRuntime = await runtime()
+  const sale = await activeRuntime.pb.collection('sales').getFirstListItem(
+    activeRuntime.pb.filter('transaction_no = {:transactionNo}', { transactionNo }),
+    { expand: 'cashier_id', requestKey: null },
+  ).catch(() => null)
+
+  if (!sale) return null
+  return toCashierCloudSale(sale, await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => []))
 }
 
 async function ensureProducts() {
@@ -282,15 +389,27 @@ export const desktopCashierApi = {
   async salesHistory({ cashierId }) {
     const [completedSales, pendingSales] = await Promise.all([getCompletedSales(), getPendingSales()])
     const pendingIds = new Set(pendingSales.map((sale) => sale.clientSaleId))
-    const sales = completedSales.length ? completedSales : pendingSales
-    return sales
+    const localSales = (completedSales.length ? completedSales : pendingSales)
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .map((sale) => toCashierSale(sale, pendingIds))
+    const cloudSales = await cloudSalesHistory({ cashierId })
+    const merged = new Map()
+
+    for (const sale of [...cloudSales, ...localSales]) {
+      merged.set(sale.transactionNo || sale.id, sale)
+    }
+
+    return [...merged.values()]
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
   },
 
   async saleLookup({ transactionNo }) {
     const sale = await findLocalSaleByTransactionNo(transactionNo)
-    if (!sale) throw new Error(`No completed transaction found for "${transactionNo}".`)
+    if (!sale) {
+      const cloudSale = await cloudSaleLookup(transactionNo)
+      if (cloudSale) return cloudSale
+      throw new Error(`No completed transaction found for "${transactionNo}".`)
+    }
     const pendingSales = await getPendingSales()
     return toCashierSale(sale, new Set(pendingSales.map((entry) => entry.clientSaleId)))
   },
