@@ -22,24 +22,71 @@ function dateOnly(value) {
   return value ? new Date(value).toISOString().slice(0, 10) : ''
 }
 
+function todayDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function monthStartDate() {
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+}
+
+function lastDaysDate(days) {
+  const date = new Date()
+  date.setDate(date.getDate() - days)
+  return date.toISOString().slice(0, 10)
+}
+
+function filterDates(range, customFrom, customTo) {
+  if (range === 'today') return { fromDate: todayDate(), toDate: todayDate() }
+  if (range === '7days') return { fromDate: lastDaysDate(6), toDate: todayDate() }
+  if (range === 'month') return { fromDate: monthStartDate(), toDate: todayDate() }
+  if (range === 'custom') return { fromDate: customFrom, toDate: customTo }
+  return { fromDate: '', toDate: '' }
+}
+
 export default function GCashPayments() {
   const { data: payments, loading, error } = useApi(api.gcashPayments, [])
   const [query, setQuery] = useState('')
   const [type, setType] = useState('All')
+  const [dateRange, setDateRange] = useState('all')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+  const [cashierName, setCashierName] = useState('all')
+  const [status, setStatus] = useState('all')
   const [toast, setToast] = useState('')
+
+  const cashierOptions = useMemo(() => {
+    const names = new Set()
+    for (const payment of payments) {
+      if (payment.cashierName) names.add(payment.cashierName)
+    }
+    return [...names].sort((a, b) => a.localeCompare(b))
+  }, [payments])
 
   const filteredPayments = useMemo(() => {
     const search = query.trim().toLowerCase()
+    const { fromDate, toDate } = filterDates(dateRange, customFrom, customTo)
+    const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
+    const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
+
     return payments.filter((payment) => {
+      const createdTime = new Date(payment.createdAt).getTime()
       const typeMatches = type === 'All' || payment.paymentType === type
+      const cashierMatches = cashierName === 'all' || payment.cashierName === cashierName
+      const paymentStatus = String(payment.status || 'completed').toLowerCase()
+      const statusMatches = status === 'all' || paymentStatus === status
+      const dateMatches = (!fromTime || createdTime >= fromTime) && (!toTime || createdTime <= toTime)
       const queryMatches = !search || [
         payment.transactionNo,
         payment.referenceNumber,
         payment.cashierName,
+        payment.paymentType,
+        payment.status,
       ].some((value) => String(value || '').toLowerCase().includes(search))
-      return typeMatches && queryMatches
+      return typeMatches && cashierMatches && statusMatches && dateMatches && queryMatches
     })
-  }, [payments, query, type])
+  }, [cashierName, customFrom, customTo, dateRange, payments, query, status, type])
 
   const totalAmount = filteredPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
   const directTotal = filteredPayments
@@ -51,18 +98,19 @@ export default function GCashPayments() {
 
   async function handleExport() {
     const result = await exportCsv(`gcash-payments-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ['Date', 'Transaction No.', 'Type', 'Cashier', 'GCash Amount', 'Reference No.', 'Sale Total', 'Cash Portion'],
+      ['Date', 'Transaction No.', 'Type', 'Cashier', 'Status', 'GCash Amount', 'Reference No.', 'Sale Total', 'Cash Portion'],
       ...filteredPayments.map((payment) => [
         formatDate(payment.createdAt),
         payment.transactionNo,
         payment.paymentType,
         payment.cashierName,
+        payment.status || 'completed',
         Number(payment.amount) || 0,
         payment.referenceNumber || '',
         Number(payment.totalAmount) || 0,
         Number(payment.cashAmount) || 0,
       ]),
-    ], { directory: getExportLocation(exportLocationKeys.analytics) })
+    ], { directory: getExportLocation(exportLocationKeys.reports) })
     setToast(`GCash payments exported to ${result.path}`)
     window.setTimeout(() => setToast(''), 2400)
   }
@@ -93,7 +141,7 @@ export default function GCashPayments() {
         </button>
       </PageHeader>
 
-      <div className="grid-3" style={{ marginBottom: 18 }}>
+      <div className="stat-grid cols-3">
         <StatCard label="GCash Total" value={peso(totalAmount)} icon={IconPeso} tone="green" foot={`${filteredPayments.length} payment(s)`} />
         <StatCard label="Direct GCash" value={peso(directTotal)} icon={IconWallet} tone="blue" foot="Single payment" />
         <StatCard label="Split GCash" value={peso(splitTotal)} icon={IconWallet} tone="indigo" foot="GCash portion only" />
@@ -105,7 +153,9 @@ export default function GCashPayments() {
             <h3>Payment Records</h3>
             <span className="sub">Includes direct GCash and split payments with a GCash portion.</span>
           </div>
-          <div className="table-tools">
+        </div>
+        <div className="panel-body">
+          <div className="receipt-filter-grid compact-filter-grid">
             <div className="input-search">
               <IconSearch size={16} />
               <input
@@ -115,11 +165,51 @@ export default function GCashPayments() {
                 onChange={(event) => setQuery(event.target.value)}
               />
             </div>
-            <select className="select" value={type} onChange={(event) => setType(event.target.value)}>
-              <option>All</option>
-              <option>GCash</option>
-              <option>Split</option>
-            </select>
+            <label className="field">
+              <span>Date Range</span>
+              <select className="select" value={dateRange} onChange={(event) => setDateRange(event.target.value)}>
+                <option value="all">All dates</option>
+                <option value="today">Today</option>
+                <option value="7days">Last 7 days</option>
+                <option value="month">This month</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Payment Type</span>
+              <select className="select" value={type} onChange={(event) => setType(event.target.value)}>
+                <option>All</option>
+                <option>GCash</option>
+                <option>Split</option>
+              </select>
+            </label>
+            <label className="field">
+              <span>Cashier</span>
+              <select className="select" value={cashierName} onChange={(event) => setCashierName(event.target.value)}>
+                <option value="all">All cashiers</option>
+                {cashierOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Status</span>
+              <select className="select" value={status} onChange={(event) => setStatus(event.target.value)}>
+                <option value="all">All statuses</option>
+                <option value="completed">Completed</option>
+                <option value="voided">Voided</option>
+              </select>
+            </label>
+            {dateRange === 'custom' && (
+              <>
+                <label className="field">
+                  <span>From</span>
+                  <input className="input" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>To</span>
+                  <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />
+                </label>
+              </>
+            )}
           </div>
         </div>
 
@@ -138,6 +228,7 @@ export default function GCashPayments() {
                   <th>Transaction No.</th>
                   <th>Type</th>
                   <th>Cashier</th>
+                  <th>Status</th>
                   <th>Reference No.</th>
                   <th>GCash Amount</th>
                   <th>Sale Total</th>
@@ -153,6 +244,11 @@ export default function GCashPayments() {
                     </td>
                     <td><span className="badge badge-info">{payment.paymentType}</span></td>
                     <td>{payment.cashierName || '-'}</td>
+                    <td>
+                      <span className={`badge ${String(payment.status || '').toLowerCase() === 'voided' ? 'badge-danger' : 'badge-success'}`}>
+                        {payment.status || 'completed'}
+                      </span>
+                    </td>
                     <td>{payment.referenceNumber || <span className="muted">No reference</span>}</td>
                     <td><strong>{peso(payment.amount)}</strong></td>
                     <td>{peso(payment.totalAmount)}</td>

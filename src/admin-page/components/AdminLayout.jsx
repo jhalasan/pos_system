@@ -12,6 +12,8 @@ const titles = {
   barcodes: 'Barcode Tools',
   cashiers: 'Cashier Management',
   analytics: 'Analytics',
+  'transaction-logs': 'Transaction Logs',
+  receipts: 'Transaction Logs',
   logs: 'Activity Logs',
   settings: 'Settings',
 }

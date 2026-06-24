@@ -1,6 +1,12 @@
 const RECEIPT_WIDTH = 32
 const DEFAULT_PRINTER_NAME = 'XP-58H'
-const DEFAULT_COPY_COUNT = 2
+const DEFAULT_COPY_COUNT = 1
+const STORE_NAME = 'ARJOV CONSUMER GOODS TRADING'
+const STORE_ADDRESS_LINES = [
+  'Aparente Street Ext.',
+  'Purok Malakas Brgy. San Isidro',
+  'General Santos City',
+]
 
 function tauriInvoke() {
   return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke
@@ -93,7 +99,7 @@ function paymentRows(payment = {}) {
   ]
 }
 
-export function buildReceiptText({ copyLabel, transactionNo, cashierName, completedAt, items, payment }) {
+export function buildReceiptText({ transactionNo, cashierName, completedAt, items, payment }) {
   const itemCount = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
   const subtotal = Number(payment.subtotalAmount) || 0
   const discountPercent = Number(payment.discountPercent) || 0
@@ -102,11 +108,11 @@ export function buildReceiptText({ copyLabel, transactionNo, cashierName, comple
   const completedDate = completedAt ? new Date(completedAt) : new Date()
 
   return [
-    center('NEXA POS'),
-    center('Sales Receipt'),
-    center(copyLabel),
+    center(STORE_NAME),
+    ...STORE_ADDRESS_LINES.map(center),
+    center('Sale Receipt'),
     line(),
-    columns('Txn', transactionNo),
+    columns('Receipt No.', transactionNo),
     columns('Date', completedDate.toLocaleString('en-PH')),
     columns('Cashier', cashierName || 'Cashier'),
     line(),
@@ -122,6 +128,7 @@ export function buildReceiptText({ copyLabel, transactionNo, cashierName, comple
     center('Scan for lookup'),
     barcodeLine(transactionNo),
     line(),
+    center('NOT AN OFFICIAL RECEIPT'),
     center('Thank you!'),
     '\n\n\n',
   ].filter(Boolean).join('\n')
@@ -153,11 +160,7 @@ function buildPrintableHtml(receipts) {
 
 function receiptTexts(receiptData, options = {}) {
   const copies = envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
-  const labels = options.copyLabels || ['Customer Copy', 'Store Copy'].slice(0, copies)
-  return labels.map((copyLabel, index) => buildReceiptText({
-    ...receiptData,
-    copyLabel: copyLabel || `Copy ${index + 1}`,
-  }))
+  return Array.from({ length: copies }, () => buildReceiptText(receiptData))
 }
 
 function printWithBrowser(receipts, windowName = 'receipt-print') {

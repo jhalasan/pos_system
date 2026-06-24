@@ -73,6 +73,44 @@ function buildInventoryText(products, { title = 'Inventory Report' } = {}) {
   ].filter((entry) => entry !== null && entry !== undefined).join('\n')
 }
 
+function stockOutLines(record) {
+  const name = cleanText(record.name || 'Unnamed Product')
+  const barcode = cleanText(record.barcode || record.sku || record.id || '')
+  const reason = cleanText(record.reasonLabel || record.reason || 'Stock-out')
+  const note = cleanText(record.note || '')
+  const qty = Number(record.qty) || 0
+
+  return [
+    name.slice(0, RECEIPT_WIDTH),
+    barcode ? barcode.slice(0, RECEIPT_WIDTH) : '',
+    columns(`Qty Out ${qty}`, reason),
+    note ? `Note: ${note}`.slice(0, RECEIPT_WIDTH) : '',
+    columns('Stock Now', Number(record.newQty) || 0),
+  ].filter(Boolean)
+}
+
+export function buildStockOutText(records, { title = 'Stock-Out Report' } = {}) {
+  const printedAt = new Date()
+  const totalUnits = records.reduce((sum, record) => sum + (Number(record.qty) || 0), 0)
+
+  return [
+    center('NEXA POS'),
+    center(title),
+    line(),
+    columns('Printed', printedAt.toLocaleString('en-PH')),
+    columns('Records', records.length),
+    columns('Units Out', totalUnits),
+    line(),
+    ...records.flatMap((record, index) => [
+      ...stockOutLines(record),
+      index === records.length - 1 ? '' : line('.'),
+    ]),
+    line(),
+    center('End of stock-out copy'),
+    '\n\n\n',
+  ].filter((entry) => entry !== null && entry !== undefined).join('\n')
+}
+
 function buildPrintableHtml(contents) {
   const escaped = String(contents).replace(/[&<>]/g, (char) => ({
     '&': '&amp;',
@@ -106,6 +144,37 @@ export async function printInventoryProducts(products, options = {}) {
 
   const printerName = import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME
   const contents = buildInventoryText(products, options)
+  const invoke = tauriInvoke()
+
+  if (invoke) {
+    try {
+      return await invoke('print_receipt', {
+        printerName,
+        contents,
+        copies: 1,
+      })
+    } catch (error) {
+      const message = typeof error === 'string' ? error : error?.message || ''
+      if (printerName && /deleted|1905|open printer/i.test(message)) {
+        return invoke('print_receipt', {
+          printerName: '',
+          contents,
+          copies: 1,
+        })
+      }
+      throw error
+    }
+  }
+
+  printWithBrowser(contents)
+  return { printerName: 'browser print dialog', copies: 1 }
+}
+
+export async function printStockOutRecords(records, options = {}) {
+  if (!records.length) throw new Error('No stock-out records to print.')
+
+  const printerName = import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME
+  const contents = buildStockOutText(records, options)
   const invoke = tauriInvoke()
 
   if (invoke) {

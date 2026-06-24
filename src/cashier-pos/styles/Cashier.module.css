@@ -1732,18 +1732,75 @@
 :global(:root.theme-dark) .shortcut-input,
 :global(:root.theme-dark) .quantity-control,
 :global(:root.theme-dark) .history-item,
-:global(:root.theme-dark) .lookup-summary-card,
+:global(:root.theme-dark) .history-empty,
+:global(:root.theme-dark) .lookup-summary,
+:global(:root.theme-dark) .lookup-actions button,
+:global(:root.theme-dark) .lookup-items,
 :global(:root.theme-dark) .lookup-item-row,
+:global(:root.theme-dark) .lookup-approval,
+:global(:root.theme-dark) .lookup-adjust-total,
+:global(:root.theme-dark) .approval-option,
 :global(:root[data-theme="dark"]) .payment-btn,
 :global(:root[data-theme="dark"]) .logout-button,
 :global(:root[data-theme="dark"]) .shortcut-input,
 :global(:root[data-theme="dark"]) .quantity-control,
 :global(:root[data-theme="dark"]) .history-item,
-:global(:root[data-theme="dark"]) .lookup-summary-card,
-:global(:root[data-theme="dark"]) .lookup-item-row {
+:global(:root[data-theme="dark"]) .history-empty,
+:global(:root[data-theme="dark"]) .lookup-summary,
+:global(:root[data-theme="dark"]) .lookup-actions button,
+:global(:root[data-theme="dark"]) .lookup-items,
+:global(:root[data-theme="dark"]) .lookup-item-row,
+:global(:root[data-theme="dark"]) .lookup-approval,
+:global(:root[data-theme="dark"]) .lookup-adjust-total,
+:global(:root[data-theme="dark"]) .approval-option {
   background-color: var(--surface-2);
   border-color: var(--border-strong);
   color: var(--text);
+}
+
+:global(:root.theme-dark) .lookup-items-head,
+:global(:root[data-theme="dark"]) .lookup-items-head {
+  background-color: var(--surface);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .lookup-item-row,
+:global(:root.theme-dark) .history-lines,
+:global(:root[data-theme="dark"]) .lookup-item-row,
+:global(:root[data-theme="dark"]) .history-lines {
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .lookup-summary strong,
+:global(:root.theme-dark) .lookup-item-row span:first-child,
+:global(:root.theme-dark) .lookup-adjust-total strong,
+:global(:root.theme-dark) .history-item-head strong,
+:global(:root.theme-dark) .history-total,
+:global(:root[data-theme="dark"]) .lookup-summary strong,
+:global(:root[data-theme="dark"]) .lookup-item-row span:first-child,
+:global(:root[data-theme="dark"]) .lookup-adjust-total strong,
+:global(:root[data-theme="dark"]) .history-item-head strong,
+:global(:root[data-theme="dark"]) .history-total {
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .lookup-summary span,
+:global(:root.theme-dark) .lookup-adjust-total span,
+:global(:root.theme-dark) .history-item-head span,
+:global(:root[data-theme="dark"]) .lookup-summary span,
+:global(:root[data-theme="dark"]) .lookup-adjust-total span,
+:global(:root[data-theme="dark"]) .history-item-head span {
+  color: var(--text-muted);
+}
+
+:global(:root.theme-dark) .lookup-verification,
+:global(:root.theme-dark) .approval-option.active,
+:global(:root[data-theme="dark"]) .lookup-verification,
+:global(:root[data-theme="dark"]) .approval-option.active {
+  background-color: var(--success-soft);
+  border-color: #22c55e;
+  color: #86efac;
 }
 
 :global(:root.theme-dark) .payment-btn:hover:not(:disabled),

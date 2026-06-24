@@ -13,6 +13,7 @@ import BarcodeTools from './admin-page/pages/BarcodeTools'
 import CashierManagement from './admin-page/pages/CashierManagement'
 import Analytics from './admin-page/pages/Analytics'
 import GCashPayments from './admin-page/pages/GCashPayments'
+import TransactionLogs from './admin-page/pages/TransactionLogs'
 import ActivityLogs from './admin-page/pages/ActivityLogs'
 import Settings from './admin-page/pages/Settings'
 import './admin-page/index.css'
@@ -66,6 +67,8 @@ export default function DesktopApp() {
           <Route path="cashiers" element={<CashierManagement />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="gcash-payments" element={<GCashPayments />} />
+          <Route path="transaction-logs" element={<TransactionLogs />} />
+          <Route path="receipts" element={<Navigate to="transaction-logs" replace />} />
           <Route path="logs" element={<ActivityLogs />} />
           <Route path="settings" element={<Settings />} />
         </Route>

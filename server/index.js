@@ -158,6 +158,7 @@ function gcashPaymentFromSale(sale) {
       paymentMethod = 'split'
     }
   }
+  if (!paymentMethod && refNumber) paymentMethod = 'gcash'
 
   const totalAmount = Number(sale.total_amount) || 0
   const splitGcash = Number(splitPayments?.gcash) || 0
@@ -179,6 +180,90 @@ function gcashPaymentFromSale(sale) {
     cashAmount: paymentMethod === 'split' ? Number(splitPayments?.cash) || 0 : 0,
     referenceNumber: paymentMethod === 'split' ? String(splitPayments?.gcashRef || '') : refNumber,
     status: sale.status || 'completed',
+  }
+}
+
+function saleCashier(sale) {
+  return Array.isArray(sale.expand?.cashier_id)
+    ? sale.expand.cashier_id[0]
+    : sale.expand?.cashier_id
+}
+
+function parseSalePayment(sale) {
+  let paymentMethod = sale.payment_method || sale.paymentMethod || 'cash'
+  let refNumber = sale.ref_number || sale.refNumber || ''
+  let splitPayments = null
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+  if ((!paymentMethod || paymentMethod === 'cash') && refNumber && !String(refNumber).startsWith('split:')) {
+    paymentMethod = 'gcash'
+  }
+  if (!paymentMethod) paymentMethod = 'cash'
+
+  return { paymentMethod, refNumber, splitPayments }
+}
+
+function saleItemQuantity(item) {
+  return Number(item.quantity_sold ?? item.quantity ?? item.qty) || 0
+}
+
+function saleItemPrice(item, product) {
+  return Number(item.price_at_sale ?? item.price ?? item.unit_price ?? product?.price) || 0
+}
+
+async function receiptRecordFromSale(sale, saleItemsCollection) {
+  const cashier = saleCashier(sale)
+  const items = await saleItemsCollection.getFullList({
+    sort: 'created',
+    filter: pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
+    expand: 'product_id',
+  })
+  const { paymentMethod, refNumber, splitPayments } = parseSalePayment(sale)
+  const status = sale.status || 'completed'
+  const createdAt = sale.created_at || sale.created
+
+  return {
+    id: sale.id,
+    saleId: sale.id,
+    transactionNo: sale.transaction_no || sale.id,
+    receiptNo: sale.transaction_no || sale.id,
+    createdAt,
+    cashierId: productRelationId(sale.cashier_id) || '',
+    cashierName: cashier?.name || cashier?.email || String(sale.cashier_id || ''),
+    totalAmount: Number(sale.total_amount) || 0,
+    subtotalAmount: Number(sale.total_amount) || 0,
+    discountPercent: 0,
+    discountAmount: 0,
+    paymentMethod,
+    refNumber,
+    splitPayments,
+    cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount) || 0 : 0,
+    gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount) || 0 : 0,
+    status: status === 'voided' ? 'Voided' : 'Completed',
+    rawStatus: status,
+    actionStatus: status === 'voided' ? 'Voided' : 'Reprint available',
+    itemCount: items.length ? items.reduce((sum, item) => sum + saleItemQuantity(item), 0) : null,
+    items: items.map((item) => {
+      const product = Array.isArray(item.expand?.product_id)
+        ? item.expand.product_id[0]
+        : item.expand?.product_id
+      return {
+        productId: productRelationId(item.product_id) || item.id,
+        id: item.id,
+        name: product?.name || item.product_id || 'Product',
+        barcode: product?.barcode || '',
+        quantity: saleItemQuantity(item),
+        price: saleItemPrice(item, product),
+      }
+    }),
   }
 }
 
@@ -352,12 +437,43 @@ function productRelationId(value) {
   return Array.isArray(value) ? value[0] : value
 }
 
+function productNameKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function expandedSaleItemProduct(item) {
+  return Array.isArray(item.expand?.product_id)
+    ? item.expand.product_id[0]
+    : item.expand?.product_id
+}
+
+function buildProductLookup(products = []) {
+  return {
+    byId: new Map(products.map((product) => [String(product.id), product])),
+    byBarcode: new Map(products.map((product) => [String(product.barcode || '').trim(), product]).filter(([barcode]) => barcode)),
+    byName: new Map(products.map((product) => [productNameKey(product.name), product]).filter(([name]) => name)),
+  }
+}
+
+function resolveSaleItemProduct(item, lookup) {
+  const productId = productRelationId(item.product_id ?? item.productId)
+  const expandedProduct = expandedSaleItemProduct(item)
+  const barcode = String(item.barcode || expandedProduct?.barcode || '').trim()
+  const name = productNameKey(item.name || expandedProduct?.name)
+
+  return lookup.byId.get(String(productId || ''))
+    || lookup.byBarcode.get(barcode)
+    || lookup.byName.get(name)
+    || null
+}
+
 function buildSalesMetrics(products, sales, saleItems, now = new Date()) {
   const salesById = new Map(sales.map((sale) => [sale.id, sale]))
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
   const ninetyDaysAgo = new Date(now)
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+  const productLookup = buildProductLookup(products)
 
   const metricsByProduct = new Map(products.map((product) => [product.id, {
     units90: 0,
@@ -372,7 +488,8 @@ function buildSalesMetrics(products, sales, saleItems, now = new Date()) {
     if (!sale) continue
 
     const soldAt = saleDate(sale)
-    const productId = productRelationId(item.product_id)
+    const product = resolveSaleItemProduct(item, productLookup)
+    const productId = product?.id || productRelationId(item.product_id)
     if (!productId) continue
 
     const metric = metricsByProduct.get(productId) || { units90: 0, totalUnits: 0, lastSoldAt: null }
@@ -672,6 +789,43 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
   res.json(history)
 }))
 
+app.get('/api/receipts', asyncRoute(async (req, res) => {
+  const q = String(req.query?.q || '').trim().toLowerCase()
+  const cashierName = String(req.query?.cashierName || '').trim().toLowerCase()
+  const status = String(req.query?.status || 'all').trim().toLowerCase()
+  const action = String(req.query?.action || 'all').trim().toLowerCase()
+  const fromDate = String(req.query?.fromDate || '').trim()
+  const toDate = String(req.query?.toDate || '').trim()
+
+  const sales = await (await pbCollection('sales')).getFullList({
+    sort: '-created_at,-created',
+    expand: 'cashier_id',
+    perPage: 500,
+  })
+  const saleItems = await pbCollection('sale_items')
+  const records = await Promise.all(sales.map((sale) => receiptRecordFromSale(sale, saleItems)))
+
+  const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
+  const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
+
+  res.json(records.filter((record) => {
+    const createdTime = new Date(record.createdAt).getTime()
+    const queryMatches = !q || [
+      record.transactionNo,
+      record.receiptNo,
+      record.cashierName,
+      record.paymentMethod,
+    ].some((value) => String(value || '').toLowerCase().includes(q))
+    const cashierMatches = !cashierName || String(record.cashierName || '').toLowerCase() === cashierName
+    const statusMatches = status === 'all' || String(record.rawStatus || '').toLowerCase() === status
+    const actionMatches = action === 'all'
+      || (action === 'reprintable' && record.rawStatus !== 'voided')
+      || (action === 'voided' && record.rawStatus === 'voided')
+    const dateMatches = (!fromTime || createdTime >= fromTime) && (!toTime || createdTime <= toTime)
+    return queryMatches && cashierMatches && statusMatches && actionMatches && dateMatches
+  }))
+}))
+
 app.get('/api/cashier/next-transaction-number', asyncRoute(async (_req, res) => {
   res.json({ transactionNo: await nextTransactionNumber() })
 }))
@@ -850,6 +1004,34 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   const nextQty = (Number(record.quantity) || 0) + qty
   const updated = await (await pbCollection('products')).update(record.id, { quantity: nextQty }, { expand: 'category' })
   await createLog({ action: 'Stock Update', detail: `Added ${qty} unit(s) to "${record.name}"` })
+  res.json(toProduct(updated))
+}))
+
+app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
+  const barcode = String(req.body.barcode || '').trim()
+  const qty = Math.max(1, Math.floor(Number(req.body.qty) || 1))
+  const reason = String(req.body.reason || 'other').trim()
+  const note = String(req.body.note || '').trim()
+  if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
+
+  const record = await (await pbCollection('products')).getFirstListItem(
+    pb.filter('barcode = {:barcode}', { barcode }),
+  ).catch((error) => {
+    if (error.status === 404) return null
+    throw error
+  })
+  if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
+
+  const currentQty = Number(record.quantity) || 0
+  if (currentQty < qty) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} item(s) in stock.` })
+
+  const updated = await (await pbCollection('products')).update(record.id, {
+    quantity: Math.max(0, currentQty - qty),
+  }, { expand: 'category' })
+  await createLog({
+    action: 'Stock Out',
+    detail: `Removed ${qty} unit(s) from "${record.name}" - ${reason}${note ? ` (${note})` : ''}`,
+  })
   res.json(toProduct(updated))
 }))
 
@@ -1215,7 +1397,6 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
 app.get('/api/gcash-payments', asyncRoute(async (_req, res) => {
   const records = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
-    filter: 'status!="voided"',
     expand: 'cashier_id',
   })
 

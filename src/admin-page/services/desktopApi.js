@@ -1,5 +1,6 @@
 import PocketBase from 'pocketbase'
 import { initializeAdminDb, adminDb } from '../offline/db'
+import { cashierDb, initializeCashierDb } from '../../cashier-pos/offline/db'
 import { refreshAdminLocalCache } from '../offline/cloudBootstrap'
 import { AdminSyncEngine } from '../offline/syncEngine'
 import {
@@ -240,6 +241,7 @@ function gcashPaymentFromSale(sale) {
       paymentMethod = 'split'
     }
   }
+  if (!paymentMethod && refNumber) paymentMethod = 'gcash'
 
   const totalAmount = Number(sale.total_amount ?? sale.totalAmount) || 0
   const splitGcash = Number(splitPayments?.gcash) || 0
@@ -264,13 +266,210 @@ function gcashPaymentFromSale(sale) {
   }
 }
 
+function parseSalePayment(sale) {
+  let paymentMethod = sale.payment_method || sale.paymentMethod || 'cash'
+  let refNumber = sale.ref_number || sale.refNumber || ''
+  let splitPayments = null
+
+  if (String(refNumber).startsWith('split:')) {
+    try {
+      splitPayments = JSON.parse(String(refNumber).slice(6))
+      paymentMethod = 'split'
+      refNumber = ''
+    } catch {
+      paymentMethod = 'split'
+    }
+  }
+  if ((!paymentMethod || paymentMethod === 'cash') && refNumber && !String(refNumber).startsWith('split:')) {
+    paymentMethod = 'gcash'
+  }
+  if (!paymentMethod) paymentMethod = 'cash'
+
+  return { paymentMethod, refNumber, splitPayments }
+}
+
+function saleItemQuantity(item) {
+  return Number(item.quantity_sold ?? item.quantity ?? item.qty) || 0
+}
+
+function saleItemPrice(item, product) {
+  return Number(item.price_at_sale ?? item.price ?? item.unit_price ?? product?.price) || 0
+}
+
+function productNameKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function buildProductLookup(products = []) {
+  return {
+    byId: new Map(products.map((product) => [String(product.id), product])),
+    byBarcode: new Map(products.map((product) => [String(product.barcode || '').trim(), product]).filter(([barcode]) => barcode)),
+    byName: new Map(products.map((product) => [productNameKey(product.name), product]).filter(([name]) => name)),
+  }
+}
+
+function expandedSaleItemProduct(item) {
+  return Array.isArray(item.expand?.product_id)
+    ? item.expand.product_id[0]
+    : item.expand?.product_id
+}
+
+function resolveSaleItemProduct(item, lookup) {
+  const productId = firstRelation(item.product_id ?? item.productId)
+  const expandedProduct = expandedSaleItemProduct(item)
+  const barcode = String(item.barcode || expandedProduct?.barcode || '').trim()
+  const name = productNameKey(item.name || expandedProduct?.name)
+
+  return lookup.byId.get(String(productId || ''))
+    || lookup.byBarcode.get(barcode)
+    || lookup.byName.get(name)
+    || null
+}
+
+function receiptItemFromCloud(item) {
+  const product = Array.isArray(item.expand?.product_id)
+    ? item.expand.product_id[0]
+    : item.expand?.product_id
+
+  return {
+    productId: firstRelation(item.product_id) || item.id,
+    id: item.id,
+    name: product?.name || item.product_id || 'Product',
+    barcode: product?.barcode || '',
+    quantity: saleItemQuantity(item),
+    price: saleItemPrice(item, product),
+  }
+}
+
+async function receiptRecordFromCloudSale(sale) {
+  const cashier = Array.isArray(sale.expand?.cashier_id)
+    ? sale.expand.cashier_id[0]
+    : sale.expand?.cashier_id
+  const items = await pb.collection('sale_items').getFullList({
+    filter: pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
+    sort: 'created',
+    expand: 'product_id',
+    requestKey: null,
+  }).catch(() => [])
+  const { paymentMethod, refNumber, splitPayments } = parseSalePayment(sale)
+  const status = sale.status || 'completed'
+
+  return {
+    id: sale.id,
+    saleId: sale.id,
+    transactionNo: sale.transaction_no || sale.transactionNo || sale.id,
+    receiptNo: sale.transaction_no || sale.transactionNo || sale.id,
+    createdAt: sale.created_at || sale.createdAt || sale.created,
+    cashierId: firstRelation(sale.cashier_id) || '',
+    cashierName: cashier?.name || cashier?.email || firstRelation(sale.cashier_id) || '',
+    totalAmount: Number(sale.total_amount ?? sale.totalAmount) || 0,
+    subtotalAmount: Number(sale.total_amount ?? sale.totalAmount) || 0,
+    discountPercent: 0,
+    discountAmount: 0,
+    paymentMethod,
+    refNumber,
+    splitPayments,
+    cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : 0,
+    gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : 0,
+    status: status === 'voided' ? 'Voided' : 'Completed',
+    rawStatus: status,
+    actionStatus: status === 'voided' ? 'Voided' : 'Reprint available',
+    itemCount: items.length ? items.reduce((sum, item) => sum + saleItemQuantity(item), 0) : null,
+    items: items.map(receiptItemFromCloud),
+  }
+}
+
+function receiptRecordFromLocalSale(sale) {
+  const { paymentMethod, refNumber, splitPayments } = parseSalePayment(sale)
+  const status = sale.status || 'completed'
+  const items = sale.items || []
+
+  return {
+    id: sale.clientSaleId || sale.id || sale.transactionNo,
+    saleId: sale.clientSaleId || sale.id || sale.transactionNo,
+    transactionNo: sale.transactionNo,
+    receiptNo: sale.transactionNo,
+    createdAt: sale.createdAt,
+    cashierId: sale.cashierId || '',
+    cashierName: sale.cashierName || sale.cashierId || '',
+    totalAmount: Number(sale.totalAmount) || 0,
+    subtotalAmount: Number(sale.subtotalAmount || sale.totalAmount) || 0,
+    discountPercent: Number(sale.discountPercent) || 0,
+    discountAmount: Number(sale.discountAmount) || 0,
+    paymentMethod,
+    refNumber,
+    splitPayments,
+    cashAmount: sale.cashAmount,
+    gcashAmount: sale.gcashAmount,
+    status: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Completed',
+    rawStatus: status,
+    actionStatus: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Reprint available',
+    itemCount: items.length ? items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) : null,
+    items,
+    adjustments: sale.adjustments || [],
+    adjustedAmount: (sale.adjustments || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0),
+  }
+}
+
+function filterReceiptRecords(records, filters = {}) {
+  const q = String(filters.q || '').trim().toLowerCase()
+  const cashierName = String(filters.cashierName || '').trim().toLowerCase()
+  const status = String(filters.status || 'all').trim().toLowerCase()
+  const action = String(filters.action || 'all').trim().toLowerCase()
+  const fromTime = filters.fromDate ? new Date(`${filters.fromDate}T00:00:00`).getTime() : null
+  const toTime = filters.toDate ? new Date(`${filters.toDate}T23:59:59.999`).getTime() : null
+
+  return records.filter((record) => {
+    const createdTime = new Date(record.createdAt).getTime()
+    const queryMatches = !q || [
+      record.transactionNo,
+      record.receiptNo,
+      record.cashierName,
+      record.paymentMethod,
+    ].some((value) => String(value || '').toLowerCase().includes(q))
+    const cashierMatches = !cashierName || String(record.cashierName || '').toLowerCase() === cashierName
+    const statusMatches = status === 'all' || String(record.rawStatus || '').toLowerCase() === status
+    const actionMatches = action === 'all'
+      || (action === 'reprintable' && record.rawStatus !== 'voided')
+      || (action === 'voided' && record.rawStatus === 'voided')
+    const dateMatches = (!fromTime || createdTime >= fromTime) && (!toTime || createdTime <= toTime)
+    return queryMatches && cashierMatches && statusMatches && actionMatches && dateMatches
+  })
+}
+
+async function fetchReceiptRecords(filters = {}) {
+  await startAdminRuntime()
+  const localRecords = (await localCashierCompletedSales()).map(receiptRecordFromLocalSale)
+  if (!(await isCloudReachable())) return filterReceiptRecords(localRecords, filters)
+
+  const sales = await pb.collection('sales').getFullList({
+    sort: '-created_at,-created',
+    expand: 'cashier_id',
+    requestKey: null,
+  }).catch(() => [])
+  const cloudRecords = await Promise.all(sales.map(receiptRecordFromCloudSale))
+  const merged = new Map()
+
+  for (const record of cloudRecords) {
+    merged.set(record.transactionNo || record.id, record)
+  }
+  for (const record of localRecords) {
+    const key = record.transactionNo || record.id
+    const existing = merged.get(key)
+    if (!existing || ['adjusted', 'voided'].includes(record.rawStatus)) {
+      merged.set(key, { ...existing, ...record })
+    }
+  }
+
+  return filterReceiptRecords([...merged.values()], filters)
+}
+
 async function fetchGcashPayments() {
   await startAdminRuntime()
   if (!(await isCloudReachable())) return []
 
   const records = await pb.collection('sales').getFullList({
     sort: '-created_at,-created',
-    filter: 'status != "voided"',
     expand: 'cashier_id',
     requestKey: null,
   }).catch(() => [])
@@ -341,6 +540,44 @@ async function cacheUsers(records) {
 
 function saleDate(sale) {
   return new Date(sale.created_at || sale.createdAt || sale.created)
+}
+
+async function localCashierCompletedSales() {
+  try {
+    await initializeCashierDb()
+    if (!cashierDb.tables.some((table) => table.name === 'completedSales')) return []
+    return cashierDb.completedSales.orderBy('createdAt').reverse().toArray()
+  } catch {
+    return []
+  }
+}
+
+function localSaleItems(sale) {
+  return (sale.items || []).map((item, index) => ({
+    id: `${sale.clientSaleId || sale.id || sale.transactionNo}-item-${index}`,
+    sale_id: sale.clientSaleId || sale.id,
+    saleId: sale.clientSaleId || sale.id,
+    product_id: item.productId || item.id,
+    productId: item.productId || item.id,
+    name: item.name,
+    barcode: item.barcode,
+    quantity_sold: Number(item.quantity) || 0,
+    price_at_sale: Number(item.price) || 0,
+  }))
+}
+
+function localSaleAsCloudLike(sale) {
+  return {
+    ...sale,
+    id: sale.clientSaleId || sale.id || sale.transactionNo,
+    transaction_no: sale.transactionNo,
+    created_at: sale.createdAt,
+    total_amount: sale.totalAmount,
+    payment_method: sale.paymentMethod,
+    ref_number: sale.refNumber,
+    cashier_id: sale.cashierId,
+    status: sale.status || 'completed',
+  }
 }
 
 function dateKey(date) {
@@ -444,7 +681,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
   const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
 
-  const productsById = new Map(products.map((product) => [product.id, product]))
+  const productLookup = buildProductLookup(products)
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
   const monthlySaleIds = new Set(completedSales.filter((sale) => saleDate(sale) >= monthStart).map((sale) => sale.id))
   const productSales = new Map()
@@ -454,18 +691,16 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     const saleId = firstRelation(item.sale_id ?? item.saleId)
     if (!completedSaleIds.has(saleId)) continue
 
-    const productId = firstRelation(item.product_id ?? item.productId)
     const quantity = Number(item.quantity_sold ?? item.quantity) || 0
     if (monthlySaleIds.has(saleId)) monthlyStockOut += quantity
+    const product = resolveSaleItemProduct(item, productLookup)
+    const productId = product?.id || firstRelation(item.product_id ?? item.productId)
     if (!productId) continue
 
-    const product = productsById.get(productId)
-    const expandedProduct = Array.isArray(item.expand?.product_id)
-      ? item.expand.product_id[0]
-      : item.expand?.product_id
+    const expandedProduct = expandedSaleItemProduct(item)
     const current = productSales.get(productId) || {
       id: productId,
-      name: product?.name || expandedProduct?.name || productId,
+      name: product?.name || item.name || expandedProduct?.name || productId,
       category: product?.category || expandedProduct?.category || '',
       units: 0,
     }
@@ -535,6 +770,79 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     weeklySales: weeklyTrend,
     monthlySales: monthlyTrend,
     yearlySales: yearlyTrend,
+  }
+}
+
+function buildFsnMetrics(products = [], sales = [], saleItems = [], now = new Date()) {
+  const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
+  const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
+  const salesById = new Map(completedSales.map((sale) => [sale.id, sale]))
+  const ninetyDaysAgo = new Date(now)
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
+  const productLookup = buildProductLookup(products)
+  const metrics = new Map()
+
+  for (const item of saleItems) {
+    const saleId = firstRelation(item.sale_id ?? item.saleId)
+    if (!completedSaleIds.has(saleId)) continue
+    const sale = salesById.get(saleId)
+    if (!sale) continue
+    const product = resolveSaleItemProduct(item, productLookup)
+    const productId = product?.id || firstRelation(item.product_id ?? item.productId)
+    if (!productId) continue
+
+    const quantity = saleItemQuantity(item)
+    const soldAt = saleDate(sale)
+    const current = metrics.get(productId) || { units90: 0, totalUnits: 0, lastSoldAt: null }
+    current.totalUnits += quantity
+    if (soldAt >= ninetyDaysAgo) current.units90 += quantity
+    if (!current.lastSoldAt || soldAt > current.lastSoldAt) current.lastSoldAt = soldAt
+    metrics.set(productId, current)
+  }
+
+  return metrics
+}
+
+function classifyFsnProduct(product, metric, now = new Date()) {
+  const lastSoldAt = metric?.lastSoldAt || null
+  const daysSinceLastSale = lastSoldAt
+    ? Math.floor((now - lastSoldAt) / (1000 * 60 * 60 * 24))
+    : null
+  const units90 = Number(metric?.units90) || 0
+  const averageMonthlyUnits = units90 / 3
+
+  if (units90 >= 15 || (units90 >= 6 && daysSinceLastSale !== null && daysSinceLastSale <= 30)) {
+    return {
+      ...product,
+      fsn: 'Fast-moving',
+      fsnReason: `${units90} unit(s) sold in the last 90 days`,
+      units90,
+      averageMonthlyUnits,
+      lastSoldAt,
+      daysSinceLastSale,
+    }
+  }
+
+  if (units90 > 0 && daysSinceLastSale !== null && daysSinceLastSale <= 90) {
+    return {
+      ...product,
+      fsn: 'Slow-moving',
+      fsnReason: `${units90} unit(s) sold in the last 90 days`,
+      units90,
+      averageMonthlyUnits,
+      lastSoldAt,
+      daysSinceLastSale,
+    }
+  }
+
+  return {
+    ...product,
+    fsn: 'Non-moving',
+    fsnReason: lastSoldAt ? `No sales in the last ${daysSinceLastSale} days` : 'No recorded sales yet',
+    units90,
+    averageMonthlyUnits,
+    lastSoldAt,
+    daysSinceLastSale,
   }
 }
 
@@ -909,15 +1217,110 @@ export const desktopAdminApi = {
     })
   },
 
+  async stockOutInventory({ barcode, qty = 1, reason = 'other', note = '' }) {
+    return enqueueInventoryScan(async () => {
+      assertAdmin()
+      await startAdminRuntime()
+      const stockOutQty = Math.max(1, Number(qty) || 1)
+      let product = await getProductByBarcode(barcode)
+      if (!product && (await isCloudReachable())) {
+        await refreshAdminLocalCache({ pb })
+        product = await getProductByBarcode(barcode)
+      }
+      if (!product) throw new Error(`No product found for barcode "${barcode}".`)
+
+      let updated
+      await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+        const currentProduct = await adminDb.products.get(product.id)
+        if (!currentProduct || currentProduct.deleted) {
+          throw new Error(`No product found for barcode "${barcode}".`)
+        }
+        if ((Number(currentProduct.qty) || 0) < stockOutQty) {
+          throw new Error(`"${currentProduct.name}" has only ${currentProduct.qty || 0} item(s) in stock.`)
+        }
+
+        updated = {
+          ...currentProduct,
+          qty: Math.max(0, Number(currentProduct.qty) - stockOutQty),
+          pendingSync: true,
+          updated: new Date().toISOString(),
+        }
+        updated.status = deriveStatus(updated)
+        await adminDb.products.put(updated)
+        await queueOperation('stockOutInventory', updated.id, {
+          id: updated.id,
+          barcode: updated.barcode,
+          qty: stockOutQty,
+          reason,
+          note,
+        })
+      })
+      await recordActivity('Stock Out', `Removed ${stockOutQty} ${updated.unit || 'unit(s)'} from "${updated.name}" - ${reason}${note ? ` (${note})` : ''}.`)
+      return updated
+    })
+  },
+
   async fsnInventory() {
     const products = await listDesktopProducts()
-    return products.map((product) => ({
-      ...product,
-      fsn: 'Non-moving',
-      fsnReason: 'Desktop local mode has no movement analysis yet',
-      units90: 0,
-      averageMonthlyUnits: 0,
-    }))
+    const localCompletedSales = await localCashierCompletedSales()
+    let cloudSales = []
+    let cloudSaleItems = []
+
+    if (await isCloudReachable()) {
+      ;[cloudSales, cloudSaleItems] = await Promise.all([
+        pb.collection('sales').getFullList({
+          requestKey: null,
+        }).catch(() => []),
+        pb.collection('sale_items').getFullList({
+          expand: 'product_id',
+          requestKey: null,
+        }).catch(() => []),
+      ])
+    }
+
+    const productLookup = buildProductLookup(products)
+    const cloudSaleById = new Map(cloudSales.map((sale) => [sale.id, sale]))
+    const cloudProductIdsByTransactionNo = new Map()
+    for (const item of cloudSaleItems) {
+      const sale = cloudSaleById.get(firstRelation(item.sale_id ?? item.saleId))
+      const transactionNo = sale?.transaction_no || sale?.transactionNo
+      if (!transactionNo) continue
+      const product = resolveSaleItemProduct(item, productLookup)
+      const productId = product?.id || firstRelation(item.product_id ?? item.productId)
+      if (!productId) continue
+      const productIds = cloudProductIdsByTransactionNo.get(transactionNo) || new Set()
+      productIds.add(String(productId))
+      cloudProductIdsByTransactionNo.set(transactionNo, productIds)
+    }
+    const cloudTransactionNos = new Set(cloudSales.map((sale) => sale.transaction_no || sale.transactionNo).filter(Boolean))
+    const localSalesForMovement = []
+    const localItems = []
+    for (const sale of localCompletedSales) {
+      const localItemsForSale = localSaleItems(sale)
+      const cloudProductIds = cloudProductIdsByTransactionNo.get(sale.transactionNo) || new Set()
+      const includeWholeSale = !cloudTransactionNos.has(sale.transactionNo)
+        || ['adjusted', 'voided'].includes(sale.status)
+      const missingItems = includeWholeSale
+        ? localItemsForSale
+        : localItemsForSale.filter((item) => {
+          const product = resolveSaleItemProduct(item, productLookup)
+          const productId = product?.id || firstRelation(item.product_id ?? item.productId)
+          return productId && !cloudProductIds.has(String(productId))
+        })
+
+      if (missingItems.length) {
+        localSalesForMovement.push(sale)
+        localItems.push(...missingItems)
+      }
+    }
+    const localSales = localSalesForMovement.map(localSaleAsCloudLike)
+    const salesById = new Map()
+    for (const sale of cloudSales) salesById.set(sale.id, sale)
+    for (const sale of localSales) salesById.set(sale.id, sale)
+
+    const saleItems = [...cloudSaleItems, ...localItems]
+    const metrics = buildFsnMetrics(products, [...salesById.values()], saleItems, new Date())
+    return products.map((product) => classifyFsnProduct(product, metrics.get(product.id), new Date()))
   },
 
   async nextProductBarcode() {
@@ -926,16 +1329,18 @@ export const desktopAdminApi = {
 
   async dashboard() {
     await startAdminRuntime()
+    const localCompletedSales = await localCashierCompletedSales()
     if (!(await isCloudReachable())) {
       const products = await listDesktopProducts()
-      return buildDashboardFromRecords(products, [], [], new Date())
+      const localSales = localCompletedSales.map(localSaleAsCloudLike)
+      const localItems = localCompletedSales.flatMap(localSaleItems)
+      return buildDashboardFromRecords(products, localSales, localItems, new Date())
     }
 
     await refreshAdminLocalCache({ pb }).catch(() => {})
     const products = await getAllProducts()
-    const [sales, saleItems] = await Promise.all([
+    const [cloudSales, cloudSaleItems] = await Promise.all([
       pb.collection('sales').getFullList({
-        filter: 'status != "voided"',
         requestKey: null,
       }).catch(() => []),
       pb.collection('sale_items').getFullList({
@@ -943,6 +1348,25 @@ export const desktopAdminApi = {
         requestKey: null,
       }).catch(() => []),
     ])
+
+    const overriddenTransactionNos = new Set(
+      localCompletedSales
+        .filter((sale) => ['adjusted', 'voided'].includes(sale.status))
+        .map((sale) => sale.transactionNo)
+        .filter(Boolean),
+    )
+    const cloudTransactionNos = new Set(cloudSales.map((sale) => sale.transaction_no || sale.transactionNo).filter(Boolean))
+    const localSalesForDashboard = localCompletedSales.filter((sale) => (
+      !cloudTransactionNos.has(sale.transactionNo) || overriddenTransactionNos.has(sale.transactionNo)
+    ))
+    const sales = [
+      ...cloudSales.filter((sale) => !overriddenTransactionNos.has(sale.transaction_no || sale.transactionNo)),
+      ...localSalesForDashboard.map(localSaleAsCloudLike),
+    ]
+    const saleItems = [
+      ...cloudSaleItems,
+      ...localSalesForDashboard.flatMap(localSaleItems),
+    ]
 
     return buildDashboardFromRecords(products, sales, saleItems, new Date())
   },
@@ -1014,6 +1438,7 @@ export const desktopAdminApi = {
   async cashiers() {
     return listDesktopCashiers()
   },
+  receipts: fetchReceiptRecords,
   async createCashier(data) {
     await startAdminRuntime()
     if (!(await isCloudReachable())) {

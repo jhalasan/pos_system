@@ -113,8 +113,18 @@ const webApi = {
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PATCH', body: productBody(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   scanInventory: (data) => request('/inventory/scan', { method: 'POST', body: JSON.stringify(data) }),
+  stockOutInventory: (data) => request('/inventory/stock-out', { method: 'POST', body: JSON.stringify(data) }),
   fsnInventory: () => request('/inventory/fsn'),
   cashiers: () => request('/cashiers'),
+  receipts: (filters = {}) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters || {})) {
+      if (value !== undefined && value !== null && String(value).trim()) {
+        params.set(key, value)
+      }
+    }
+    return request(`/receipts${params.toString() ? `?${params}` : ''}`)
+  },
   gcashPayments: () => request('/gcash-payments'),
   createCashier: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
   updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),

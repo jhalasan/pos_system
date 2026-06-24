@@ -84,7 +84,6 @@ const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings';
 const CASHIER_SHORTCUT_SETTINGS_KEY = 'nexa_cashier_shortcut_settings';
 const DEFAULT_RECEIPT_SETTINGS = {
   autoPrint: false,
-  storeCopyDelaySeconds: 5,
   showPdfTestButton: false,
   receiptPdfDirectory: '',
 };
@@ -182,21 +181,15 @@ function isEditableTarget(target) {
 }
 
 function receiptStepLabel(step) {
-  if (step === 'store') return 'Store Copy';
-  return 'Customer Copy';
+  return 'Receipt';
 }
 
 function nextReceiptStep(step) {
-  if (step === 'customer') return 'store';
-  if (step === 'store') return 'done';
-  return 'store';
+  return step === 'initial' ? 'reprint' : 'reprint';
 }
 
 function receiptButtonText(sale) {
-  const step = sale?.receiptPrintStep || (sale?.receiptPrinted ? 'done' : 'customer');
-  if (step === 'store') return 'Print Store Copy';
-  if (step === 'done') return 'Print Again';
-  return 'Print Customer Copy';
+  return sale?.receiptPrinted ? 'Reprint Receipt' : 'Print Receipt';
 }
 
 function tauriInvoke() {
@@ -355,7 +348,6 @@ const Cashier = ({ onLogout, user }) => {
       const next = {
         ...current,
         ...updates,
-        storeCopyDelaySeconds: Math.min(30, Math.max(1, Number(updates.storeCopyDelaySeconds ?? current.storeCopyDelaySeconds) || 5)),
       };
       localStorage.setItem(RECEIPT_SETTINGS_KEY, JSON.stringify(next));
       return next;
@@ -434,26 +426,23 @@ const Cashier = ({ onLogout, user }) => {
       completedSale: {
         ...current.completedSale,
         receiptPrintStep: nextReceiptStep(printedStep),
-        receiptPrinted: printedStep === 'store',
+        receiptPrinted: true,
       },
     }));
   };
 
-  const receiptDataForTransaction = (txn, copyLabel) => ({
+  const receiptDataForTransaction = (txn) => ({
     transactionNo: txn.completedSale.transactionNo || txn.transactionNo,
     cashierName: user?.name || user?.email || 'Cashier',
     completedAt: txn.completedSale.completedAt,
     items: txn.cartItems,
     payment: txn.completedSale,
-    copyLabel,
   });
 
   const printReceiptCopy = async (txn, step) => {
-    const copyStep = step === 'store' ? 'store' : 'customer';
+    const copyStep = step === 'reprint' ? 'reprint' : 'initial';
     const copyLabel = receiptStepLabel(copyStep);
-    await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
-      copyLabels: [copyLabel],
-    });
+    await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel));
     updateReceiptPrintState(txn.id, copyStep);
     return copyLabel;
   };
@@ -461,11 +450,10 @@ const Cashier = ({ onLogout, user }) => {
   const handlePrintReceiptPdf = async (txn = activeTxn) => {
     if (!txn?.completedSale || txn.status !== 'completed') return;
 
-    const requestedStep = txn.completedSale.receiptPrintStep === 'store' ? 'store' : 'customer';
+    const requestedStep = txn.completedSale.receiptPrinted ? 'reprint' : 'initial';
     const copyLabel = receiptStepLabel(requestedStep);
     try {
-      const result = await printReceiptPdf(receiptDataForTransaction(txn, copyLabel), {
-        copyLabels: [copyLabel],
+      const result = await printReceiptPdf(receiptDataForTransaction(txn), {
         directory: receiptSettings.receiptPdfDirectory,
       });
       showNotification(`${copyLabel} PDF test saved to ${result.path}.`);
@@ -478,18 +466,10 @@ const Cashier = ({ onLogout, user }) => {
     if (!txn?.completedSale) return;
 
     try {
-      await printReceiptCopy(txn, 'customer');
-      showNotification(`Customer copy printed. Store copy will print in ${receiptSettings.storeCopyDelaySeconds} seconds.`);
-      window.setTimeout(async () => {
-        try {
-          await printReceiptCopy(txn, 'store');
-          showNotification(`Store copy printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
-        } catch (err) {
-          showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print store copy.');
-        }
-      }, receiptSettings.storeCopyDelaySeconds * 1000);
+      await printReceiptCopy(txn, 'initial');
+      showNotification(`Receipt printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
     } catch (err) {
-      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print customer copy.');
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print receipt.');
     }
   };
 
@@ -704,8 +684,6 @@ const Cashier = ({ onLogout, user }) => {
           change: lookupSale.change,
           gcashRef: lookupSale.refNumber,
         },
-      }, {
-        copyLabels: ['Reprint Copy'],
       });
       cashierApi.logActivity({
         cashierId: user?.id,
@@ -739,7 +717,6 @@ const Cashier = ({ onLogout, user }) => {
           gcashRef: lookupSale.refNumber,
         },
       }, {
-        copyLabels: ['Customer Copy'],
         directory: receiptSettings.receiptPdfDirectory,
       });
       showNotification(`PDF test saved to ${result.path}.`);
@@ -1221,7 +1198,7 @@ const Cashier = ({ onLogout, user }) => {
         transactionNo: sale.transactionNo || completedTransactionNo,
         pendingSync: sale.pendingSync,
         discounted: discount > 0,
-        receiptPrintStep: 'customer',
+        receiptPrintStep: 'initial',
         receiptPrinted: false,
       };
       const completedTxn = {
@@ -1239,10 +1216,10 @@ const Cashier = ({ onLogout, user }) => {
       setBarcode('');
       if (showHistory) loadTransactionHistory();
       if (receiptSettings.autoPrint) {
-        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Printing customer copy.`);
+        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Printing receipt.`);
         autoPrintCompletedReceipt(completedTxn);
       } else {
-        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Print the customer copy when ready.`);
+        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Print the receipt when ready.`);
       }
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
@@ -1253,7 +1230,7 @@ const Cashier = ({ onLogout, user }) => {
     if (!txn?.completedSale || txn.status !== 'completed') return;
 
     try {
-      const requestedStep = txn.completedSale.receiptPrintStep === 'store' ? 'store' : 'customer';
+      const requestedStep = txn.completedSale.receiptPrinted ? 'reprint' : 'initial';
       const copyLabel = await printReceiptCopy(txn, requestedStep);
       cashierApi.logActivity({
         cashierId: user?.id,
@@ -2346,7 +2323,7 @@ const Cashier = ({ onLogout, user }) => {
               aria-selected={settingsTab === 'receipt'}
             >
               <strong>Receipt</strong>
-              <small>Printer copies</small>
+              <small>Print and reprint</small>
             </button>
           </div>
 
@@ -2427,7 +2404,7 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['settings-section-head']}>
                   <div>
                     <h4>Receipt Printing</h4>
-                    <p>Controls automatic receipt copies and PDF test output.</p>
+                    <p>Controls automatic receipt printing and PDF test output.</p>
                   </div>
                 </div>
                 <label className={styles['receipt-settings-toggle']}>
@@ -2438,7 +2415,7 @@ const Cashier = ({ onLogout, user }) => {
                   />
                   <span>
                     <strong>Automatic receipt printing</strong>
-                    <small>Prints the customer copy, waits, then prints the store copy.</small>
+                    <small>Prints one receipt automatically after completing a transaction.</small>
                   </span>
                 </label>
                 <label className={styles['receipt-settings-toggle']}>
@@ -2465,15 +2442,6 @@ const Cashier = ({ onLogout, user }) => {
                     </Button>
                   </div>
                 )}
-                <Input
-                  label="Store Copy Delay Seconds"
-                  type="number"
-                  min="1"
-                  max="30"
-                  value={receiptSettings.storeCopyDelaySeconds}
-                  onChange={(e) => saveReceiptSettings({ storeCopyDelaySeconds: e.target.value })}
-                  disabled={!receiptSettings.autoPrint}
-                />
               </div>
             )}
           </div>

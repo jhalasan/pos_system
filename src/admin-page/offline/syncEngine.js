@@ -371,6 +371,24 @@ export class AdminSyncEngine extends EventTarget {
       return
     }
 
+    if (op.type === 'stockOutInventory') {
+      const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
+      if (!product) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+
+      const updated = await this.pb.collection('products').update(product.id, {
+        quantity: Math.max(0, (Number(product.quantity) || 0) - Number(op.payload.qty || 0)),
+      }, {
+        expand: 'category',
+        requestKey: op.id,
+      })
+      await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
+        preservePendingStock: true,
+        currentOpId: op.id,
+      })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
     throw new Error(`Unknown admin sync operation: ${op.type}`)
   }
 

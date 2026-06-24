@@ -5,6 +5,7 @@ import { api } from '../services/api'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
   IconCloud, IconUserPlus, IconLogout, IconSettings, IconBarcode, IconWallet,
+  IconReceipt,
 } from './Icons'
 
 const navItems = [
@@ -15,6 +16,7 @@ const navItems = [
   { to: '/admin/cashiers', label: 'Cashier Management', icon: IconUsers },
   { to: '/admin/analytics', label: 'Analytics', icon: IconChart },
   { to: '/admin/gcash-payments', label: 'GCash Payments', icon: IconWallet },
+  { to: '/admin/transaction-logs', label: 'Transaction Logs', icon: IconReceipt },
   { to: '/admin/logs', label: 'Activity Logs', icon: IconList },
   { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]
