@@ -2,6 +2,10 @@ import PocketBase from 'pocketbase'
 import { initializeCashierDb } from './db'
 import { refreshLocalProductCatalog } from './cloudBootstrap'
 import { CashierSyncEngine } from './syncEngine'
+import {
+  isPocketBaseRateLimited,
+  rememberPocketBaseRateLimit,
+} from '../../utils/pocketbaseRateLimit'
 
 let runtimePromise
 
@@ -21,8 +25,11 @@ export function startCashierRuntime({
     syncEngine.addEventListener('syncerror', (event) => onError(event.detail.error))
     syncEngine.start()
 
-    if (!globalThis.navigator || globalThis.navigator.onLine) {
-      refreshLocalProductCatalog({ pb }).catch(onError)
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      refreshLocalProductCatalog({ pb }).catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        onError(error)
+      })
     }
 
     return {

@@ -31,6 +31,22 @@ async function updateCollection(name, rules) {
   console.log(`${name}: rules updated`)
 }
 
+async function patchField(name, fieldName, patch) {
+  const collection = await pb.collections.getOne(name)
+  const fieldsKey = Array.isArray(collection.fields) ? 'fields' : 'schema'
+  const fields = collection[fieldsKey] || []
+  const nextFields = fields.map((field) => (
+    field.name === fieldName ? { ...field, ...patch } : field
+  ))
+
+  if (!fields.some((field) => field.name === fieldName)) {
+    throw new Error(`${name}.${fieldName} was not found in PocketBase.`)
+  }
+
+  await pb.collections.update(collection.id, { [fieldsKey]: nextFields })
+  console.log(`${name}.${fieldName}: field updated`)
+}
+
 await authAsSuperuser()
 
 await updateCollection('categories', {
@@ -47,6 +63,7 @@ await updateCollection('products', {
   updateRule: cashierRule,
   deleteRule: adminRule,
 })
+await patchField('products', 'quantity', { required: false, min: 0 })
 
 await updateCollection('authorization_barcodes', {
   listRule: readRule,

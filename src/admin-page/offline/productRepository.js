@@ -43,6 +43,21 @@ export function normalizeProduct(record, pb) {
   }
 }
 
+function stockDeltaForOp(op) {
+  const qty = Math.max(0, Number(op?.payload?.qty) || 0)
+  if (op?.type === 'scanInventory') return qty
+  if (op?.type === 'stockOutInventory') return -qty
+  return 0
+}
+
+function matchesStockOp(op, cloudProduct, localProduct) {
+  if (!['scanInventory', 'stockOutInventory'].includes(op?.type)) return false
+  return op.productId === cloudProduct.id
+    || op.productId === localProduct?.id
+    || (cloudProduct.barcode && op.payload?.barcode === cloudProduct.barcode)
+    || (localProduct?.barcode && op.payload?.barcode === localProduct.barcode)
+}
+
 export async function replaceProductsFromCloud(records, pb) {
   const products = records.map((record) => normalizeProduct(record, pb))
 
@@ -57,25 +72,19 @@ export async function replaceProductsFromCloud(records, pb) {
       .map((product) => [product.barcode, product]))
     const pendingLocalProducts = new Set()
 
-    const hasPendingStockOp = (cloudProduct, localProduct) => pendingOps.some((op) => (
-      op.type === 'scanInventory'
-      && (
-        op.productId === cloudProduct.id
-        || op.productId === localProduct?.id
-        || (cloudProduct.barcode && op.payload?.barcode === cloudProduct.barcode)
-        || (localProduct?.barcode && op.payload?.barcode === localProduct.barcode)
-      )
-    ))
-
     const mergedProducts = products.map((cloudProduct) => {
       const localProduct = localById.get(cloudProduct.id) || localByBarcode.get(cloudProduct.barcode)
       if (!localProduct || localProduct.deleted) return cloudProduct
 
-      const shouldPreserveLocal = localProduct.pendingSync || hasPendingStockOp(cloudProduct, localProduct)
+      const stockOps = pendingOps.filter((op) => matchesStockOp(op, cloudProduct, localProduct))
+      const stockDelta = stockOps.reduce((sum, op) => sum + stockDeltaForOp(op), 0)
+      const shouldPreserveLocal = localProduct.pendingSync || stockOps.length > 0
       if (!shouldPreserveLocal) return cloudProduct
 
       pendingLocalProducts.add(localProduct.id)
-      const qty = Math.max(Number(cloudProduct.qty) || 0, Number(localProduct.qty) || 0)
+      const qty = stockOps.length > 0
+        ? Math.max(0, (Number(cloudProduct.qty) || 0) + stockDelta)
+        : Math.max(0, Number(localProduct.qty) || 0)
       return {
         ...cloudProduct,
         qty,

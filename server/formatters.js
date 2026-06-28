@@ -33,6 +33,11 @@ function firstRelationValue(value) {
   return Array.isArray(value) ? value[0] : value
 }
 
+function numberFieldValue(value) {
+  const number = Number(value)
+  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+}
+
 export function toProduct(record) {
   const expandedCategory = Array.isArray(record.expand?.category)
     ? record.expand.category[0]
@@ -65,7 +70,7 @@ export function productPayload(input, categoryId) {
     name: String(input.name || '').trim(),
     barcode: String(input.barcode || '').trim(),
     category: categoryId || '',
-    quantity: Number.isFinite(qty) ? Math.max(0, qty) : 0,
+    quantity: numberFieldValue(qty),
     base_unit: input.unit || 'Piece',
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
@@ -125,6 +130,7 @@ export function cashierPayload(input = {}) {
     password,
     passwordConfirm: password,
     role: 'cashier',
+    emailVisibility: true,
   }
 }
 

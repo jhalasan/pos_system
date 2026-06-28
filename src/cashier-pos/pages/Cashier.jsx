@@ -19,6 +19,26 @@ function stockState(item) {
   return { key: 'ok', label: `${stockQty} in stock` };
 }
 
+function ProductThumb({ product }) {
+  const imageUrl = product?.imageUrl || product?.image || '';
+
+  return (
+    <span className={styles['product-thumb']} aria-hidden="true">
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          onError={(event) => {
+            event.currentTarget.style.display = 'none';
+          }}
+        />
+      ) : (
+        <Cart size={18} />
+      )}
+    </span>
+  );
+}
+
 function todayPrefix() {
   const now = new Date();
   return [
@@ -981,6 +1001,8 @@ const Cashier = ({ onLogout, user }) => {
           lowStock: product.lowStock,
           barcode: product.barcode,
           category: product.category,
+          imageUrl: product.imageUrl,
+          image: product.image,
           total: product.price,
         },
       ];
@@ -994,6 +1016,8 @@ const Cashier = ({ onLogout, user }) => {
         price: product.price,
         productId: product.id,
         lowStock: product.lowStock,
+        imageUrl: product.imageUrl,
+        image: product.image,
       },
     });
     setSearchProduct('');
@@ -1586,6 +1610,7 @@ const Cashier = ({ onLogout, user }) => {
 
             {lastScanned && (
               <div className={styles['last-scanned']}>
+                <ProductThumb product={lastScanned} />
                 <div>
                   <span>Last Scanned</span>
                   <strong>{lastScanned.name}</strong>
@@ -1614,10 +1639,13 @@ const Cashier = ({ onLogout, user }) => {
                         onClick={() => handleAddToCart(product)}
                         disabled={stock.key === 'out'}
                       >
-                        <div>
-                          <div className={styles['product-name']}>{product.name}</div>
-                          <div className={styles['product-meta']}>
-                            {product.barcode} | {product.category} | {money(product.price)}
+                        <div className={styles['product-option-main']}>
+                          <ProductThumb product={product} />
+                          <div>
+                            <div className={styles['product-name']}>{product.name}</div>
+                            <div className={styles['product-meta']}>
+                              {product.barcode} | {product.category} | {money(product.price)}
+                            </div>
                           </div>
                         </div>
                         <span className={`${styles['stock-pill']} ${styles[stock.key]}`}>{stock.label}</span>
@@ -1651,6 +1679,7 @@ const Cashier = ({ onLogout, user }) => {
                   const stock = stockState({ ...item, stockQty: remainingStock });
                   return (
                     <div key={item.id} className={styles['cart-item']}>
+                      <ProductThumb product={item} />
                       <div className={styles['cart-item-content']}>
                         <div className={styles['cart-item-name']}>{item.name}</div>
                         <div className={styles['cart-item-meta']}>

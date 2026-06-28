@@ -1,4 +1,5 @@
 import PocketBase from 'pocketbase'
+import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
 import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
@@ -13,8 +14,41 @@ import {
   voidLocalSale,
 } from '../offline/saleRepository'
 import { startCashierRuntime } from '../offline/runtime'
+import {
+  isPocketBaseRateLimit,
+  isPocketBaseRateLimited,
+  pocketBaseRateLimitMessage,
+  rememberPocketBaseRateLimit,
+} from '../../utils/pocketbaseRateLimit'
 
 let runtimePromise
+
+function numberFieldValue(value) {
+  const number = Number(value)
+  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+}
+
+function pocketBaseErrorMessage(error, fallback = 'Unable to login right now.') {
+  const fieldErrors = error?.response?.data || error?.data?.data || {}
+  const details = Object.entries(fieldErrors)
+    .map(([field, value]) => {
+      const message = value?.message || value?.code || String(value || '')
+      return message ? `${field}: ${message}` : ''
+    })
+    .filter(Boolean)
+
+  if (details.length) return details.join(' ')
+  return error?.response?.message || error?.data?.message || error?.message || fallback
+}
+
+function loginErrorMessage(error) {
+  if (isPocketBaseRateLimit(error)) return pocketBaseRateLimitMessage()
+  const message = pocketBaseErrorMessage(error, '')
+  if (/something went wrong|failed to authenticate|invalid login|invalid.*password|unauthorized/i.test(message)) {
+    return 'Invalid email or password.'
+  }
+  return message || 'Unable to login right now.'
+}
 
 function toQuickLoginAccount(record) {
   const email = String(record?.email || '').trim()
@@ -37,6 +71,18 @@ function toCachedQuickLoginAccount(record) {
   }
 }
 
+function mergeAccountsById(...groups) {
+  const accounts = new Map()
+  for (const group of groups) {
+    for (const account of group || []) {
+      const id = account.id || account.email
+      if (!id) continue
+      accounts.set(id, { ...accounts.get(id), ...account })
+    }
+  }
+  return [...accounts.values()]
+}
+
 async function cacheQuickLoginAccounts(records = []) {
   await initializeCashierDb()
   const normalized = records
@@ -55,6 +101,20 @@ async function cachedQuickLoginAccounts() {
     .filter((account) => account.role === 'cashier' && account.status === 'active' && account.quickLoginEnabled)
     .toArray()
     .then((records) => records.map(toQuickLoginAccount))
+}
+
+async function adminCachedCashierQuickLoginAccounts() {
+  try {
+    await initializeAdminDb()
+    return adminDb.users
+      .where('role')
+      .equals('cashier')
+      .filter((account) => account.status === 'active' && Boolean(account.quick_login_enabled ?? account.quickLoginEnabled))
+      .toArray()
+      .then((records) => records.map(toQuickLoginAccount).filter((account) => account.email))
+  } catch {
+    return []
+  }
 }
 
 function runtime() {
@@ -236,9 +296,12 @@ async function ensureProducts() {
   await initializeCashierDb()
   let products = await getAllProducts()
 
-  if (products.length === 0 && (!globalThis.navigator || globalThis.navigator.onLine)) {
+  if (products.length === 0 && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
     const activeRuntime = await runtime()
-    await refreshLocalProductCatalog({ pb: activeRuntime.pb })
+    await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
+      rememberPocketBaseRateLimit(error)
+      throw error
+    })
     products = await getAllProducts()
   }
 
@@ -336,7 +399,10 @@ export const desktopCashierApi = {
 
   async login(email, password) {
     const activeRuntime = await runtime()
-    const auth = await activeRuntime.login(email, password)
+    const auth = await activeRuntime.login(email, password).catch((error) => {
+      rememberPocketBaseRateLimit(error)
+      throw new Error(loginErrorMessage(error))
+    })
     if (auth.record?.role !== 'cashier') {
       activeRuntime.logout()
       throw new Error('Only cashier accounts can access this area.')
@@ -356,9 +422,12 @@ export const desktopCashierApi = {
       sort: 'name',
       requestKey: null,
     }).then(cacheQuickLoginAccounts).catch(() => {})
-    activeRuntime.refreshProducts().catch((error) => {
-      console.warn('Product catalog refresh failed after cashier login:', error)
-    })
+    if (!isPocketBaseRateLimited()) {
+      activeRuntime.refreshProducts().catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        console.warn('Product catalog refresh failed after cashier login:', error)
+      })
+    }
     return { user: auth.record }
   },
 
@@ -369,8 +438,10 @@ export const desktopCashierApi = {
 
   async quickLoginAccounts() {
     await initializeCashierDb()
-    if (globalThis.navigator && !globalThis.navigator.onLine) {
-      return cachedQuickLoginAccounts()
+    const cachedAccounts = await cachedQuickLoginAccounts()
+    const adminCachedAccounts = await adminCachedCashierQuickLoginAccounts()
+    if ((globalThis.navigator && !globalThis.navigator.onLine) || isPocketBaseRateLimited()) {
+      return mergeAccountsById(cachedAccounts, adminCachedAccounts)
     }
     const activeRuntime = await runtime()
     return activeRuntime.pb.collection('users').getFullList({
@@ -381,9 +452,13 @@ export const desktopCashierApi = {
     })
       .then(async (records) => {
         await cacheQuickLoginAccounts(records)
-        return records.map(toQuickLoginAccount).filter((account) => account.email)
+        return mergeAccountsById(records.map(toQuickLoginAccount), cachedAccounts, adminCachedAccounts)
+          .filter((account) => account.email)
       })
-      .catch(() => cachedQuickLoginAccounts())
+      .catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        return mergeAccountsById(cachedAccounts, adminCachedAccounts)
+      })
   },
 
   async products() {
@@ -393,9 +468,12 @@ export const desktopCashierApi = {
   async productByBarcode(barcode) {
     await initializeCashierDb()
     let product = await getProductByBarcode(barcode)
-    if (!product && (!globalThis.navigator || globalThis.navigator.onLine)) {
+    if (!product && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
-      await refreshLocalProductCatalog({ pb: activeRuntime.pb })
+      await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        throw error
+      })
       product = await getProductByBarcode(barcode)
     }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
@@ -495,7 +573,7 @@ export const desktopCashierApi = {
             if (!productId) continue
             const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
             await activeRuntime.pb.collection('products').update(product.id, {
-              quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+              quantity: numberFieldValue((Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0)),
             }, { requestKey: null })
           }
 
@@ -559,7 +637,7 @@ export const desktopCashierApi = {
           if (!productId || quantity <= 0) continue
           const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
           await activeRuntime.pb.collection('products').update(product.id, {
-            quantity: (Number(product.quantity) || 0) + quantity,
+            quantity: numberFieldValue((Number(product.quantity) || 0) + quantity),
           }, { requestKey: null })
         }
 

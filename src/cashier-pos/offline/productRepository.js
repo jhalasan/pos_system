@@ -1,9 +1,14 @@
 import { cashierDb } from './db'
 
-function normalizeProduct(record) {
+function firstFileValue(value) {
+  return Array.isArray(value) ? value[0] : value
+}
+
+function normalizeProduct(record, pb) {
   const category = Array.isArray(record.expand?.category)
     ? record.expand.category[0]
     : record.expand?.category
+  const image = firstFileValue(record.product_img ?? record.image)
 
   return {
     id: record.id,
@@ -15,12 +20,14 @@ function normalizeProduct(record) {
     price: Number(record.price) || 0,
     unit: record.base_unit || 'Piece',
     minStock: Number(record.min_stock) || 0,
+    image: image || '',
+    imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),
     updated: record.updated || new Date().toISOString(),
   }
 }
 
-export async function replaceProductsFromCloud(records) {
-  const products = records.map(normalizeProduct)
+export async function replaceProductsFromCloud(records, pb) {
+  const products = records.map((record) => normalizeProduct(record, pb))
 
   await cashierDb.transaction('rw', cashierDb.products, async () => {
     await cashierDb.products.clear()

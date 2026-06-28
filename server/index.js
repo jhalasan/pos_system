@@ -437,6 +437,16 @@ function productRelationId(value) {
   return Array.isArray(value) ? value[0] : value
 }
 
+function numberFieldValue(value) {
+  const number = Number(value)
+  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+}
+
+function isCriticalStock(product) {
+  const status = deriveStatus(product)
+  return status === 'critical' || status === 'out-of-stock'
+}
+
 function productNameKey(value) {
   return String(value || '').trim().toLowerCase()
 }
@@ -878,7 +888,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
       price_at_sale: Number(item.price) || Number(product.price) || 0,
     })
     await products.update(product.id, {
-      quantity: Math.max(0, (Number(product.quantity) || 0) - quantity),
+      quantity: numberFieldValue((Number(product.quantity) || 0) - quantity),
     })
   }
 
@@ -933,7 +943,7 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
     if (!productId) continue
     const product = await products.getOne(productId)
     await products.update(product.id, {
-      quantity: (Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0),
+      quantity: numberFieldValue((Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0)),
     })
   }
 
@@ -1002,7 +1012,7 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
 
   const nextQty = (Number(record.quantity) || 0) + qty
-  const updated = await (await pbCollection('products')).update(record.id, { quantity: nextQty }, { expand: 'category' })
+  const updated = await (await pbCollection('products')).update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
   await createLog({ action: 'Stock Update', detail: `Added ${qty} unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
 }))
@@ -1026,7 +1036,7 @@ app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
   if (currentQty < qty) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} item(s) in stock.` })
 
   const updated = await (await pbCollection('products')).update(record.id, {
-    quantity: Math.max(0, currentQty - qty),
+    quantity: numberFieldValue(currentQty - qty),
   }, { expand: 'category' })
   await createLog({
     action: 'Stock Out',
@@ -1088,6 +1098,7 @@ app.patch('/api/settings/cashiers/:id/quick-login', asyncRoute(async (req, res) 
   const enabled = Boolean(req.body?.enabled)
   const updated = await (await pbCollection('users')).update(req.params.id, {
     quick_login_enabled: enabled,
+    ...(enabled ? { emailVisibility: true } : {}),
   })
   await createLog({
     action: 'Settings',
@@ -1100,6 +1111,7 @@ app.patch('/api/settings/admins/:id/quick-login', asyncRoute(async (req, res) =>
   const enabled = Boolean(req.body?.enabled)
   const updated = await (await pbCollection('users')).update(req.params.id, {
     quick_login_enabled: enabled,
+    ...(enabled ? { emailVisibility: true } : {}),
   })
   await createLog({
     action: 'Settings',
@@ -1307,8 +1319,10 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     })
     .reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0)
 
-  const criticalAlerts = products
-    .filter((product) => deriveStatus(product) === 'critical')
+  const criticalStockProducts = products
+    .filter(isCriticalStock)
+    .sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0))
+  const criticalAlerts = criticalStockProducts
     .slice(0, 5)
     .map((product) => ({ name: product.name, left: product.qty }))
 
@@ -1377,7 +1391,7 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
       monthlySalesTrend: trend(monthlySales, lastMonthSales),
       totalRevenue,
       totalRevenueTrend: 0,
-      criticalStock: criticalAlerts.length,
+      criticalStock: criticalStockProducts.length,
     },
     criticalAlerts,
     productInOut: [

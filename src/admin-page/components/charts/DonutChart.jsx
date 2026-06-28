@@ -21,7 +21,7 @@ export default function DonutChart({ data, centerLabel = 'Total Units', size = 1
   return (
     <div className="donut-wrap">
       <svg width={size} height={size} viewBox="0 0 140 140">
-        <circle cx={cx} cy={cy} r={r} fill="none" stroke="#eef0f3" strokeWidth="18" />
+        <circle cx={cx} cy={cy} r={r} fill="none" className="donut-track" strokeWidth="18" />
         {segments.map((s, i) => (
           <circle
             key={i}

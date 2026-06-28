@@ -292,7 +292,7 @@
         "name": "quantity",
         "onlyInt": false,
         "presentable": false,
-        "required": true,
+        "required": false,
         "system": false,
         "type": "number"
       },

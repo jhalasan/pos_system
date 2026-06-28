@@ -14,6 +14,6 @@ export async function refreshLocalProductCatalog({
     requestKey: null,
   })
 
-  await replaceProductsFromCloud(products)
+  await replaceProductsFromCloud(products, pb)
   return products.length
 }

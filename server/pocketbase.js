@@ -88,7 +88,16 @@ export async function authenticateAdminUser(email, password) {
 export async function authenticateRoleUser(email, password, requiredRole) {
   const authClient = new PocketBase(PB_URL)
   authClient.autoCancellation(false)
-  const authData = await authClient.collection('users').authWithPassword(email, password)
+  const authData = await authClient.collection('users').authWithPassword(email, password).catch((error) => {
+    const message = error?.response?.message || error?.data?.message || error?.message || ''
+    const authError = new Error(
+      /something went wrong|failed to authenticate|invalid login|invalid.*password|unauthorized/i.test(message)
+        ? 'Invalid email or password.'
+        : (message || 'Unable to login right now.')
+    )
+    authError.status = error?.status || 401
+    throw authError
+  })
   const record = authData.record
 
   if (record?.role !== requiredRole) {

@@ -1,11 +1,21 @@
 import PocketBase from 'pocketbase'
 import { cashierDb } from './db'
 import { refreshLocalProductCatalog } from './cloudBootstrap'
+import {
+  isPocketBaseRateLimited,
+  pocketBaseRateLimitRemainingMs,
+  rememberPocketBaseRateLimit,
+} from '../../utils/pocketbaseRateLimit'
 
-const DEFAULT_INTERVAL_MS = 5_000
-const PRODUCT_REFRESH_INTERVAL_MS = 30_000
+const DEFAULT_INTERVAL_MS = 60_000
+const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
+
+function numberFieldValue(value) {
+  const number = Number(value)
+  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+}
 
 function emitSyncStatus(state, message) {
   globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
@@ -86,7 +96,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     const syncedQty = matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0)
 
     await pb.collection('products').update(product.id, {
-      quantity: Math.max(0, (Number(product.quantity) || 0) - syncedQty),
+      quantity: numberFieldValue((Number(product.quantity) || 0) - syncedQty),
     }, {
       requestKey: `product-stock:${sale.clientSaleId}:${productId}`,
     })
@@ -153,16 +163,19 @@ export class CashierSyncEngine extends EventTarget {
   schedule(delay = this.intervalMs) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => void this.syncNow(), delay)
+    const rateLimitDelay = pocketBaseRateLimitRemainingMs()
+    this.timer = setTimeout(() => void this.syncNow(), Math.max(delay, rateLimitDelay))
   }
 
   async isCloudReachable() {
     if (globalThis.navigator && !globalThis.navigator.onLine) return false
+    if (isPocketBaseRateLimited()) return false
 
     try {
       await this.pb.health.check({ requestKey: null })
       return true
-    } catch {
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
       return false
     }
   }
@@ -210,6 +223,7 @@ export class CashierSyncEngine extends EventTarget {
       products = await refreshLocalProductCatalog({ pb: this.pb })
       this.lastProductRefreshAt = Date.now()
     } catch (error) {
+      rememberPocketBaseRateLimit(error)
       failed += 1
       this.dispatchEvent(new CustomEvent('syncerror', {
         detail: { error },
@@ -223,6 +237,7 @@ export class CashierSyncEngine extends EventTarget {
         await this.uploadSale(sale)
         uploaded += 1
       } catch (error) {
+        rememberPocketBaseRateLimit(error)
         failed += 1
         const attempts = sale.attempts + 1
         await cashierDb.pendingSales.update(sale.clientSaleId, {

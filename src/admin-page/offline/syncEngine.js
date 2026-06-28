@@ -1,11 +1,21 @@
 import PocketBase from 'pocketbase'
 import { adminDb } from './db'
-import { normalizeProduct } from './productRepository'
+import { deriveStatus, normalizeProduct } from './productRepository'
 import { refreshAdminLocalCache } from './cloudBootstrap'
+import {
+  isPocketBaseRateLimited,
+  pocketBaseRateLimitRemainingMs,
+  rememberPocketBaseRateLimit,
+} from '../../utils/pocketbaseRateLimit'
 
-const DEFAULT_INTERVAL_MS = 5_000
+const DEFAULT_INTERVAL_MS = 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
+
+function numberFieldValue(value) {
+  const number = Number(value)
+  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+}
 
 function emitSyncStatus(state, message) {
   globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
@@ -64,7 +74,7 @@ async function productBody(pb, data) {
     name: String(data.name || '').trim(),
     barcode: String(data.barcode || '').trim(),
     category: data.categoryId || await getOrCreateCategoryId(pb, data.category),
-    quantity: Number.isFinite(qty) ? Math.max(0, qty) : 0,
+    quantity: numberFieldValue(qty),
     base_unit: data.unit || 'Piece',
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
@@ -124,6 +134,13 @@ async function createCloudProductFromLocal(pb, productId, payload = {}, requestK
   })
 }
 
+function stockDeltaForOp(op) {
+  const qty = Math.max(0, Number(op?.payload?.qty) || 0)
+  if (op?.type === 'scanInventory') return qty
+  if (op?.type === 'stockOutInventory') return -qty
+  return 0
+}
+
 async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, options = {}) {
   const normalized = normalizeProduct(cloudRecord, pb)
 
@@ -131,13 +148,15 @@ async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, opt
     const localProduct = await adminDb.products.get(localProductId)
     const laterOps = await adminDb.pendingOps.where('productId').equals(localProductId).toArray()
     const remainingOps = laterOps.filter((laterOp) => laterOp.id !== options.currentOpId)
-    const hasLaterStockIns = remainingOps.some((laterOp) => laterOp.type === 'scanInventory')
-    const nextProduct = options.preservePendingStock && hasLaterStockIns && localProduct
+    const remainingStockDelta = remainingOps.reduce((sum, laterOp) => sum + stockDeltaForOp(laterOp), 0)
+    const hasLaterStockOps = remainingOps.some((laterOp) => stockDeltaForOp(laterOp) !== 0)
+    const replayedQty = Math.max(0, (Number(normalized.qty) || 0) + remainingStockDelta)
+    const nextProduct = options.preservePendingStock && hasLaterStockOps && localProduct
       ? {
           ...normalized,
-          qty: Math.max(Number(normalized.qty) || 0, Number(localProduct.qty) || 0),
+          qty: replayedQty,
           pendingSync: true,
-          status: localProduct.status,
+          status: deriveStatus({ ...normalized, qty: replayedQty }),
         }
       : normalized
 
@@ -199,16 +218,19 @@ export class AdminSyncEngine extends EventTarget {
   schedule(delay = this.intervalMs) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => void this.syncNow(), delay)
+    const rateLimitDelay = pocketBaseRateLimitRemainingMs()
+    this.timer = setTimeout(() => void this.syncNow(), Math.max(delay, rateLimitDelay))
   }
 
   async isCloudReachable() {
     if (globalThis.navigator && !globalThis.navigator.onLine) return false
+    if (isPocketBaseRateLimited()) return false
 
     try {
       await this.pb.health.check({ requestKey: null })
       return true
-    } catch {
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
       return false
     }
   }
@@ -259,6 +281,7 @@ export class AdminSyncEngine extends EventTarget {
         await this.uploadOperation(op)
         uploaded += 1
       } catch (error) {
+        rememberPocketBaseRateLimit(error)
         failed += 1
         errors.push(errorMessage(error))
         const attempts = op.attempts + 1
@@ -279,6 +302,7 @@ export class AdminSyncEngine extends EventTarget {
         await this.uploadActivityLog(log)
         uploaded += 1
       } catch (error) {
+        rememberPocketBaseRateLimit(error)
         failed += 1
         errors.push(errorMessage(error))
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { log, error } }))
@@ -287,6 +311,7 @@ export class AdminSyncEngine extends EventTarget {
 
     if (uploaded > 0) {
       await refreshAdminLocalCache({ pb: this.pb }).catch((error) => {
+        rememberPocketBaseRateLimit(error)
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { error } }))
       })
     }
@@ -358,7 +383,7 @@ export class AdminSyncEngine extends EventTarget {
       }
 
       const updated = await this.pb.collection('products').update(product.id, {
-        quantity: (Number(product.quantity) || 0) + Number(op.payload.qty || 0),
+        quantity: numberFieldValue((Number(product.quantity) || 0) + Number(op.payload.qty || 0)),
       }, {
         expand: 'category',
         requestKey: op.id,
@@ -376,7 +401,7 @@ export class AdminSyncEngine extends EventTarget {
       if (!product) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
 
       const updated = await this.pb.collection('products').update(product.id, {
-        quantity: Math.max(0, (Number(product.quantity) || 0) - Number(op.payload.qty || 0)),
+        quantity: numberFieldValue((Number(product.quantity) || 0) - Number(op.payload.qty || 0)),
       }, {
         expand: 'category',
         requestKey: op.id,

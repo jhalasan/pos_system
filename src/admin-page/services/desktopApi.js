@@ -10,6 +10,12 @@ import {
   getProductByBarcode,
   replaceProductsFromCloud,
 } from '../offline/productRepository'
+import {
+  isPocketBaseRateLimit,
+  isPocketBaseRateLimited,
+  pocketBaseRateLimitMessage,
+  rememberPocketBaseRateLimit,
+} from '../../utils/pocketbaseRateLimit'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -47,8 +53,8 @@ async function startAdminRuntime() {
     syncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
     syncEngine.start()
 
-    if (!globalThis.navigator || globalThis.navigator.onLine) {
-      refreshAdminLocalCache({ pb }).catch(() => {})
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
     }
 
     return { syncEngine }
@@ -60,21 +66,25 @@ async function startAdminRuntime() {
 async function isCloudReachable() {
   await startAdminRuntime()
   if (globalThis.navigator && !globalThis.navigator.onLine) return false
+  if (isPocketBaseRateLimited()) return false
 
   try {
     await pb.health.check({ requestKey: null })
     return true
-  } catch {
+  } catch (error) {
+    rememberPocketBaseRateLimit(error)
     return false
   }
 }
 
 function refreshProductsInBackground() {
   if (globalThis.navigator && !globalThis.navigator.onLine) return
+  if (isPocketBaseRateLimited()) return
   if (Date.now() - lastProductRefreshAt < 30_000) return
 
   lastProductRefreshAt = Date.now()
-  refreshAdminLocalCache({ pb }).catch(() => {
+  refreshAdminLocalCache({ pb }).catch((error) => {
+    rememberPocketBaseRateLimit(error)
     lastProductRefreshAt = 0
   })
 }
@@ -110,6 +120,11 @@ function toProduct(record) {
     tiers: [{ label: 'Retail', price: Number(record.price) || 0 }],
     status: deriveStatus(record),
   }
+}
+
+function isCriticalStock(product) {
+  const status = deriveStatus(product)
+  return status === 'critical' || status === 'out-of-stock'
 }
 
 function toSettingsUser(record) {
@@ -187,6 +202,15 @@ function pocketBaseErrorMessage(error, fallback = 'PocketBase rejected the reque
   return error?.response?.message || error?.data?.message || error?.message || fallback
 }
 
+function loginErrorMessage(error) {
+  if (isPocketBaseRateLimit(error)) return pocketBaseRateLimitMessage()
+  const message = pocketBaseErrorMessage(error, '')
+  if (/something went wrong|failed to authenticate|invalid login|invalid.*password|unauthorized/i.test(message)) {
+    return 'Invalid email or password.'
+  }
+  return message || 'Unable to login right now.'
+}
+
 function localStorageErrorMessage(error) {
   if (typeof error === 'string') return error
   return error?.message || String(error || '')
@@ -225,6 +249,27 @@ async function salesByCashier() {
   }
 
   return totals
+}
+
+function mergeUsersById(...groups) {
+  const users = new Map()
+  for (const group of groups) {
+    for (const user of group || []) {
+      const id = user.id || user.email
+      if (!id) continue
+      users.set(id, { ...users.get(id), ...user })
+    }
+  }
+  return [...users.values()]
+}
+
+async function localQuickLoginUsers(role) {
+  await startAdminRuntime()
+  return adminDb.users
+    .where('role')
+    .equals(role)
+    .filter((user) => user.status === 'active' && Boolean(user.quick_login_enabled ?? user.quickLoginEnabled))
+    .toArray()
 }
 
 function gcashPaymentFromSale(sale) {
@@ -484,6 +529,7 @@ function cashierPayload(data) {
     shift: data.shift || 'Morning',
     status: data.status || 'active',
     role: 'cashier',
+    emailVisibility: true,
   }
 
   if (String(data.password || '').trim()) {
@@ -534,8 +580,21 @@ async function cacheUsers(records) {
     shift: record.shift || '',
     status: record.status || 'active',
     quick_login_enabled: Boolean(record.quick_login_enabled),
+    emailVisibility: Boolean(record.emailVisibility),
     updated: record.updated || new Date().toISOString(),
   })))
+}
+
+async function ensureQuickLoginEmailVisibility(records = []) {
+  return Promise.all(records.map(async (record) => {
+    if (!record?.quick_login_enabled || record.emailVisibility) return record
+
+    try {
+      return await pb.collection('users').update(record.id, { emailVisibility: true }, { requestKey: null })
+    } catch {
+      return record
+    }
+  }))
 }
 
 function saleDate(sale) {
@@ -740,8 +799,10 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     if (year) year.value += amount
   }
 
-  const criticalAlerts = products
-    .filter((product) => deriveStatus(product) === 'critical')
+  const criticalStockProducts = products
+    .filter(isCriticalStock)
+    .sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0))
+  const criticalAlerts = criticalStockProducts
     .slice(0, 8)
     .map((product) => ({ name: product.name, left: product.qty }))
   const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
@@ -754,7 +815,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
       monthlySalesTrend: trend(monthlySales, lastMonthSales),
       totalRevenue,
       totalRevenueTrend: 0,
-      criticalStock: criticalAlerts.length,
+      criticalStock: criticalStockProducts.length,
     },
     criticalAlerts,
     productInOut: [
@@ -1006,7 +1067,7 @@ async function listDesktopProducts() {
 async function listDesktopCashiers() {
   await startAdminRuntime()
   if (await isCloudReachable()) {
-    const [records, salesTotals] = await Promise.all([
+    const [cloudRecords, salesTotals] = await Promise.all([
       pb.collection('users').getFullList({
         filter: 'role = "cashier"',
         sort: 'name,email',
@@ -1014,6 +1075,7 @@ async function listDesktopCashiers() {
       }),
       salesByCashier(),
     ])
+    const records = await ensureQuickLoginEmailVisibility(cloudRecords)
     await cacheUsers(records)
     return records.map((record) => toCashierUser(record, salesTotals.get(record.id)))
   }
@@ -1035,16 +1097,19 @@ export const desktopAdminApi = {
         pb.authStore.clear()
         throw new Error('This account is inactive.')
       }
-      await cacheAdminLogin(auth.record, password)
-      await recordActivity('Login', 'Signed in to admin dashboard.')
-      refreshAdminLocalCache({ pb }).catch(() => {})
+      await cacheAdminLogin(auth.record, password).catch(() => {})
+      await recordActivity('Login', 'Signed in to admin dashboard.').catch(() => {})
+      refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
       return { user: auth.record }
     } catch (error) {
       if (globalThis.navigator && !globalThis.navigator.onLine) {
         return offlineLogin(email, password)
       }
       if (error?.status === 0) return offlineLogin(email, password)
-      throw error
+      return offlineLogin(email, password).catch(() => {
+        rememberPocketBaseRateLimit(error)
+        throw new Error(loginErrorMessage(error))
+      })
     }
   },
 
@@ -1056,13 +1121,10 @@ export const desktopAdminApi = {
   async adminQuickLoginAccounts() {
     requireBaseUrl()
     await startAdminRuntime()
-    if (!(await isCloudReachable())) {
-      return adminDb.users
-        .where('role')
-        .equals('admin')
-        .filter((user) => user.status === 'active' && Boolean(user.quick_login_enabled ?? user.quickLoginEnabled))
-        .toArray()
-        .then((records) => records.map(toSettingsUser).filter((user) => user.email))
+    const localRecords = await localQuickLoginUsers('admin')
+    const localAccounts = localRecords.map(toSettingsUser).filter((user) => user.email)
+    if (isPocketBaseRateLimited() || !(await isCloudReachable())) {
+      return localAccounts
     }
     return pb.collection('users').getFullList({
       filter: 'role = "admin" && quick_login_enabled = true && status != "inactive"',
@@ -1075,9 +1137,12 @@ export const desktopAdminApi = {
           ...record,
           quick_login_enabled: true,
         })))
-        return records.map(toSettingsUser).filter((user) => user.email)
+        return mergeUsersById(records.map(toSettingsUser), localAccounts).filter((user) => user.email)
       })
-      .catch(() => [])
+      .catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        return localAccounts
+      })
   },
 
   async products() {
@@ -1500,11 +1565,12 @@ export const desktopAdminApi = {
   async settingsAdmins() {
     await startAdminRuntime()
     if (await isCloudReachable()) {
-      const records = await pb.collection('users').getFullList({
+      const cloudRecords = await pb.collection('users').getFullList({
         filter: 'role = "admin"',
         sort: 'name,email',
         requestKey: null,
       })
+      const records = await ensureQuickLoginEmailVisibility(cloudRecords)
       await cacheUsers(records)
       return records.map(toSettingsUser)
     }
@@ -1516,6 +1582,7 @@ export const desktopAdminApi = {
     if (await isCloudReachable()) {
       const updated = await pb.collection('users').update(id, {
         quick_login_enabled: Boolean(enabled),
+        ...(enabled ? { emailVisibility: true } : {}),
       }, { requestKey: null })
       await cacheUsers([updated])
       await recordActivity('Settings', `${enabled ? 'Enabled' : 'Disabled'} admin quick login for "${updated.name || updated.email}".`)
@@ -1579,6 +1646,7 @@ export const desktopAdminApi = {
     if (await isCloudReachable()) {
       const updated = await pb.collection('users').update(id, {
         quick_login_enabled: Boolean(enabled),
+        ...(enabled ? { emailVisibility: true } : {}),
       }, { requestKey: null })
       await cacheUsers([updated])
       await recordActivity('Settings', `${enabled ? 'Enabled' : 'Disabled'} cashier quick login for "${updated.name || updated.email}".`)
