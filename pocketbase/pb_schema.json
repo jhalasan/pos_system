@@ -286,6 +286,32 @@
       {
         "help": "",
         "hidden": false,
+        "id": "number4209876543",
+        "max": null,
+        "min": 0,
+        "name": "cost",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "help": "",
+        "hidden": false,
+        "id": "number3301234567",
+        "max": 100,
+        "min": 0,
+        "name": "profitMargin",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "help": "",
+        "hidden": false,
         "id": "number2683508278",
         "max": null,
         "min": 0,

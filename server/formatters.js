@@ -54,6 +54,8 @@ export function toProduct(record) {
     unit: record.base_unit || 'Piece',
     lowStock: Number(record.min_stock) || 0,
     price: Number(record.price) || 0,
+    cost: Number(record.cost) || 0,
+    profitMargin: Number(record.profitMargin) || 0,
     image: firstFileValue(record.product_img) || '',
     imageUrl: productImageUrl(record),
     tiers: [{ label: 'Retail', price: Number(record.price) || 0 }],
@@ -66,6 +68,8 @@ export function productPayload(input, categoryId) {
   const qty = Number(input.qty)
   const lowStock = Number(input.lowStock)
   const price = Number(input.price)
+  const cost = Number(input.cost)
+  const profitMargin = Number(input.profitMargin)
   return {
     name: String(input.name || '').trim(),
     barcode: String(input.barcode || '').trim(),
@@ -74,6 +78,8 @@ export function productPayload(input, categoryId) {
     base_unit: input.unit || 'Piece',
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
+    cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
+    profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
   }
 }
 
