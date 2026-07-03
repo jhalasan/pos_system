@@ -38,6 +38,30 @@ function numberFieldValue(value) {
   return String(Number.isFinite(number) ? Math.max(0, number) : 0)
 }
 
+function booleanFieldValue(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value > 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (['true', '1', 'yes', 'y'].includes(normalized)) return true
+    if (['false', '0', 'no', 'n'].includes(normalized)) return false
+  }
+  return false
+}
+
+function parseSellingUnits(value) {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((row) => ({
+      barcode: String(row?.barcode || '').trim(),
+      unit: String(row?.unit || '').trim(),
+      conversion: Number(row?.conversion) > 0 ? Number(row.conversion) : 1,
+      price: Number(row?.price) || 0,
+      isPriceManual: Boolean(row?.isPriceManual),
+    }))
+    .filter((row) => row.barcode || row.unit || row.conversion || row.price)
+}
+
 export function toProduct(record) {
   const expandedCategory = Array.isArray(record.expand?.category)
     ? record.expand.category[0]
@@ -52,13 +76,19 @@ export function toProduct(record) {
     categoryId: firstRelationValue(record.category) || '',
     qty: Number(record.quantity) || 0,
     unit: record.base_unit || 'Piece',
+    purchaseUnit: record.purchase_unit || record.purchaseUnit || 'Box',
+    conversionQuantity: Number(record.conversion_quantity ?? record.conversionQuantity ?? 1) || 1,
+    initialStock: Number(record.initial_stock ?? record.initialStock ?? 0) || 0,
+    stockUnit: record.stock_unit || record.stockUnit || '',
     lowStock: Number(record.min_stock) || 0,
     price: Number(record.price) || 0,
     cost: Number(record.cost) || 0,
     profitMargin: Number(record.profitMargin) || 0,
+    hasMultipleUnits: booleanFieldValue(record.has_multiple_units ?? record.hasMultipleUnits),
     image: firstFileValue(record.product_img) || '',
     imageUrl: productImageUrl(record),
     tiers: [{ label: 'Retail', price: Number(record.price) || 0 }],
+    sellingUnits: parseSellingUnits(record.selling_units ?? record.sellingUnits),
     status: deriveStatus(record),
     soldUnits: Number(record.soldUnits ?? record.sold_units ?? 0),
   }
@@ -66,20 +96,29 @@ export function toProduct(record) {
 
 export function productPayload(input, categoryId) {
   const qty = Number(input.qty)
+  const initialStock = Number(input.initialStock ?? input.qty)
   const lowStock = Number(input.lowStock)
   const price = Number(input.price)
   const cost = Number(input.cost)
   const profitMargin = Number(input.profitMargin)
+  const conversionQuantity = Number(input.conversionQuantity ?? input.conversion_quantity ?? 1)
+  const hasMultipleUnits = booleanFieldValue(input.hasMultipleUnits ?? input.has_multiple_units)
   return {
     name: String(input.name || '').trim(),
     barcode: String(input.barcode || '').trim(),
     category: categoryId || '',
     quantity: numberFieldValue(qty),
+    initial_stock: Number.isFinite(initialStock) ? Math.max(0, initialStock) : 0,
+    stock_unit: String(input.stockUnit || input.stock_unit || '').trim(),
+    purchase_unit: String(input.purchaseUnit || input.purchase_unit || '').trim(),
+    conversion_quantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
     base_unit: input.unit || 'Piece',
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
+    has_multiple_units: hasMultipleUnits,
+    selling_units: parseSellingUnits(input.sellingUnits || input.selling_units),
   }
 }
 

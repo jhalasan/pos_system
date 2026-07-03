@@ -959,6 +959,7 @@ async function localProductFromForm(data, id = newId('product')) {
   const price = Number(data.price)
   const cost = Number(data.cost)
   const profitMargin = Number(data.profitMargin)
+  const conversionQuantity = Number(data.conversionQuantity ?? 1)
   return {
     id,
     sku: id,
@@ -968,12 +969,17 @@ async function localProductFromForm(data, id = newId('product')) {
     categoryId: data.categoryId || '',
     qty: Number.isFinite(qty) ? Math.max(0, qty) : 0,
     unit: data.unit || 'Piece',
+    purchaseUnit: String(data.purchaseUnit || 'Box').trim(),
+    conversionQuantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
+    initialStock: Number(data.initialStock ?? data.qty ?? 0) || 0,
+    stockUnit: String(data.stockUnit || '').trim(),
     lowStock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     image: '',
     tiers: data.tiers || [{ label: 'Retail', price: Number(data.price) || 0 }],
+    sellingUnits: Array.isArray(data.sellingUnits) ? data.sellingUnits : [],
     status: deriveStatus(data),
     pendingSync: true,
     deleted: false,
@@ -1260,6 +1266,11 @@ export const desktopAdminApi = {
       }
       if (!product) throw new Error(`No product found for barcode "${barcode}".`)
 
+      const matchingUnit = Array.isArray(product?.sellingUnits)
+        ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
+        : null
+      const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+
       let updated
       await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
         const currentProduct = await adminDb.products.get(product.id)
@@ -1269,7 +1280,7 @@ export const desktopAdminApi = {
 
         updated = {
           ...currentProduct,
-          qty: Number(currentProduct.qty) + stockInQty,
+          qty: Number(currentProduct.qty) + (stockInQty * conversion),
           pendingSync: true,
           updated: new Date().toISOString(),
         }
@@ -1298,19 +1309,25 @@ export const desktopAdminApi = {
       }
       if (!product) throw new Error(`No product found for barcode "${barcode}".`)
 
+      const matchingUnit = Array.isArray(product?.sellingUnits)
+        ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
+        : null
+      const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+      const baseUnitsToRemove = stockOutQty * conversion
+
       let updated
       await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
         const currentProduct = await adminDb.products.get(product.id)
         if (!currentProduct || currentProduct.deleted) {
           throw new Error(`No product found for barcode "${barcode}".`)
         }
-        if ((Number(currentProduct.qty) || 0) < stockOutQty) {
-          throw new Error(`"${currentProduct.name}" has only ${currentProduct.qty || 0} item(s) in stock.`)
+        if ((Number(currentProduct.qty) || 0) < baseUnitsToRemove) {
+          throw new Error(`"${currentProduct.name}" has only ${currentProduct.qty || 0} base unit(s) in stock.`)
         }
 
         updated = {
           ...currentProduct,
-          qty: Math.max(0, Number(currentProduct.qty) - stockOutQty),
+          qty: Math.max(0, Number(currentProduct.qty) - baseUnitsToRemove),
           pendingSync: true,
           updated: new Date().toISOString(),
         }

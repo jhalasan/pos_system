@@ -50,7 +50,7 @@ function productBody(data) {
   const formData = new FormData()
   for (const [key, value] of Object.entries(data)) {
     if (['imageFile', 'imageUrl', 'image', 'status', 'categoryId'].includes(key)) continue
-    if (key === 'tiers') {
+    if (key === 'tiers' || key === 'sellingUnits') {
       formData.append(key, JSON.stringify(value || []))
       continue
     }

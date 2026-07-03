@@ -442,6 +442,33 @@ function numberFieldValue(value) {
   return String(Number.isFinite(number) ? Math.max(0, number) : 0)
 }
 
+function parseSellingUnits(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+async function findProductByScanBarcode(barcode) {
+  const normalizedBarcode = String(barcode || '').trim()
+  if (!normalizedBarcode) return null
+
+  const records = await (await pbCollection('products')).getFullList({
+    fields: 'id,barcode,name,quantity,selling_units',
+  }).catch(() => [])
+
+  return records.find((record) => {
+    if (String(record.barcode || '').trim() === normalizedBarcode) return true
+    return parseSellingUnits(record.selling_units).some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
+  }) || null
+}
+
 function isCriticalStock(product) {
   const status = deriveStatus(product)
   return status === 'critical' || status === 'out-of-stock'
@@ -1003,17 +1030,14 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   const qty = Number(req.body.qty) || 1
   if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
 
-  const record = await (await pbCollection('products')).getFirstListItem(
-    pb.filter('barcode = {:barcode}', { barcode }),
-  ).catch((error) => {
-    if (error.status === 404) return null
-    throw error
-  })
+  const record = await findProductByScanBarcode(barcode)
   if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
 
-  const nextQty = (Number(record.quantity) || 0) + qty
+  const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
+  const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+  const nextQty = (Number(record.quantity) || 0) + (qty * conversion)
   const updated = await (await pbCollection('products')).update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
-  await createLog({ action: 'Stock Update', detail: `Added ${qty} unit(s) to "${record.name}"` })
+  await createLog({ action: 'Stock Update', detail: `Added ${qty * conversion} base unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
 }))
 
@@ -1024,23 +1048,21 @@ app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
   const note = String(req.body.note || '').trim()
   if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
 
-  const record = await (await pbCollection('products')).getFirstListItem(
-    pb.filter('barcode = {:barcode}', { barcode }),
-  ).catch((error) => {
-    if (error.status === 404) return null
-    throw error
-  })
+  const record = await findProductByScanBarcode(barcode)
   if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
 
+  const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
+  const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
   const currentQty = Number(record.quantity) || 0
-  if (currentQty < qty) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} item(s) in stock.` })
+  const baseUnitsToRemove = qty * conversion
+  if (currentQty < baseUnitsToRemove) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} base unit(s) in stock.` })
 
   const updated = await (await pbCollection('products')).update(record.id, {
-    quantity: numberFieldValue(currentQty - qty),
+    quantity: numberFieldValue(currentQty - baseUnitsToRemove),
   }, { expand: 'category' })
   await createLog({
     action: 'Stock Out',
-    detail: `Removed ${qty} unit(s) from "${record.name}" - ${reason}${note ? ` (${note})` : ''}`,
+    detail: `Removed ${baseUnitsToRemove} base unit(s) from "${record.name}" - ${reason}${note ? ` (${note})` : ''}`,
   })
   res.json(toProduct(updated))
 }))
