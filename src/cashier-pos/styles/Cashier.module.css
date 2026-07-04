@@ -51,6 +51,22 @@
   white-space: nowrap;
 }
 
+.cash-out-header-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  white-space: nowrap;
+  border-color: #f59e0b !important;
+  color: #b45309 !important;
+  background: #ffffff !important;
+}
+
+.cash-out-header-button:hover {
+  background: #fffbeb !important;
+  border-color: #d97706 !important;
+}
+
 .spin-icon {
   animation: cashier-spin 1s linear infinite;
 }
@@ -618,6 +634,22 @@
   gap: 12px;
 }
 
+.audit-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.audit-entry-message {
+  padding: 10px 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .receipt-spacing-tight-button {
   min-height: 34px;
   padding: 7px 12px;
@@ -637,7 +669,8 @@
 }
 
 @media (max-width: 720px) {
-  .receipt-spacing-grid {
+  .receipt-spacing-grid,
+  .audit-entry-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -15,6 +15,21 @@ function cashierNameFromCashOut(detail = '') {
   return match?.[1] || 'Cashier'
 }
 
+function cashAuditValues(detail = '') {
+  const text = String(detail)
+  const cashierMatch = text.match(/Cash audit by\s+(.+?):/i)
+  const beginningMatch = text.match(/beginning PHP\s*([\d,.]+)/i)
+  const endingMatch = text.match(/ending PHP\s*([\d,.]+)/i)
+  const onHandMatch = text.match(/on hand PHP\s*([\d,.]+)/i)
+  const valueOf = (match) => (match ? Number(match[1].replace(/,/g, '')) || 0 : 0)
+  return {
+    cashierName: cashierMatch?.[1] || 'Cashier',
+    cashBeginning: valueOf(beginningMatch),
+    cashEnding: valueOf(endingMatch),
+    cashOnHand: valueOf(onHandMatch),
+  }
+}
+
 export default function Audit() {
   const { data: receipts, loading: receiptsLoading } = useApi(api.receipts, [])
   const { data: logs, loading: logsLoading } = useApi(api.activityLogs, [])
@@ -29,7 +44,9 @@ export default function Audit() {
           cashBeginning: 0,
           cashSales: 0,
           cashOut: 0,
+          cashOnHand: 0,
           cashEnding: 0,
+          hasManualAudit: false,
           entries: [],
         })
       }
@@ -47,21 +64,32 @@ export default function Audit() {
     }
 
     for (const log of logs || []) {
-      if (log.action !== 'Cash Out') continue
-      const name = cashierNameFromCashOut(log.detail)
-      const row = ensure(name)
-      const amount = cashOutAmount(log.detail)
-      row.cashOut += amount
-      row.entries.push({ ...log, amount })
+      if (log.action === 'Cash Out') {
+        const name = cashierNameFromCashOut(log.detail)
+        const row = ensure(name)
+        const amount = cashOutAmount(log.detail)
+        row.cashOut += amount
+        row.entries.push({ ...log, amount })
+      }
+      if (log.action === 'Cash Audit') {
+        const audit = cashAuditValues(log.detail)
+        const row = ensure(audit.cashierName)
+        row.cashBeginning = audit.cashBeginning
+        row.cashEnding = audit.cashEnding
+        row.cashOnHand = audit.cashOnHand
+        row.hasManualAudit = true
+        row.entries.push({ ...log, amount: audit.cashOnHand })
+      }
     }
 
     return [...rows.values()].map((row) => ({
       ...row,
-      cashEnding: row.cashBeginning + row.cashSales - row.cashOut,
+      cashEnding: row.hasManualAudit ? row.cashEnding : (row.cashBeginning + row.cashSales - row.cashOut),
+      cashOnHand: row.hasManualAudit ? row.cashOnHand : (row.cashBeginning + row.cashSales - row.cashOut),
     })).sort((a, b) => a.cashierName.localeCompare(b.cashierName))
   }, [logs, receipts])
 
-  const totalCashOnHand = auditRows.reduce((sum, row) => sum + row.cashEnding, 0)
+  const totalCashOnHand = auditRows.reduce((sum, row) => sum + row.cashOnHand, 0)
   const totalCashOut = auditRows.reduce((sum, row) => sum + row.cashOut, 0)
 
   if (receiptsLoading || logsLoading) {
@@ -87,7 +115,7 @@ export default function Audit() {
         <div className="panel-head">
           <div>
             <h3>Cashier Cash Audit</h3>
-            <span className="sub">Cash beginning/ending are shown as calculated audit fields for now.</span>
+            <span className="sub">Cash beginning, ending, and on-hand entries come from cashier audit logs when recorded.</span>
           </div>
         </div>
         <div className="table-wrap">
@@ -98,7 +126,8 @@ export default function Audit() {
                 <th>Cash Beginning</th>
                 <th>Cash Sales</th>
                 <th>Cash Out</th>
-                <th>Cash On Hand / Ending</th>
+                <th>Cash Ending</th>
+                <th>Cash On Hand</th>
               </tr>
             </thead>
             <tbody>
@@ -108,11 +137,12 @@ export default function Audit() {
                   <td>{peso(row.cashBeginning)}</td>
                   <td>{peso(row.cashSales)}</td>
                   <td>{peso(row.cashOut)}</td>
-                  <td><strong>{peso(row.cashEnding)}</strong></td>
+                  <td>{peso(row.cashEnding)}</td>
+                  <td><strong>{peso(row.cashOnHand)}</strong></td>
                 </tr>
               ))}
               {auditRows.length === 0 && (
-                <tr><td colSpan="5" className="muted">No cash audit activity yet.</td></tr>
+                <tr><td colSpan="6" className="muted">No cash audit activity yet.</td></tr>
               )}
             </tbody>
           </table>

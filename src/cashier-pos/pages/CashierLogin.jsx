@@ -26,7 +26,7 @@ const CashierLogin = ({ onLogin }) => {
   const [email, setEmail] = useState('');
   const [barcode, setBarcode] = useState('');
   const [password, setPassword] = useState('');
-  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
+  const [loginMode, setLoginMode] = useState('barcode');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -122,8 +122,40 @@ const CashierLogin = ({ onLogin }) => {
 
         {/* Heading */}
         <h1 className={styles['login-title']}>Cashier Login</h1>
-        <p className={styles['login-subtitle']}>Scan your cashier barcode to access the POS</p>
+        <p className={styles['login-subtitle']}>
+          {loginMode === 'barcode' ? 'Scan your cashier barcode to access the POS' : 'Use your cashier email and password'}
+        </p>
 
+        <div className={styles['login-mode-toggle']} role="radiogroup" aria-label="Login method">
+          <label className={loginMode === 'barcode' ? styles.active : ''}>
+            <input
+              type="radio"
+              name="cashier-login-mode"
+              value="barcode"
+              checked={loginMode === 'barcode'}
+              onChange={() => {
+                setLoginMode('barcode');
+                setError('');
+              }}
+            />
+            Barcode
+          </label>
+          <label className={loginMode === 'email' ? styles.active : ''}>
+            <input
+              type="radio"
+              name="cashier-login-mode"
+              value="email"
+              checked={loginMode === 'email'}
+              onChange={() => {
+                setLoginMode('email');
+                setError('');
+              }}
+            />
+            Email
+          </label>
+        </div>
+
+        {loginMode === 'barcode' && (
         <form onSubmit={handleBarcodeLogin} className={styles['login-form']}>
           <div className={styles['form-group']}>
             <label className={styles['form-label']}>Cashier Barcode</label>
@@ -149,30 +181,17 @@ const CashierLogin = ({ onLogin }) => {
             <UpcScan size={18} />
             {loading ? 'Logging in...' : 'Login with Barcode'}
           </button>
-
           <button
             type="button"
             className={styles['back-button']}
-            onClick={() => {
-              setShowPasswordLogin((value) => !value);
-              setError('');
-            }}
+            onClick={() => navigate('/')}
           >
-            {showPasswordLogin ? 'Hide Email Login' : 'Use Email and Password'}
+            Back to Role Selection
           </button>
-
-          {!showPasswordLogin && (
-            <button
-              type="button"
-              className={styles['back-button']}
-              onClick={() => navigate('/')}
-            >
-              Back to Role Selection
-            </button>
-          )}
         </form>
+        )}
 
-        {showPasswordLogin && (
+        {loginMode === 'email' && (
         <form onSubmit={handleSubmit} className={styles['login-form']}>
           {quickAccounts.length > 0 && (
             <div className={styles['quick-login-section']}>

@@ -87,6 +87,22 @@ function itemCountDisplay(receipt) {
   return counted > 0 ? counted : '-'
 }
 
+function paymentBreakdown(receipt) {
+  const method = String(receipt.paymentMethod || '').toLowerCase()
+  const splitCash = Number(receipt.splitPayments?.cash) || 0
+  const splitGcash = Number(receipt.splitPayments?.gcash) || 0
+  const total = Number(receipt.totalAmount) || 0
+  const cash = method === 'split' ? splitCash : (method === 'cash' ? Number(receipt.cashAmount || total) || 0 : 0)
+  const gcash = method === 'split' ? splitGcash : (method === 'gcash' ? Number(receipt.gcashAmount || total) || 0 : 0)
+  return {
+    cash,
+    gcash,
+    cashSubtotal: cash,
+    gcashSubtotal: gcash,
+    total,
+  }
+}
+
 export default function TransactionLogs() {
   const { data: receipts, loading, error } = useApi(api.receipts, [])
   const { data: cashiers } = useApi(api.cashiers, [])
@@ -167,16 +183,22 @@ export default function TransactionLogs() {
 
   async function handleExportTransactions() {
     const result = await exportCsv(`transaction-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ['Receipt No.', 'Date / Time', 'Cashier', 'Status', 'Payment', 'Item Count', 'Total'],
-      ...filteredReceipts.map((receipt) => [
-        receipt.receiptNo || receipt.transactionNo,
-        formatDate(receipt.createdAt),
-        receipt.cashierName || '',
-        receipt.status || 'Completed',
-        receipt.paymentMethod || '',
-        itemCountDisplay(receipt),
-        Number(receipt.totalAmount) || 0,
-      ]),
+      ['Transaction No.', 'Date / Time', 'Cashier', 'Status', 'Items', 'Cash', 'GCash', 'Cash Subtotal', 'GCash Subtotal', 'Total'],
+      ...filteredReceipts.map((receipt) => {
+        const payment = paymentBreakdown(receipt)
+        return [
+          receipt.receiptNo || receipt.transactionNo,
+          formatDate(receipt.createdAt),
+          receipt.cashierName || '',
+          receipt.status || 'Completed',
+          itemCountDisplay(receipt),
+          payment.cash,
+          payment.gcash,
+          payment.cashSubtotal,
+          payment.gcashSubtotal,
+          payment.total,
+        ]
+      }),
     ], { directory: getExportLocation(exportLocationKeys.reports) })
     setToast(`Transaction sheet exported to ${result.path}.`)
     window.setTimeout(() => setToast(''), 2400)
@@ -353,18 +375,23 @@ export default function TransactionLogs() {
             <table className="data">
               <thead>
                 <tr>
-                  <th>Receipt No.</th>
+                  <th>Transaction No.</th>
                   <th>Date / Time</th>
                   <th>Cashier</th>
-                  <th>Status</th>
                   <th>Items</th>
+                  <th>Details</th>
+                  <th>Cash</th>
+                  <th>GCash</th>
+                  <th>Cash Subtotal</th>
+                  <th>GCash Subtotal</th>
                   <th>Total</th>
-                  <th>Action</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredReceipts.map((receipt) => {
                   const receiptStatus = normalizedStatus(receipt)
+                  const payment = paymentBreakdown(receipt)
                   return (
                     <tr
                       key={receipt.id}
@@ -378,23 +405,28 @@ export default function TransactionLogs() {
                       </td>
                       <td>{formatDate(receipt.createdAt)}</td>
                       <td>{receipt.cashierName || '-'}</td>
+                      <td>{itemCountDisplay(receipt)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-sm"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setSelectedReceipt(receipt)
+                          }}
+                        >
+                          Details
+                        </button>
+                      </td>
+                      <td>{payment.cash > 0 ? peso(payment.cash) : '-'}</td>
+                      <td>{payment.gcash > 0 ? peso(payment.gcash) : '-'}</td>
+                      <td>{peso(payment.cashSubtotal)}</td>
+                      <td>{peso(payment.gcashSubtotal)}</td>
+                      <td><strong>{peso(payment.total)}</strong></td>
                       <td>
                         <span className={`badge ${receiptStatus === 'voided' ? 'badge-danger' : receiptStatus === 'adjusted' ? 'badge-warning' : 'badge-success'}`}>
                           {receipt.status || 'Completed'}
                         </span>
-                      </td>
-                      <td>{itemCountDisplay(receipt)}</td>
-                      <td><strong>{peso(receipt.totalAmount)}</strong></td>
-                      <td>
-                        <button
-                          className="btn btn-outline btn-sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleReprint(receipt)
-                          }}
-                        >
-                          <IconPrint size={14} /> Reprint
-                        </button>
                       </td>
                     </tr>
                   )
@@ -446,7 +478,7 @@ export default function TransactionLogs() {
                   <div className="receipt-item" key={`${item.productId || item.id}-${item.name}`}>
                     <div>
                       <strong>{item.name || 'Item'}</strong>
-                      <span>{Number(item.quantity) || 0} x {peso(item.price)}</span>
+                      <span>{Number(item.quantity) || 0} {item.unit || 'unit'} x {peso(item.price)}</span>
                     </div>
                     <strong>{peso((Number(item.quantity) || 0) * (Number(item.price) || 0))}</strong>
                   </div>
@@ -456,12 +488,16 @@ export default function TransactionLogs() {
               <div className="receipt-totals">
                 <span>Items</span><strong>{itemCountDisplay(selectedReceipt)}</strong>
                 <span>Subtotal</span><strong>{peso(selectedReceipt.subtotalAmount || selectedReceipt.totalAmount)}</strong>
+                <span>Cash Subtotal</span><strong>{peso(paymentBreakdown(selectedReceipt).cashSubtotal)}</strong>
+                <span>GCash Subtotal</span><strong>{peso(paymentBreakdown(selectedReceipt).gcashSubtotal)}</strong>
                 {Number(selectedReceipt.discountAmount) > 0 && (
                   <>
                     <span>Discount</span><strong>-{peso(selectedReceipt.discountAmount)}</strong>
                   </>
                 )}
                 <span>Total</span><strong>{peso(selectedReceipt.totalAmount)}</strong>
+                <span>Cash</span><strong>{peso(paymentBreakdown(selectedReceipt).cash)}</strong>
+                <span>GCash</span><strong>{peso(paymentBreakdown(selectedReceipt).gcash)}</strong>
                 <span>Payment</span><strong>{selectedReceipt.paymentMethod || 'Cash'}</strong>
               </div>
               <div className="receipt-rule" />

@@ -78,7 +78,7 @@ export default function AdminLayout() {
           detail: `${log.user || 'System'} - ${log.detail || new Date(log.time).toLocaleString()}`,
         })),
       ]
-      setNotifications(alerts.length ? alerts : [{
+      setNotifications(alerts.length ? alerts.slice(0, 5) : [{
         tone: 'success',
         title: 'All clear',
         detail: 'No critical stock, discount, void, refund, exchange, receipt, or sales alerts right now.',
@@ -137,13 +137,22 @@ export default function AdminLayout() {
               </button>
               {notificationsOpen && (
                 <div className="notification-panel">
-                  <div className="notification-head">Notifications</div>
+                  <div className="notification-head">
+                    <span>Notifications</span>
+                    <button type="button" onClick={() => setNotifications([])}>Clear History</button>
+                  </div>
                   {notifications.map((item, index) => (
                     <div className={`notification-item ${item.tone}`} key={`${item.title}-${index}`}>
                       <strong>{item.title}</strong>
                       <span>{item.detail}</span>
                     </div>
                   ))}
+                  {notifications.length === 0 && (
+                    <div className="notification-item info">
+                      <strong>No notifications</strong>
+                      <span>History cleared for this session.</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

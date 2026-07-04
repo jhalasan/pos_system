@@ -52,8 +52,9 @@ function buildInitialForm(product, categories) {
   const costValue = Number(product?.cost) || Number(product?.price) || 0
   const marginValue = Number(product?.profitMargin) || 0
   const isMultipleUnits = Boolean(product?.hasMultipleUnits ?? product?.has_multiple_units ?? false)
-  const initialSellingUnits = normalizeSellingUnits(product?.sellingUnits || product?.selling_units || [], { barcode: product?.barcode || '', unit: baseUnit })
   const defaultPrice = deriveSellingPrice(costValue, marginValue, 1, Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1)
+  const initialSellingUnits = normalizeSellingUnits(product?.sellingUnits || product?.selling_units || [], { barcode: product?.barcode || '', unit: baseUnit })
+    .map((unit, index) => (index === 0 ? { ...unit, price: defaultPrice, isPriceManual: false } : unit))
 
   return {
     ...blank,
@@ -68,8 +69,8 @@ function buildInitialForm(product, categories) {
     lowStock: Number(product?.lowStock ?? product?.min_stock ?? blank.lowStock) || 0,
     cost: costValue,
     profitMargin: marginValue,
-    price: Number(product?.price) || defaultPrice,
-    isPriceManual: Boolean(product?.isPriceManual),
+    price: defaultPrice,
+    isPriceManual: false,
     hasMultipleUnits: isMultipleUnits,
     sellingUnits: initialSellingUnits,
   }
@@ -122,9 +123,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }, [])
 
   function updateSellingRows(nextForm, currentRows = sellingUnits) {
-    const baseUnitPrice = nextForm.isPriceManual
-      ? Number(nextForm.price) || 0
-      : deriveSellingPrice(Number(nextForm.cost), Number(nextForm.profitMargin), 1, Number(nextForm.conversionQuantity))
+    const baseUnitPrice = deriveSellingPrice(Number(nextForm.cost), Number(nextForm.profitMargin), 1, Number(nextForm.conversionQuantity))
 
     const normalizedRows = currentRows.map((row, index) => {
       if (index === 0) {
@@ -168,21 +167,13 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         }
       }
 
-      if (key === 'price') {
-        const numericValue = Number(value)
-        const normalizedValue = Number.isFinite(numericValue) ? numericValue : 0
-        next.isPriceManual = true
-        next.price = normalizedValue
-        setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, price: normalizedValue, isPriceManual: true } : row)))
-      }
-
       if (key === 'hasMultipleUnits' && !value) {
         setSellingUnits((current) => current.map((row, index) => (index === 0 ? {
           ...row,
           unit: String(next.unit || 'Piece').trim() || 'Piece',
           conversion: 1,
-          price: next.isPriceManual ? Number(next.price) || 0 : deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
-          isPriceManual: Boolean(next.isPriceManual),
+          price: deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
+          isPriceManual: false,
         } : row)))
       }
 
@@ -220,9 +211,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }
 
   function addSellingUnit() {
-    const basePrice = form.isPriceManual
-      ? Number(form.price) || 0
-      : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
+    const basePrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
 
     setSellingUnits((current) => [
       ...current,
@@ -265,9 +254,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     const marginValue = Number(form.profitMargin)
     const conversionQuantity = Number(form.conversionQuantity)
     const initialStock = Number(form.initialStock)
-    const basePrice = form.isPriceManual
-      ? Number(form.price) || 0
-      : deriveSellingPrice(costValue, marginValue, 1, conversionQuantity)
+    const basePrice = deriveSellingPrice(costValue, marginValue, 1, conversionQuantity)
 
     if (!form.name.trim()) { alert('Product name is required.'); return }
     if (!String(form.category || '').trim()) { alert('Category is required.'); return }
@@ -297,7 +284,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         unit: String(form.unit || '').trim(),
         conversion: 1,
         price: basePrice,
-        isPriceManual: Boolean(form.isPriceManual),
+        isPriceManual: false,
       }]
 
     const normalizedSellingUnits = unitRows.filter((row) => row.barcode || row.unit || row.conversion || row.price)
@@ -338,7 +325,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }
 
   const baseUnitCost = Number(form.conversionQuantity) > 0 ? Number(form.cost) / Number(form.conversionQuantity) : Number(form.cost)
-  const retailPrice = form.isPriceManual ? Number(form.price) || 0 : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
+  const retailPrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
   const conversionText = form.hasMultipleUnits && form.purchaseUnit && form.unit && Number(form.conversionQuantity) > 0
     ? `1 ${form.purchaseUnit || 'Purchase Unit'} = ${Number(form.conversionQuantity) || 0} ${form.unit || 'Base Unit'}`
     : ''
@@ -441,19 +428,6 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             value={form.profitMargin}
             onChange={(e) => setFormNumberValue('profitMargin', e.target.value)}
             onBlur={(e) => setFormValue('profitMargin', formatPriceInput(e.target.value))}
-          />
-        </div>
-
-        <div className="field">
-          <label>Retail Price</label>
-          <input
-            className="input"
-            type="number"
-            min="0"
-            step="0.01"
-            value={form.price}
-            onChange={(e) => setFormValue('price', e.target.value)}
-            onBlur={(e) => setFormValue('price', formatPriceInput(e.target.value))}
           />
         </div>
 

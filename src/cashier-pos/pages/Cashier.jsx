@@ -119,7 +119,6 @@ const CASHIER_SHORTCUTS = [
   { action: 'newTransaction', label: 'New transaction', defaultKeys: 'Ctrl+N' },
   { action: 'completeTransaction', label: 'Complete transaction / Pay', defaultKeys: 'F10' },
   { action: 'voidTransaction', label: 'Void current transaction', defaultKeys: 'Ctrl+Backspace' },
-  { action: 'openRegister', label: 'Open cash register', defaultKeys: 'Ctrl+R' },
   { action: 'paymentCash', label: 'Select cash payment', defaultKeys: 'Ctrl+1' },
   { action: 'paymentGcash', label: 'Select GCash payment', defaultKeys: 'Ctrl+2' },
   { action: 'reprintReceipt', label: 'Print receipt copy', defaultKeys: 'Ctrl+P' },
@@ -133,6 +132,7 @@ const DEFAULT_SHORTCUT_SETTINGS = {
   showLabels: true,
   shortcuts: CASHIER_SHORTCUTS.reduce((map, item) => ({ ...map, [item.action]: item.defaultKeys }), {}),
 };
+const CASHIER_AUDIT_ENTRY_KEY = 'nexa_cashier_audit_entry';
 
 function loadReceiptSettings() {
   try {
@@ -164,6 +164,19 @@ function loadShortcutSettings() {
     };
   } catch {
     return DEFAULT_SHORTCUT_SETTINGS;
+  }
+}
+
+function loadCashierAuditEntry() {
+  try {
+    return {
+      cashBeginning: '',
+      cashEnding: '',
+      cashOnHand: '',
+      ...JSON.parse(localStorage.getItem(CASHIER_AUDIT_ENTRY_KEY) || '{}'),
+    };
+  } catch {
+    return { cashBeginning: '', cashEnding: '', cashOnHand: '' };
   }
 }
 
@@ -296,6 +309,9 @@ const Cashier = ({ onLogout, user }) => {
   const [shortcutSettings, setShortcutSettings] = useState(loadShortcutSettings);
   const [settingsTab, setSettingsTab] = useState('shortcuts');
   const [theme, setTheme] = useState(getStoredTheme);
+  const [cashierAuditEntry, setCashierAuditEntry] = useState(loadCashierAuditEntry);
+  const [cashierAuditSaving, setCashierAuditSaving] = useState(false);
+  const [cashierAuditMessage, setCashierAuditMessage] = useState('');
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -493,6 +509,41 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const shortcutFor = (action) => normalizeShortcut(shortcutSettings.shortcuts[action]);
+
+  const updateCashierAuditEntry = (key, value) => {
+    setCashierAuditEntry((current) => {
+      const next = { ...current, [key]: value };
+      localStorage.setItem(CASHIER_AUDIT_ENTRY_KEY, JSON.stringify(next));
+      return next;
+    });
+    setCashierAuditMessage('');
+  };
+
+  const saveCashierAuditEntry = async () => {
+    const cashBeginning = Number(cashierAuditEntry.cashBeginning);
+    const cashEnding = Number(cashierAuditEntry.cashEnding);
+    const cashOnHand = Number(cashierAuditEntry.cashOnHand);
+
+    if (![cashBeginning, cashEnding, cashOnHand].every((value) => Number.isFinite(value) && value >= 0)) {
+      setCashierAuditMessage('Enter valid cash beginning, ending, and on-hand amounts.');
+      return;
+    }
+
+    setCashierAuditSaving(true);
+    try {
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Cash Audit',
+        detail: `Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}.`,
+      });
+      setCashierAuditMessage('Cash audit saved to activity logs.');
+      showNotification('Cash audit saved.');
+    } catch (err) {
+      setCashierAuditMessage((typeof err === 'string' ? err : err.message) || 'Unable to save cash audit.');
+    } finally {
+      setCashierAuditSaving(false);
+    }
+  };
 
   const ShortcutHint = ({ action }) => {
     const value = shortcutFor(action);
@@ -1019,13 +1070,20 @@ const Cashier = ({ onLogout, user }) => {
     showNotification('Transaction has been voided.');
   };
 
-  const handleOpenCashRegister = async () => {
-    setCashRegisterOpen(true);
+  const openCashRegisterForActivity = async (reason, detail) => {
     try {
       await openCashDrawer({ skipStatusCheck: true });
-      showNotification('Cash register opened successfully.');
+      setCashRegisterOpen(true);
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Cash Register Opened',
+        detail: detail || `Cash register opened by ${user?.name || user?.email || 'Cashier'} for ${reason}.`,
+      }).catch(() => {});
+      return true;
     } catch (err) {
+      setCashRegisterOpen(false);
       showNotification((typeof err === 'string' ? err : err.message) || 'Unable to open cash drawer.');
+      return false;
     }
   };
 
@@ -1064,8 +1122,10 @@ const Cashier = ({ onLogout, user }) => {
         action: 'Cash Out',
         detail: `Cash out PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'} approved by ${approver?.name || 'Manager'}${cashOutReason ? ` (${cashOutReason})` : ''}`,
       });
-      await openCashDrawer({ skipStatusCheck: true });
-      setCashRegisterOpen(true);
+      await openCashRegisterForActivity(
+        'cash out',
+        `Cash register opened for cash out PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}.`
+      );
       showNotification(`Cash out recorded: ${money(amount)}.`);
       resetCashOutModal();
     } catch (err) {
@@ -1410,6 +1470,10 @@ const Cashier = ({ onLogout, user }) => {
         refNumber: isSplitPayment ? `split:${JSON.stringify(completedSplitPayments)}` : gcashRef,
         items: completedItems,
       });
+      await openCashRegisterForActivity(
+        'completed transaction',
+        `Cash register opened after completed transaction ${sale.transactionNo || completedTransactionNo}.`
+      );
 
       await loadProducts();
       const result = await cashierApi.nextTransactionNumber();
@@ -1439,7 +1503,7 @@ const Cashier = ({ onLogout, user }) => {
       setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
-      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Open drawer, then print receipt.`);
+      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Cash drawer opened.`);
       autoPrintCompletedReceipt(completedTxn);
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
@@ -1513,7 +1577,6 @@ const Cashier = ({ onLogout, user }) => {
       newTransaction: handleNewTransaction,
       completeTransaction: handleCompleteTransaction,
       voidTransaction: handleVoidTransaction,
-      openRegister: handleOpenCashRegister,
       paymentCash: () => {
         if (isLockedTxn) return;
         updateActiveTransaction({ isSplitPayment: false, paymentMethod: 'cash' });
@@ -1664,6 +1727,15 @@ const Cashier = ({ onLogout, user }) => {
             <Gear size={16} />
             {withShortcut('Settings', 'settings')}
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles['cash-out-header-button']}
+            onClick={() => setShowCashOutModal(true)}
+          >
+            <Dash size={16} />
+            Cash Out
+          </Button>
         </div>
         <div className={styles['header-actions']}>
           <button className={styles['logout-button']} onClick={handleLogout}>
@@ -1703,10 +1775,6 @@ const Cashier = ({ onLogout, user }) => {
           ))}
         </div>
         <div className={styles['transaction-actions']}>
-          <button className={styles['transaction-cash-out']} onClick={() => setShowCashOutModal(true)}>
-            <Dash size={14} />
-            Cash Out
-          </button>
           <button className={styles['transaction-new']} onClick={handleNewTransaction}>
             <Plus size={14} />
             {withShortcut('New Transaction', 'newTransaction')}
@@ -1962,24 +2030,10 @@ const Cashier = ({ onLogout, user }) => {
                 <button
                   type="button"
                   className={styles['payment-btn']}
-                  onClick={handleOpenCashRegister}
-                >
-                  {withShortcut('Open Register', 'openRegister')}
-                </button>
-                <button
-                  type="button"
-                  className={styles['payment-btn']}
                   onClick={openDiscountModal}
                   disabled={isLockedTxn}
                 >
                   {withShortcut('Discount', 'requestDiscount')}
-                </button>
-                <button
-                  type="button"
-                  className={styles['payment-btn']}
-                  onClick={() => setShowCashOutModal(true)}
-                >
-                  Cash Out
                 </button>
               </div>
             </div>
@@ -2617,6 +2671,16 @@ const Cashier = ({ onLogout, user }) => {
             </button>
             <button
               type="button"
+              className={settingsTab === 'audit' ? styles.active : ''}
+              onClick={() => setSettingsTab('audit')}
+              role="tab"
+              aria-selected={settingsTab === 'audit'}
+            >
+              <strong>Audit</strong>
+              <small>Cash counts</small>
+            </button>
+            <button
+              type="button"
               className={settingsTab === 'spacing' ? styles.active : ''}
               onClick={() => setSettingsTab('spacing')}
               role="tab"
@@ -2696,6 +2760,60 @@ const Cashier = ({ onLogout, user }) => {
                     </label>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {settingsTab === 'audit' && (
+              <div className={styles['settings-section']}>
+                <div className={styles['settings-section-head']}>
+                  <div>
+                    <h4>Cash Audit</h4>
+                    <p>Record cash beginning, cash ending, and actual cash on hand into the activity logs.</p>
+                  </div>
+                </div>
+                <div className={styles['audit-entry-grid']}>
+                  <Input
+                    label="Cash Beginning"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={cashierAuditEntry.cashBeginning}
+                    onChange={(e) => updateCashierAuditEntry('cashBeginning', e.target.value)}
+                    disabled={cashierAuditSaving}
+                  />
+                  <Input
+                    label="Cash Ending"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={cashierAuditEntry.cashEnding}
+                    onChange={(e) => updateCashierAuditEntry('cashEnding', e.target.value)}
+                    disabled={cashierAuditSaving}
+                  />
+                  <Input
+                    label="Cash On Hand"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={cashierAuditEntry.cashOnHand}
+                    onChange={(e) => updateCashierAuditEntry('cashOnHand', e.target.value)}
+                    disabled={cashierAuditSaving}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className={styles['receipt-spacing-tight-button']}
+                  onClick={saveCashierAuditEntry}
+                  disabled={cashierAuditSaving}
+                >
+                  {cashierAuditSaving ? 'Saving Audit...' : 'Save Audit Entry'}
+                </button>
+                {cashierAuditMessage && (
+                  <div className={styles['audit-entry-message']}>{cashierAuditMessage}</div>
+                )}
               </div>
             )}
 
