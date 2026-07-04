@@ -1,4 +1,5 @@
 import { adminDb } from './db'
+import { mergeProductWithCloudRecord } from './productSyncUtils'
 
 function firstRelation(value) {
   return Array.isArray(value) ? value[0] : value
@@ -83,23 +84,17 @@ export async function replaceProductsFromCloud(records, pb) {
 
     const mergedProducts = products.map((cloudProduct) => {
       const localProduct = localById.get(cloudProduct.id) || localByBarcode.get(cloudProduct.barcode)
-      if (!localProduct || localProduct.deleted) return cloudProduct
-
-      const stockOps = pendingOps.filter((op) => matchesStockOp(op, cloudProduct, localProduct))
-      const stockDelta = stockOps.reduce((sum, op) => sum + stockDeltaForOp(op), 0)
-      const shouldPreserveLocal = localProduct.pendingSync || stockOps.length > 0
-      if (!shouldPreserveLocal) return cloudProduct
-
-      pendingLocalProducts.add(localProduct.id)
-      const qty = stockOps.length > 0
-        ? Math.max(0, (Number(cloudProduct.qty) || 0) + stockDelta)
-        : Math.max(0, Number(localProduct.qty) || 0)
-      return {
-        ...cloudProduct,
-        qty,
-        pendingSync: true,
-        status: deriveStatus({ ...cloudProduct, qty }),
+      if (!localProduct) return cloudProduct
+      if (localProduct.deleted) {
+        pendingLocalProducts.add(localProduct.id)
+        return mergeProductWithCloudRecord(cloudProduct, localProduct, pendingOps)
       }
+
+      const merged = mergeProductWithCloudRecord(cloudProduct, localProduct, pendingOps, deriveStatus)
+      if (localProduct.pendingSync || pendingOps.some((op) => matchesStockOp(op, cloudProduct, localProduct))) {
+        pendingLocalProducts.add(localProduct.id)
+      }
+      return merged
     })
 
     const unmatchedPending = localProducts.filter((product) => (

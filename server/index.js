@@ -460,12 +460,13 @@ async function findProductByScanBarcode(barcode) {
   if (!normalizedBarcode) return null
 
   const records = await (await pbCollection('products')).getFullList({
-    fields: 'id,barcode,name,quantity,selling_units',
+    fields: 'id,barcode,name,quantity,selling_units,sellingUnits',
   }).catch(() => [])
 
   return records.find((record) => {
     if (String(record.barcode || '').trim() === normalizedBarcode) return true
-    return parseSellingUnits(record.selling_units).some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
+    return parseSellingUnits(record.selling_units ?? record.sellingUnits)
+      .some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
   }) || null
 }
 
@@ -708,17 +709,30 @@ app.get('/api/cashier/products', asyncRoute(async (_req, res) => {
 
 app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) => {
   const barcode = String(req.params.barcode || '').trim()
-  const record = await (await pbCollection('products')).getFirstListItem(
-    pb.filter('barcode = {:barcode}', { barcode }),
-    { expand: 'category' },
-  ).catch((error) => {
-    if (error.status === 404) return null
-    throw error
-  })
+  if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
 
-  if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
+  const matched = await findProductByScanBarcode(barcode)
+  if (!matched) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
 
+  const record = await (await pbCollection('products')).getOne(matched.id, { expand: 'category' })
   const product = toProduct(record)
+  const matchingUnit = parseSellingUnits(record.selling_units ?? record.sellingUnits)
+    .find((unit) => String(unit?.barcode || '').trim() === barcode)
+  if (matchingUnit) {
+    product.barcode = barcode
+    product.unit = String(matchingUnit.unit || product.unit).trim() || product.unit
+    product.price = Number(matchingUnit.price) || product.price
+    product.conversion = Number(matchingUnit.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+    product.matchingUnit = {
+      barcode: barcode,
+      unit: product.unit,
+      conversion: product.conversion,
+      price: product.price,
+    }
+  } else {
+    product.conversion = 1
+  }
+
   if (product.qty <= 0) return res.status(409).json({ error: `"${product.name}" is out of stock.` })
   res.json(product)
 }))
@@ -891,10 +905,16 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     const product = await products.getOne(item.productId)
     const quantity = Number(item.quantity) || 0
     if (quantity <= 0) return res.status(400).json({ error: `Invalid quantity for "${product.name}".` })
-    if ((Number(product.quantity) || 0) < quantity) {
-      return res.status(409).json({ error: `"${product.name}" has only ${product.quantity || 0} item(s) left.` })
+
+    const matchingUnit = parseSellingUnits(product.selling_units).find((unit) => String(unit?.barcode || '').trim() === String(item.barcode || '').trim())
+    const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+    const baseQuantity = quantity * conversion
+
+    if ((Number(product.quantity) || 0) < baseQuantity) {
+      return res.status(409).json({ error: `"${product.name}" has only ${product.quantity || 0} base unit(s) left.` })
     }
-    productRecords.push({ product, item, quantity })
+
+    productRecords.push({ product, item, quantity, baseQuantity })
   }
 
   const sale = await sales.create({
@@ -907,7 +927,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     created_at: new Date().toISOString(),
   })
 
-  for (const { product, item, quantity } of productRecords) {
+  for (const { product, item, quantity, baseQuantity } of productRecords) {
     await saleItems.create({
       sale_id: sale.id,
       product_id: product.id,
@@ -915,7 +935,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
       price_at_sale: Number(item.price) || Number(product.price) || 0,
     })
     await products.update(product.id, {
-      quantity: numberFieldValue((Number(product.quantity) || 0) - quantity),
+      quantity: numberFieldValue((Number(product.quantity) || 0) - baseQuantity),
     })
   }
 
@@ -1020,7 +1040,14 @@ app.patch('/api/products/:id', upload.single('product_img'), asyncRoute(async (r
 }))
 
 app.delete('/api/products/:id', asyncRoute(async (req, res) => {
-  await (await pbCollection('products')).delete(req.params.id)
+  try {
+    await (await pbCollection('products')).delete(req.params.id)
+  } catch (error) {
+    const message = error?.message || ''
+    const isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
+    if (!isRelationConstraint && error?.status !== 404) throw error
+  }
+
   await createLog({ action: 'Product', detail: `Deleted product ${req.params.id}` })
   res.status(204).end()
 }))

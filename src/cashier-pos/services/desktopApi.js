@@ -478,7 +478,20 @@ export const desktopCashierApi = {
     }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
     if (product.quantity <= 0) throw new Error(`"${product.name}" is out of stock.`)
-    return toCashierProduct(product)
+
+    const matchingUnit = Array.isArray(product.sellingUnits)
+      ? product.sellingUnits.find((unit) => String(unit.barcode || '').trim() === String(barcode || '').trim())
+      : null
+    const result = toCashierProduct(product)
+    if (matchingUnit) {
+      result.barcode = barcode
+      result.unit = matchingUnit.unit || result.unit
+      result.price = matchingUnit.price || result.price
+      result.conversion = matchingUnit.conversion || 1
+    } else {
+      result.conversion = 1
+    }
+    return result
   },
 
   async nextTransactionNumber() {

@@ -1,4 +1,5 @@
 import { cashierDb, initializeCashierDb } from './db'
+import { toBaseStockQuantity } from './stockUtils'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -48,6 +49,7 @@ export async function finalizeSaleLocally(sale) {
       name: String(item.name || ''),
       barcode: String(item.barcode || ''),
       quantity: Number(item.quantity) || 0,
+      conversion: Number(item.conversion) > 0 ? Number(item.conversion) : 1,
       price: Number(item.price) || 0,
     })),
     status: 'pending',
@@ -75,12 +77,13 @@ export async function finalizeSaleLocally(sale) {
 
         const product = await cashierDb.products.get(item.productId)
         if (!product) throw new Error(`Product "${item.name || item.productId}" is not available locally.`)
-        if (product.quantity < item.quantity) {
+        const baseQuantity = toBaseStockQuantity(item.quantity, item.conversion)
+        if (product.quantity < baseQuantity) {
           throw new Error(`"${product.name}" has only ${product.quantity} item(s) left.`)
         }
 
         await cashierDb.products.update(product.id, {
-          quantity: product.quantity - item.quantity,
+          quantity: product.quantity - baseQuantity,
         })
       }
 
@@ -132,7 +135,7 @@ async function restoreProductStock(items = []) {
     const product = await cashierDb.products.get(productId)
     if (!product) continue
     await cashierDb.products.update(product.id, {
-      quantity: (Number(product.quantity) || 0) + (Number(item.quantity) || 0),
+      quantity: (Number(product.quantity) || 0) + toBaseStockQuantity(item.quantity, item.conversion),
     })
   }
 }

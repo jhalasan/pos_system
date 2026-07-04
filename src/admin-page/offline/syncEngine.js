@@ -361,10 +361,25 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     if (op.type === 'deleteProduct') {
-      await this.pb.collection('products').delete(op.productId, { requestKey: op.id }).catch((error) => {
-        if (error.status !== 404) throw error
-      })
-      await adminDb.products.delete(op.productId)
+      try {
+        await this.pb.collection('products').delete(op.productId, { requestKey: op.id })
+      } catch (error) {
+        const message = error?.message || ''
+        const isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
+        if (error?.status !== 404 && !isRelationConstraint) throw error
+      }
+
+      const existing = await adminDb.products.get(op.productId).catch(() => null)
+      if (existing) {
+        await adminDb.products.put({
+          ...existing,
+          deleted: true,
+          pendingSync: false,
+          updated: new Date().toISOString(),
+        })
+      } else {
+        await adminDb.products.delete(op.productId).catch(() => {})
+      }
       await adminDb.pendingOps.delete(op.id)
       return
     }

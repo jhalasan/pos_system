@@ -45,10 +45,15 @@ async function request(path, options = {}) {
 }
 
 function productBody(data) {
-  if (!data.imageFile) return JSON.stringify(data)
+  const body = { ...data }
+  if (body.hasMultipleUnits !== undefined && body.has_multiple_units === undefined) {
+    body.has_multiple_units = body.hasMultipleUnits
+  }
+
+  if (!body.imageFile) return JSON.stringify(body)
 
   const formData = new FormData()
-  for (const [key, value] of Object.entries(data)) {
+  for (const [key, value] of Object.entries(body)) {
     if (['imageFile', 'imageUrl', 'image', 'status', 'categoryId'].includes(key)) continue
     if (key === 'tiers' || key === 'sellingUnits') {
       formData.append(key, JSON.stringify(value || []))
@@ -56,7 +61,7 @@ function productBody(data) {
     }
     formData.append(key, value ?? '')
   }
-  formData.append('product_img', data.imageFile)
+  formData.append('product_img', body.imageFile)
   return formData
 }
 

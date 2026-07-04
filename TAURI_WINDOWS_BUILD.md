@@ -74,7 +74,7 @@ who will operate the cashier terminal.
 ## Release checklist
 
 - Set the real HTTPS `VITE_POCKETBASE_URL`.
-- Import the required PocketBase schema and unique indexes.
+- Import the required PocketBase schema and unique indexes. This must include the new `products` fields such as `has_multiple_units`, `selling_units`, `purchase_unit`, `conversion_quantity`, and `initial_stock`.
 - Test one checkout with the network disconnected.
 - Reconnect and confirm the queued sale appears once in PocketBase.
 - Code-sign the installer before public or wide internal distribution.

@@ -1,6 +1,7 @@
 import PocketBase from 'pocketbase'
 import { cashierDb } from './db'
 import { refreshLocalProductCatalog } from './cloudBootstrap'
+import { toBaseStockQuantity } from './stockUtils'
 import {
   isPocketBaseRateLimited,
   pocketBaseRateLimitRemainingMs,
@@ -94,9 +95,11 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
       return saleItemProductId === productId
     })
     const syncedQty = matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0)
+    const baseQuantityToDeduct = toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1)
+    const effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
 
     await pb.collection('products').update(product.id, {
-      quantity: numberFieldValue((Number(product.quantity) || 0) - syncedQty),
+      quantity: numberFieldValue((Number(product.quantity) || 0) - effectiveQtyToDeduct),
     }, {
       requestKey: `product-stock:${sale.clientSaleId}:${productId}`,
     })

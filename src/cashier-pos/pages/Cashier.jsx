@@ -9,6 +9,7 @@ import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
 import { printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
+import { toBaseStockQuantity } from '../offline/stockUtils';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -322,18 +323,25 @@ const Cashier = ({ onLogout, user }) => {
     );
   }, [historyRecords, historySearch]);
 
-  const getReservedQuantity = (productId, excludedTransactionId = null) => {
+  const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => {
+    const normalizedProductId = String(productId || '')
     return transactions.reduce((sum, txn) => {
       if (txn.id === excludedTransactionId) return sum;
-      const item = txn.cartItems.find((cartItem) => cartItem.id === productId || cartItem.productId === productId);
-      return sum + (Number(item?.quantity) || 0);
-    }, 0);
+      return txn.cartItems.reduce((innerSum, cartItem) => {
+        const itemProductId = String(cartItem.productId || cartItem.id || '')
+        const itemId = String(cartItem.id || '')
+        if (itemProductId !== normalizedProductId) return innerSum
+        if (excludedCartItemId && itemId === excludedCartItemId) return innerSum
+        return innerSum + toBaseStockQuantity(cartItem.quantity, cartItem.conversion)
+      }, sum)
+    }, 0)
   };
 
-  const getRemainingStock = (item, excludedTransactionId = null) => {
-    const productId = item.id || item.productId;
-    const baseQty = Number(item.stockQty ?? item.qty) || 0;
-    return Math.max(0, baseQty - getReservedQuantity(productId, excludedTransactionId));
+  const getRemainingStock = (item, excludedTransactionId = null, excludedCartItemId = null) => {
+    const productId = String(item.id || item.productId || '')
+    const baseQty = Number(item.stockQty ?? item.qty) || 0
+    const reserved = getReservedBaseQuantity(productId, excludedCartItemId, excludedTransactionId)
+    return Math.max(0, baseQty - reserved)
   };
 
   const stockForProduct = (item, excludedTransactionId = null) => {
@@ -971,18 +979,21 @@ const Cashier = ({ onLogout, user }) => {
       showNotification('This transaction is already completed. Start a new transaction to continue selling.');
       return;
     }
-    const availableQty = stockForProduct(product);
+
+    const conversion = Number(product.conversion) > 0 ? Number(product.conversion) : 1
+    const availableQty = Math.floor(stockForProduct(product) / conversion)
 
     if (availableQty <= 0) {
       showNotification(`${product.name} is out of stock.`);
       return;
     }
 
+    const itemId = `${product.id}:${String(product.barcode || '').trim()}`
     const nextCartItems = (() => {
-      const existing = cartItems.find((item) => item.id === product.id);
+      const existing = cartItems.find((item) => item.id === itemId);
       if (existing) {
         return cartItems.map((item) =>
-          item.id === product.id
+          item.id === itemId
             ? { ...item, quantity: item.quantity + 1, total: item.price * (item.quantity + 1) }
             : item
         );
@@ -991,12 +1002,13 @@ const Cashier = ({ onLogout, user }) => {
       return [
         ...cartItems,
         {
-          id: product.id,
+          id: itemId,
           productId: product.id,
           name: product.name,
           quantity: 1,
           unit: product.unit,
           price: product.price,
+          conversion,
           stockQty: product.qty,
           lowStock: product.lowStock,
           barcode: product.barcode,
@@ -1086,8 +1098,9 @@ const Cashier = ({ onLogout, user }) => {
     updateActiveTransaction({
       cartItems: cartItems.map((item) => {
         if (item.id !== id) return item;
-        const maxQty = Math.max(1, getRemainingStock(item, activeTransaction));
-        const nextQty = Math.max(1, Math.min(maxQty, Math.floor(requested)));
+        const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1
+        const availableBase = getRemainingStock(item, activeTransaction, item.id)
+        const maxQty = Math.max(1, Math.min(Math.floor(availableBase / conversion), Math.floor(requested)));
 
         if (requested > maxQty) {
           showNotification(`Only ${maxQty} item(s) available for ${item.name}.`);
@@ -1095,8 +1108,8 @@ const Cashier = ({ onLogout, user }) => {
 
         return {
           ...item,
-          quantity: nextQty,
-          total: item.price * nextQty,
+          quantity: maxQty,
+          total: item.price * maxQty,
         };
       }),
     });
@@ -1176,6 +1189,7 @@ const Cashier = ({ onLogout, user }) => {
       barcode: item.barcode,
       unit: item.unit,
       quantity: item.quantity,
+      conversion: item.conversion,
       price: item.price,
     }));
     const completedPayment = {

@@ -44,7 +44,7 @@ function booleanFieldValue(value) {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase()
     if (['true', '1', 'yes', 'y'].includes(normalized)) return true
-    if (['false', '0', 'no', 'n'].includes(normalized)) return false
+    if (['false', '0', 'no', 'n', 'null', 'undefined', ''].includes(normalized)) return false
   }
   return false
 }

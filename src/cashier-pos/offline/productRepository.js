@@ -9,6 +9,9 @@ function normalizeProduct(record, pb) {
     ? record.expand.category[0]
     : record.expand?.category
   const image = firstFileValue(record.product_img ?? record.image)
+  const sellingUnits = Array.isArray(record.selling_units)
+    ? record.selling_units
+    : (typeof record.selling_units === 'string' ? JSON.parse(record.selling_units || '[]') : [])
 
   return {
     id: record.id,
@@ -20,6 +23,12 @@ function normalizeProduct(record, pb) {
     price: Number(record.price) || 0,
     unit: record.base_unit || 'Piece',
     minStock: Number(record.min_stock) || 0,
+    sellingUnits: sellingUnits.map((unit) => ({
+      barcode: String(unit?.barcode || '').trim(),
+      unit: String(unit?.unit || '').trim(),
+      conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
+      price: Number(unit?.price) || 0,
+    })).filter((unit) => unit.barcode || unit.unit || unit.conversion || unit.price),
     image: image || '',
     imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),
     updated: record.updated || new Date().toISOString(),
@@ -46,8 +55,16 @@ export function getAllProducts() {
 export async function getProductByBarcode(barcode) {
   const normalizedBarcode = String(barcode || '').trim()
   if (!normalizedBarcode) return undefined
-  return cashierDb.products
+
+  const baseProduct = await cashierDb.products
     .filter((product) => String(product.barcode || '').trim() === normalizedBarcode)
+    .first()
+  if (baseProduct) return baseProduct
+
+  return cashierDb.products
+    .filter((product) => Array.isArray(product.sellingUnits)
+      ? product.sellingUnits.some((unit) => String(unit.barcode || '').trim() === normalizedBarcode)
+      : false)
     .first()
 }
 
