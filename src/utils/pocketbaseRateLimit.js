@@ -1,6 +1,8 @@
 const DEFAULT_RETRY_MS = 5 * 60 * 1000
+const MIN_COOLDOWN_MS = 15_000
 
 let rateLimitedUntil = 0
+let refreshLock = null
 
 function textFromError(error) {
   return [
@@ -28,8 +30,17 @@ export function isPocketBaseRateLimit(error) {
 
 export function rememberPocketBaseRateLimit(error) {
   if (!isPocketBaseRateLimit(error)) return false
-  rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + retryMsFromError(error))
+  const retryMs = Math.max(MIN_COOLDOWN_MS, retryMsFromError(error))
+  rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + retryMs)
   return true
+}
+
+export function withPocketBaseRateLimitLock(task) {
+  if (refreshLock) return refreshLock
+  refreshLock = Promise.resolve(task()).finally(() => {
+    refreshLock = null
+  })
+  return refreshLock
 }
 
 export function pocketBaseRateLimitRemainingMs() {
