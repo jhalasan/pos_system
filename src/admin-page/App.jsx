@@ -9,9 +9,9 @@ import ProductManagement from './pages/ProductManagement'
 import BarcodeTools from './pages/BarcodeTools'
 import CashierManagement from './pages/CashierManagement'
 import Analytics from './pages/Analytics'
-import GCashPayments from './pages/GCashPayments'
 import TransactionLogs from './pages/TransactionLogs'
 import ActivityLogs from './pages/ActivityLogs'
+import Audit from './pages/Audit'
 import Settings from './pages/Settings'
 
 function RequireAuth({ children }) {
@@ -39,8 +39,9 @@ export default function App() {
         <Route path="barcodes" element={<BarcodeTools />} />
         <Route path="cashiers" element={<CashierManagement />} />
         <Route path="analytics" element={<Analytics />} />
-        <Route path="gcash-payments" element={<GCashPayments />} />
+        <Route path="gcash-payments" element={<Navigate to="/admin/transaction-logs" replace />} />
         <Route path="transaction-logs" element={<TransactionLogs />} />
+        <Route path="audit" element={<Audit />} />
         <Route path="receipts" element={<Navigate to="transaction-logs" replace />} />
         <Route path="logs" element={<ActivityLogs />} />
         <Route path="settings" element={<Settings />} />

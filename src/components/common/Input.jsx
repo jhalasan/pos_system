@@ -13,6 +13,14 @@ const Input = ({
   inputRef,
   ...props
 }) => {
+  const handleWheel = (event) => {
+    if (type === 'number') {
+      event.preventDefault();
+      event.currentTarget.blur();
+    }
+    props.onWheel?.(event);
+  };
+
   return (
     <div className="field">
       {label && (
@@ -31,6 +39,7 @@ const Input = ({
             placeholder={placeholder}
             value={value}
             onChange={onChange}
+            onWheel={handleWheel}
             disabled={disabled}
             {...props}
           />
@@ -43,6 +52,7 @@ const Input = ({
           placeholder={placeholder}
           value={value}
           onChange={onChange}
+          onWheel={handleWheel}
           disabled={disabled}
           {...props}
         />

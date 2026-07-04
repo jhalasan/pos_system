@@ -14,6 +14,7 @@ const titles = {
   analytics: 'Analytics',
   'transaction-logs': 'Transaction Logs',
   receipts: 'Transaction Logs',
+  audit: 'Audit',
   logs: 'Activity Logs',
   settings: 'Settings',
 }

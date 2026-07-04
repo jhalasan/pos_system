@@ -139,6 +139,7 @@ function toSettingsUser(record) {
     shift: record.shift || '',
     status: record.status || 'active',
     cashierId: record.id,
+    cashierBarcode: record.void_barcode || record.cashierBarcode || '',
     quickLoginEnabled: Boolean(record.quick_login_enabled ?? record.quickLoginEnabled),
   }
 }
@@ -152,6 +153,7 @@ function toCashierUser(record, sales = 0) {
     cashierId: record.id,
     name: record.name || email.split('@')[0] || 'Cashier',
     shift: record.shift || 'Morning',
+    cashierBarcode: record.void_barcode || record.cashierBarcode || '',
     image: image || '',
     imageUrl: image ? pb.files.getURL(record, image, { thumb: '100x100' }) : '',
     sales: Number(sales) || 0,
@@ -416,10 +418,11 @@ async function receiptRecordFromCloudSale(sale) {
     splitPayments,
     cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : 0,
     gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount ?? sale.totalAmount) || 0 : 0,
-    status: status === 'voided' ? 'Voided' : 'Completed',
+    status: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Completed',
     rawStatus: status,
-    actionStatus: status === 'voided' ? 'Voided' : 'Reprint available',
+    actionStatus: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Reprint available',
     itemCount: items.length ? items.reduce((sum, item) => sum + saleItemQuantity(item), 0) : null,
+    missingItems: items.length === 0,
     items: items.map(receiptItemFromCloud),
   }
 }
@@ -503,6 +506,13 @@ async function fetchReceiptRecords(filters = {}) {
     const existing = merged.get(key)
     if (!existing || ['adjusted', 'voided'].includes(record.rawStatus)) {
       merged.set(key, { ...existing, ...record })
+    } else if ((record.items || []).length > 0 && !(existing.items || []).length) {
+      merged.set(key, {
+        ...existing,
+        items: record.items,
+        itemCount: record.itemCount,
+        missingItems: false,
+      })
     }
   }
 
@@ -511,7 +521,10 @@ async function fetchReceiptRecords(filters = {}) {
 
 async function fetchGcashPayments() {
   await startAdminRuntime()
-  if (!(await isCloudReachable())) return []
+  const localPayments = (await localCashierCompletedSales())
+    .map((sale) => gcashPaymentFromSale(localSaleAsCloudLike(sale)))
+    .filter(Boolean)
+  if (!(await isCloudReachable())) return localPayments
 
   const records = await pb.collection('sales').getFullList({
     sort: '-created_at,-created',
@@ -519,7 +532,14 @@ async function fetchGcashPayments() {
     requestKey: null,
   }).catch(() => [])
 
-  return records.map(gcashPaymentFromSale).filter(Boolean)
+  const merged = new Map()
+  for (const payment of records.map(gcashPaymentFromSale).filter(Boolean)) {
+    merged.set(`${payment.transactionNo}-${payment.paymentType}`, payment)
+  }
+  for (const payment of localPayments) {
+    merged.set(`${payment.transactionNo}-${payment.paymentType}`, payment)
+  }
+  return [...merged.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 }
 
 function cashierPayload(data) {
@@ -531,6 +551,9 @@ function cashierPayload(data) {
     role: 'cashier',
     emailVisibility: true,
   }
+
+  const cashierBarcode = String(data.cashierBarcode || data.void_barcode || '').trim()
+  if (cashierBarcode) payload.void_barcode = cashierBarcode
 
   if (String(data.password || '').trim()) {
     payload.password = data.password
@@ -580,6 +603,8 @@ async function cacheUsers(records) {
     shift: record.shift || '',
     status: record.status || 'active',
     quick_login_enabled: Boolean(record.quick_login_enabled),
+    cashierBarcode: record.void_barcode || record.cashierBarcode || '',
+    void_barcode: record.void_barcode || record.cashierBarcode || '',
     emailVisibility: Boolean(record.emailVisibility),
     updated: record.updated || new Date().toISOString(),
   })))
@@ -1017,6 +1042,18 @@ function currentAdminUser() {
 
 async function recordActivity(action, detail) {
   const user = currentAdminUser()
+  const recentDuplicate = await adminDb.activityLogs
+    .where('time')
+    .above(new Date(Date.now() - 5000).toISOString())
+    .filter((log) => (
+      log.userId === (user.id || '')
+      && log.action === action
+      && log.detail === detail
+    ))
+    .first()
+    .catch(() => null)
+  if (recentDuplicate) return recentDuplicate
+
   const log = {
     id: newId('log'),
     cloudId: '',
@@ -1577,7 +1614,13 @@ export const desktopAdminApi = {
         const key = log.cloudId || log.id
         if (!merged.has(key)) merged.set(key, log)
       }
-      return [...merged.values()].sort((a, b) => new Date(b.time) - new Date(a.time))
+      const deduped = new Map()
+      for (const log of [...merged.values()].sort((a, b) => new Date(a.time) - new Date(b.time))) {
+        const bucket = Math.floor(new Date(log.time).getTime() / 5000)
+        const signature = [log.userId || log.user, log.action, log.detail, bucket].join('|')
+        if (!deduped.has(signature)) deduped.set(signature, log)
+      }
+      return [...deduped.values()].sort((a, b) => new Date(b.time) - new Date(a.time))
     }
 
     return localLogs

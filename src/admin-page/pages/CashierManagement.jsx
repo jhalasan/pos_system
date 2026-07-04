@@ -5,8 +5,52 @@ import Modal from '../components/Modal'
 import { IconUsers, IconUserPlus, IconScan, IconTrash, IconEdit, IconImage } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { code128Bars, escapeHtml } from '../utils/code128Barcode'
 
-const blank = { name: '', email: '', shift: 'Morning', status: 'active', password: '', passwordConfirm: '' }
+const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', password: '', passwordConfirm: '' }
+
+function nextCashierBarcode() {
+  return `81${String(Date.now()).slice(-10)}${String(Math.floor(Math.random() * 100)).padStart(2, '0')}`
+}
+
+function printCashierBarcode(cashier) {
+  const code = String(cashier.cashierBarcode || '').trim()
+  if (!code) {
+    alert('This cashier does not have a barcode yet.')
+    return
+  }
+
+  const { bars, width } = code128Bars(code)
+  if (!bars.length) {
+    alert('Cashier barcode can only contain standard printable characters.')
+    return
+  }
+
+  const name = escapeHtml(cashier.name || 'Cashier')
+  const escapedCode = escapeHtml(code)
+  const rects = bars.map((bar) => `<rect x="${bar.x}" y="0" width="${bar.width}" height="74" fill="#111827" />`).join('')
+  const frame = document.createElement('iframe')
+  frame.title = 'Cashier barcode print'
+  frame.style.position = 'fixed'
+  frame.style.right = '0'
+  frame.style.bottom = '0'
+  frame.style.width = '0'
+  frame.style.height = '0'
+  frame.style.border = '0'
+  frame.srcdoc = `<!doctype html><html><head><title>Cashier Barcode</title><style>
+    @page { size: 58mm auto; margin: 4mm; }
+    body { font-family: Arial, sans-serif; text-align: center; margin: 0; color: #111827; }
+    h1 { font-size: 13px; margin: 0 0 6px; }
+    svg { width: 46mm; height: 22mm; display: block; margin: 0 auto 4px; }
+    .code { font-family: Consolas, monospace; font-size: 10px; letter-spacing: 0; overflow-wrap: anywhere; }
+  </style></head><body><h1>${name}</h1><svg viewBox="0 0 ${width} 78" preserveAspectRatio="none">${rects}</svg><div class="code">${escapedCode}</div></body></html>`
+  frame.onload = () => {
+    frame.contentWindow?.focus()
+    frame.contentWindow?.print()
+    setTimeout(() => frame.remove(), 1000)
+  }
+  document.body.appendChild(frame)
+}
 
 export default function CashierManagement() {
   const { data: list, setData: setList, loading, error } = useApi(api.cashiers, [])
@@ -53,6 +97,7 @@ export default function CashierManagement() {
       originalEmail: cashier.email || '',
       shift: cashier.shift || 'Morning',
       status: cashier.status || 'active',
+      cashierBarcode: cashier.cashierBarcode || '',
       password: '',
       passwordConfirm: '',
     })
@@ -114,15 +159,20 @@ export default function CashierManagement() {
       }
     }
 
+    const savePayload = {
+      ...form,
+      cashierBarcode: String(form.cashierBarcode || '').trim() || nextCashierBarcode(),
+    }
+
     setSaving(true)
     setFormError('')
     try {
       if (isEdit) {
-        const updated = await api.updateCashier(editingCashier.id, form)
+        const updated = await api.updateCashier(editingCashier.id, savePayload)
         setList(list.map((item) => (item.id === updated.id ? updated : item)))
         flash('Cashier updated.')
       } else {
-        const created = await api.createCashier(form)
+        const created = await api.createCashier(savePayload)
         setList([...list, created])
         flash('Cashier added.')
       }
@@ -210,6 +260,7 @@ export default function CashierManagement() {
                 <tr>
                   <th>Cashier</th>
                   <th>Cashier ID</th>
+                  <th>Barcode</th>
                   <th>Shift</th>
                   <th>Total Sales</th>
                   <th>Status</th>
@@ -235,6 +286,7 @@ export default function CashierManagement() {
                       </div>
                     </td>
                     <td className="mono">{c.cashierId || c.id}</td>
+                    <td className="mono">{c.cashierBarcode || '-'}</td>
                     <td>{c.shift}</td>
                     <td>{peso(c.sales)}</td>
                     <td>
@@ -246,6 +298,9 @@ export default function CashierManagement() {
                       <div className="row-actions">
                         <button className="icon-btn" title="Edit" onClick={() => openEditCashier(c)}>
                           <IconEdit size={15} />
+                        </button>
+                        <button className="btn btn-outline cashier-print-btn" title="Print cashier barcode" onClick={() => printCashierBarcode(c)}>
+                          <IconScan size={15} /> Print
                         </button>
                         <button className="icon-btn del" title="Remove" onClick={() => removeCashier(c)}>
                           <IconTrash size={15} />
@@ -316,6 +371,20 @@ export default function CashierManagement() {
                 onChange={set('email')}
                 disabled={isEdit}
               />
+            </div>
+            <div className="field span-2">
+              <label>Cashier Login Barcode</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+                <input
+                  className="input"
+                  placeholder="Scan or generate cashier barcode"
+                  value={form.cashierBarcode || ''}
+                  onChange={set('cashierBarcode')}
+                />
+                <button type="button" className="btn btn-outline" onClick={() => setForm((current) => ({ ...current, cashierBarcode: nextCashierBarcode() }))}>
+                  Generate
+                </button>
+              </div>
             </div>
             <div className="field">
               <label>Shift</label>

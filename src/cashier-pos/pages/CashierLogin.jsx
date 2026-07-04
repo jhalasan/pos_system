@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Envelope, Eye, EyeSlash, Cart } from 'react-bootstrap-icons';
+import { Envelope, Eye, EyeSlash, Cart, UpcScan } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
 import styles from '../styles/CashierLogin.module.css';
 
@@ -24,7 +24,9 @@ function initialsFor(account) {
 const CashierLogin = ({ onLogin }) => {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [password, setPassword] = useState('');
+  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -87,6 +89,27 @@ const CashierLogin = ({ onLogin }) => {
     }
   };
 
+  const handleBarcodeLogin = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (!barcode.trim()) {
+      setError('Cashier barcode is required');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const session = await cashierApi.loginWithBarcode(barcode);
+      onLogin(session.user);
+      navigate('/cashier', { replace: true });
+    } catch (err) {
+      setError(err.message || 'Invalid cashier barcode');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className={styles['login-container']}>
       <div className={styles['login-card']}>
@@ -99,9 +122,57 @@ const CashierLogin = ({ onLogin }) => {
 
         {/* Heading */}
         <h1 className={styles['login-title']}>Cashier Login</h1>
-        <p className={styles['login-subtitle']}>Enter your credentials to access the POS</p>
+        <p className={styles['login-subtitle']}>Scan your cashier barcode to access the POS</p>
 
-        {/* Form */}
+        <form onSubmit={handleBarcodeLogin} className={styles['login-form']}>
+          <div className={styles['form-group']}>
+            <label className={styles['form-label']}>Cashier Barcode</label>
+            <div className={styles['password-wrapper']}>
+              <input
+                type="text"
+                className={styles['form-input']}
+                placeholder="Scan cashier barcode"
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                disabled={loading}
+                autoFocus
+              />
+              <span className={styles['password-toggle']} aria-hidden="true">
+                <UpcScan size={18} />
+              </span>
+            </div>
+          </div>
+
+          {error && <div className={styles['error-message']}>{error}</div>}
+
+          <button type="submit" className={styles['login-button']} disabled={loading}>
+            <UpcScan size={18} />
+            {loading ? 'Logging in...' : 'Login with Barcode'}
+          </button>
+
+          <button
+            type="button"
+            className={styles['back-button']}
+            onClick={() => {
+              setShowPasswordLogin((value) => !value);
+              setError('');
+            }}
+          >
+            {showPasswordLogin ? 'Hide Email Login' : 'Use Email and Password'}
+          </button>
+
+          {!showPasswordLogin && (
+            <button
+              type="button"
+              className={styles['back-button']}
+              onClick={() => navigate('/')}
+            >
+              Back to Role Selection
+            </button>
+          )}
+        </form>
+
+        {showPasswordLogin && (
         <form onSubmit={handleSubmit} className={styles['login-form']}>
           {quickAccounts.length > 0 && (
             <div className={styles['quick-login-section']}>
@@ -187,6 +258,7 @@ const CashierLogin = ({ onLogin }) => {
             Back to Role Selection
           </button>
         </form>
+        )}
       </div>
     </div>
   );

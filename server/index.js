@@ -247,10 +247,11 @@ async function receiptRecordFromSale(sale, saleItemsCollection) {
     splitPayments,
     cashAmount: paymentMethod === 'cash' ? Number(sale.total_amount) || 0 : 0,
     gcashAmount: paymentMethod === 'gcash' ? Number(sale.total_amount) || 0 : 0,
-    status: status === 'voided' ? 'Voided' : 'Completed',
+    status: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Completed',
     rawStatus: status,
-    actionStatus: status === 'voided' ? 'Voided' : 'Reprint available',
+    actionStatus: status === 'voided' ? 'Voided' : status === 'adjusted' ? 'Adjusted' : 'Reprint available',
     itemCount: items.length ? items.reduce((sum, item) => sum + saleItemQuantity(item), 0) : null,
+    missingItems: items.length === 0,
     items: items.map((item) => {
       const product = Array.isArray(item.expand?.product_id)
         ? item.expand.product_id[0]
@@ -671,6 +672,26 @@ app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
 
   const user = await authenticateRoleUser(email, password, 'cashier')
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS' })
+  res.json({ ok: true, user })
+}))
+
+app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
+  const barcode = String(req.body?.barcode || '').trim()
+
+  if (!barcode) {
+    return res.status(400).json({ error: 'Cashier barcode is required.' })
+  }
+
+  const user = await (await pbCollection('users')).getFirstListItem(
+    pb.filter('void_barcode = {:barcode} && role = "cashier" && status != "inactive"', { barcode }),
+    { requestKey: null },
+  ).catch(() => null)
+
+  if (!user) {
+    return res.status(401).json({ error: 'Invalid cashier barcode.' })
+  }
+
+  await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS using barcode' })
   res.json({ ok: true, user })
 }))
 

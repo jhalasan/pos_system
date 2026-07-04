@@ -45,8 +45,33 @@ function filterDates(range, customFrom, customTo) {
   return { fromDate: '', toDate: '' }
 }
 
-export default function GCashPayments() {
-  const { data: payments, loading, error } = useApi(api.gcashPayments, [])
+function gcashPaymentFromReceipt(receipt) {
+  const paymentMethod = String(receipt.paymentMethod || '').toLowerCase()
+  const splitGcash = Number(receipt.splitPayments?.gcash) || 0
+  const amount = paymentMethod === 'split' ? splitGcash : Number(receipt.gcashAmount || receipt.totalAmount) || 0
+  if (paymentMethod !== 'gcash' && splitGcash <= 0) return null
+
+  return {
+    id: receipt.id,
+    transactionNo: receipt.transactionNo || receipt.receiptNo,
+    createdAt: receipt.createdAt,
+    cashierName: receipt.cashierName || '',
+    paymentType: paymentMethod === 'split' ? 'Split' : 'GCash',
+    amount,
+    totalAmount: Number(receipt.totalAmount) || 0,
+    cashAmount: paymentMethod === 'split' ? Number(receipt.splitPayments?.cash) || 0 : 0,
+    referenceNumber: paymentMethod === 'split' ? receipt.splitPayments?.gcashRef : receipt.refNumber,
+    status: receipt.rawStatus || receipt.status || 'completed',
+  }
+}
+
+export default function GCashPayments({ embedded = false, sourceReceipts = null }) {
+  const apiResult = useApi(api.gcashPayments, [])
+  const payments = sourceReceipts
+    ? sourceReceipts.map(gcashPaymentFromReceipt).filter(Boolean)
+    : apiResult.data
+  const loading = sourceReceipts ? false : apiResult.loading
+  const error = sourceReceipts ? '' : apiResult.error
   const [query, setQuery] = useState('')
   const [type, setType] = useState('All')
   const [dateRange, setDateRange] = useState('all')
@@ -135,11 +160,24 @@ export default function GCashPayments() {
 
   return (
     <>
-      <PageHeader title="GCash Payments" subtitle="Reconcile GCash amounts, transaction numbers, and reference numbers.">
-        <button className="btn btn-outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
-          <IconDownload size={16} /> Export
-        </button>
-      </PageHeader>
+      {!embedded && (
+        <PageHeader title="GCash Payments" subtitle="Reconcile GCash amounts, transaction numbers, and reference numbers.">
+          <button className="btn btn-outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
+            <IconDownload size={16} /> Export
+          </button>
+        </PageHeader>
+      )}
+      {embedded && (
+        <div className="panel-head" style={{ marginBottom: 16 }}>
+          <div>
+            <h3>GCash Payments</h3>
+            <span className="sub">Direct GCash and split payments with a GCash portion.</span>
+          </div>
+          <button className="btn btn-outline" onClick={handleExport} disabled={filteredPayments.length === 0}>
+            <IconDownload size={16} /> Export
+          </button>
+        </div>
+      )}
 
       <div className="stat-grid cols-3">
         <StatCard label="GCash Total" value={peso(totalAmount)} icon={IconPeso} tone="green" foot={`${filteredPayments.length} payment(s)`} />

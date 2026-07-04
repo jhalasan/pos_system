@@ -57,6 +57,7 @@ function toQuickLoginAccount(record) {
     id: record.id,
     email,
     name: name || email.split('@')[0] || 'Cashier',
+    cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
   }
 }
 
@@ -68,6 +69,7 @@ function toCachedQuickLoginAccount(record) {
     role: record.role || 'cashier',
     status: record.status || 'active',
     quickLoginEnabled: Boolean(record.quickLoginEnabled ?? record.quick_login_enabled),
+    cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
   }
 }
 
@@ -418,7 +420,7 @@ export const desktopCashierApi = {
     })
     void activeRuntime.pb.collection('users').getFullList({
       filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
-      fields: 'id,name,email,role,status,quick_login_enabled',
+      fields: 'id,name,email,role,status,quick_login_enabled,void_barcode',
       sort: 'name',
       requestKey: null,
     }).then(cacheQuickLoginAccounts).catch(() => {})
@@ -429,6 +431,60 @@ export const desktopCashierApi = {
       })
     }
     return { user: auth.record }
+  },
+
+  async loginWithBarcode(barcode) {
+    const code = String(barcode || '').trim()
+    if (!code) throw new Error('Cashier barcode is required.')
+    await initializeCashierDb()
+
+    let account = await cashierDb.quickLoginAccounts
+      .filter((record) => record.role === 'cashier' && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
+      .first()
+
+    if (!account) {
+      try {
+        await initializeAdminDb()
+        account = await adminDb.users
+          .where('role')
+          .equals('cashier')
+          .filter((record) => record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
+          .first()
+      } catch {}
+    }
+
+    if (!account && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      const activeRuntime = await runtime()
+      const record = await activeRuntime.pb.collection('users').getFirstListItem(
+        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier" && status != "inactive"', { code }),
+        { requestKey: null },
+      ).catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        return null
+      })
+      if (record) {
+        account = toCachedQuickLoginAccount(record)
+        await cacheQuickLoginAccounts([record]).catch(() => {})
+      }
+    }
+
+    if (!account) throw new Error('Invalid cashier barcode.')
+
+    const user = {
+      id: account.id,
+      email: account.email,
+      name: account.name || account.email || 'Cashier',
+      role: 'cashier',
+      status: 'active',
+      cashierBarcode: account.cashierBarcode,
+    }
+
+    await createCloudActivityLog({
+      cashierId: user.id,
+      action: 'Login',
+      detail: 'Signed in to cashier POS using barcode',
+    })
+    return { user }
   },
 
   async logout() {
@@ -446,7 +502,7 @@ export const desktopCashierApi = {
     const activeRuntime = await runtime()
     return activeRuntime.pb.collection('users').getFullList({
       filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
-      fields: 'id,name,email,role,status,quick_login_enabled',
+      fields: 'id,name,email,role,status,quick_login_enabled,void_barcode',
       sort: 'name',
       requestKey: null,
     })

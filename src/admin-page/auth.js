@@ -7,21 +7,25 @@ export async function login(email, password) {
   const session = await api.login(email, password)
   sessionStorage.setItem(KEY, '1')
   sessionStorage.setItem(USER_KEY, JSON.stringify(session.user))
+  localStorage.setItem(KEY, '1')
+  localStorage.setItem(USER_KEY, JSON.stringify(session.user))
   return true
 }
 
 export function logout() {
   sessionStorage.removeItem(KEY)
   sessionStorage.removeItem(USER_KEY)
+  localStorage.removeItem(KEY)
+  localStorage.removeItem(USER_KEY)
 }
 
 export function isAuthed() {
-  return sessionStorage.getItem(KEY) === '1'
+  return sessionStorage.getItem(KEY) === '1' || localStorage.getItem(KEY) === '1'
 }
 
 export function currentAdminUser() {
   try {
-    return JSON.parse(sessionStorage.getItem(USER_KEY) || 'null')
+    return JSON.parse(sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY) || 'null')
   } catch {
     return null
   }

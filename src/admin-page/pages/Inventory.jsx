@@ -193,6 +193,13 @@ export default function Inventory() {
     })
   }
 
+  function updateBatchItemQty(productId, value) {
+    const nextQty = Math.max(1, Math.floor(Number(value) || 1))
+    setBatchItems((items) => items.map((item) => (
+      item.id === productId ? { ...item, qty: nextQty } : item
+    )))
+  }
+
   async function scan(e) {
     e.preventDefault()
     const code = barcode.trim()
@@ -322,6 +329,21 @@ export default function Inventory() {
     return true
   }
 
+  function updateStockOutBatchItemQty(productId, value) {
+    const requestedQty = Math.max(1, Math.floor(Number(value) || 1))
+    setStockOutBatch((items) => items.map((item) => {
+      if (item.id !== productId) return item
+      const maxQty = Math.max(1, Number(item.currentQty) || 0)
+      const nextQty = Math.min(requestedQty, maxQty)
+      if (requestedQty > maxQty) {
+        setStockOutError(`"${item.name}" has only ${maxQty} available item(s).`)
+      } else {
+        setStockOutError('')
+      }
+      return { ...item, qty: nextQty }
+    }))
+  }
+
   function stockOutFeedRecord(product, qtyOut, updated, reason = stockOutReason, note = stockOutNote) {
     return {
       key: `${Date.now()}-${updated.id}-${Math.random().toString(36).slice(2)}`,
@@ -387,6 +409,13 @@ export default function Inventory() {
 
   async function confirmStockOutBatch() {
     if (stockOutBatch.length === 0 || confirmingStockOut) return
+
+    const invalidItem = stockOutBatch.find((item) => (Number(item.qty) || 0) < 1 || (Number(item.qty) || 0) > (Number(item.currentQty) || 0))
+    if (invalidItem) {
+      setStockOutError(`Check quantity for "${invalidItem.name}". It must be between 1 and ${Number(invalidItem.currentQty) || 0}.`)
+      focusStockOutBarcode()
+      return
+    }
 
     setConfirmingStockOut(true)
     setStockOutError('')
@@ -643,7 +672,17 @@ export default function Inventory() {
                       <strong>{item.name}</strong>
                       <span>{item.barcode || item.sku} | current {item.currentQty} | after confirm {item.currentQty + item.qty}</span>
                     </div>
-                    <span className="badge badge-info">+{item.qty}</span>
+                    <label className="stock-batch-qty">
+                      <span className="qty-sign positive">+</span>
+                      <span>Qty In</span>
+                      <input
+                        className="input"
+                        type="number"
+                        min="1"
+                        value={item.qty}
+                        onChange={(e) => updateBatchItemQty(item.id, e.target.value)}
+                      />
+                    </label>
                     <button
                       type="button"
                       className="icon-btn del"
@@ -869,7 +908,18 @@ export default function Inventory() {
                       <strong>{item.name}</strong>
                       <span>{item.barcode || item.sku} | {item.reasonLabel} | after confirm {Math.max(0, item.currentQty - item.qty)}</span>
                     </div>
-                    <span className="badge badge-danger">-{item.qty}</span>
+                    <label className="stock-batch-qty">
+                      <span className="qty-sign negative">-</span>
+                      <span>Qty Out</span>
+                      <input
+                        className="input"
+                        type="number"
+                        min="1"
+                        max={Math.max(1, Number(item.currentQty) || 0)}
+                        value={item.qty}
+                        onChange={(e) => updateStockOutBatchItemQty(item.id, e.target.value)}
+                      />
+                    </label>
                     <button
                       type="button"
                       className="icon-btn del"

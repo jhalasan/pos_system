@@ -8,6 +8,7 @@ import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/services/receiptPrinter'
+import GCashPayments from './GCashPayments'
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10)
@@ -82,6 +83,7 @@ function itemCountDisplay(receipt) {
   if (receipt.itemCount !== null && receipt.itemCount !== undefined) return receipt.itemCount
   const items = receipt.items || []
   const counted = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+  if (receipt.missingItems) return 'Untracked'
   return counted > 0 ? counted : '-'
 }
 
@@ -96,6 +98,7 @@ export default function TransactionLogs() {
   const [cashierName, setCashierName] = useState('all')
   const [action, setAction] = useState('all')
   const [status, setStatus] = useState('all')
+  const [subTab, setSubTab] = useState('transactions')
   const [selectedReceipt, setSelectedReceipt] = useState(null)
   const [toast, setToast] = useState('')
 
@@ -232,6 +235,28 @@ export default function TransactionLogs() {
           <IconBarcode size={16} /> Focus Scanner
         </button>
       </PageHeader>
+
+      <div className="scan-mode-row analytics-tabs">
+        <button
+          type="button"
+          className={`scan-mode ${subTab === 'transactions' ? 'active' : ''}`}
+          onClick={() => setSubTab('transactions')}
+        >
+          Transactions
+        </button>
+        <button
+          type="button"
+          className={`scan-mode ${subTab === 'gcash' ? 'active' : ''}`}
+          onClick={() => setSubTab('gcash')}
+        >
+          GCash Payments
+        </button>
+      </div>
+
+      {subTab === 'gcash' ? (
+        <GCashPayments embedded sourceReceipts={receipts} />
+      ) : (
+      <>
 
       <div className="stat-grid cols-3">
         <StatCard label="Matched Transactions" value={filteredReceipts.length} icon={IconReceipt} tone="indigo" foot={`${receipts.length} total record(s)`} />
@@ -447,6 +472,8 @@ export default function TransactionLogs() {
       )}
 
       {toast && <div className="toast"><IconPrint size={15} /> {toast}</div>}
+      </>
+      )}
     </>
   )
 }

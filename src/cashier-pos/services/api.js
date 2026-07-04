@@ -44,6 +44,10 @@ const webCashierApi = {
     method: 'POST',
     body: JSON.stringify({ email, password }),
   }),
+  loginWithBarcode: (barcode) => request('/cashier/auth/barcode', {
+    method: 'POST',
+    body: JSON.stringify({ barcode }),
+  }),
   quickLoginAccounts: () => request('/cashier/quick-login-accounts'),
   products: () => request('/cashier/products'),
   productByBarcode: (barcode) => request(`/cashier/products/barcode/${encodeURIComponent(barcode)}`),

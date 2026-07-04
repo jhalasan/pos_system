@@ -7,7 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
-import { printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
+import { getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { toBaseStockQuantity } from '../offline/stockUtils';
 import styles from '../styles/Cashier.module.css';
@@ -106,6 +106,9 @@ const CASHIER_SHORTCUT_SETTINGS_KEY = 'nexa_cashier_shortcut_settings';
 const DEFAULT_RECEIPT_SETTINGS = {
   autoPrint: false,
   showPdfTestButton: false,
+  printerName: '',
+  receiptBeforeFeedLines: 0,
+  receiptAfterFeedLines: 0,
   receiptPdfDirectory: '',
 };
 const CASHIER_SHORTCUTS = [
@@ -232,6 +235,10 @@ const Cashier = ({ onLogout, user }) => {
   const [searchProduct, setSearchProduct] = useState('');
   const [cashRegisterOpen, setCashRegisterOpen] = useState(false);
   const [notification, setNotification] = useState('');
+  const [receiptPrintQueue, setReceiptPrintQueue] = useState([]);
+  const [printerQueueJobs, setPrinterQueueJobs] = useState([]);
+  const receiptPrintLocksRef = useRef(new Set());
+  const receiptPrintJobIdRef = useRef(0);
   const [showVoidAuth, setShowVoidAuth] = useState(false);
   const [managerBarcode, setManagerBarcode] = useState('');
   const [voidError, setVoidError] = useState('');
@@ -252,6 +259,14 @@ const Cashier = ({ onLogout, user }) => {
   const [discountAmountInput, setDiscountAmountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
+  const [showCashOutModal, setShowCashOutModal] = useState(false);
+  const [cashOutAmount, setCashOutAmount] = useState('');
+  const [cashOutReason, setCashOutReason] = useState('');
+  const [cashOutApprovalMethod, setCashOutApprovalMethod] = useState('barcode');
+  const [cashOutApprovalCode, setCashOutApprovalCode] = useState('');
+  const [cashOutApprovalEmail, setCashOutApprovalEmail] = useState('');
+  const [cashOutApprovalPassword, setCashOutApprovalPassword] = useState('');
+  const [cashOutError, setCashOutError] = useState('');
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState('');
@@ -304,6 +319,25 @@ const Cashier = ({ onLogout, user }) => {
   const total = subtotal - discountAmount;
   const cashTendered = parseFloat(cashAmount) || 0;
   const change = paymentMethod === 'cash' ? cashTendered - total : 0;
+  const completedPaymentSnapshot = isCompletedTxn ? activeTxn.completedSale : null;
+  const displayIsSplitPayment = completedPaymentSnapshot
+    ? completedPaymentSnapshot.paymentMethod === 'split'
+    : isSplitPayment;
+  const displayPaymentMethod = completedPaymentSnapshot?.paymentMethod === 'split'
+    ? 'cash'
+    : (completedPaymentSnapshot?.paymentMethod || paymentMethod);
+  const displaySubtotal = Number(completedPaymentSnapshot?.subtotalAmount ?? subtotal) || 0;
+  const displayDiscountPercent = Number(completedPaymentSnapshot?.discountPercent ?? discount) || 0;
+  const displayDiscountAmount = Number(completedPaymentSnapshot?.discountAmount ?? discountAmount) || 0;
+  const displayTotal = Number(completedPaymentSnapshot?.totalAmount ?? total) || 0;
+  const displayCashAmount = String(completedPaymentSnapshot?.cashAmount ?? cashAmount ?? '');
+  const displayGcashAmount = String(completedPaymentSnapshot?.gcashAmount ?? gcashAmount ?? '');
+  const displayGcashRef = String(completedPaymentSnapshot?.gcashRef ?? gcashRef ?? '');
+  const displaySplitPayments = completedPaymentSnapshot?.splitPayments || splitPayments;
+  const displayCashTendered = Number(displayCashAmount) || 0;
+  const displayChange = Number(completedPaymentSnapshot?.change ?? change) || 0;
+  const displaySplitPaid = (Number(displaySplitPayments.cash) || 0) + (Number(displaySplitPayments.gcash) || 0);
+  const displaySplitRemaining = Math.max(0, displayTotal - displaySplitPaid);
 
   const filteredProducts = useMemo(() => {
     const query = searchProduct.trim().toLowerCase();
@@ -369,6 +403,59 @@ const Cashier = ({ onLogout, user }) => {
   const showNotification = (message) => {
     setNotification(message);
     window.setTimeout(() => setNotification(''), 3200);
+  };
+
+  const updateReceiptPrintJob = (jobId, updates) => {
+    setReceiptPrintQueue((current) => current.map((job) => (
+      job.id === jobId ? { ...job, ...updates } : job
+    )));
+  };
+
+  const removeReceiptPrintJobLater = (jobId) => {
+    window.setTimeout(() => {
+      setReceiptPrintQueue((current) => current.filter((job) => job.id !== jobId));
+    }, 6000);
+  };
+
+  const refreshPrinterQueue = async () => {
+    try {
+      const status = await getReceiptPrinterStatus();
+      setPrinterQueueJobs(Array.isArray(status.jobs) ? status.jobs : []);
+      return status;
+    } catch {
+      setPrinterQueueJobs([]);
+      return null;
+    }
+  };
+
+  const waitForPrinterQueueToClear = async (transactionNo) => {
+    const receiptLabel = `Receipt ${transactionNo}`;
+    let lastStatus = null;
+
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 750));
+      lastStatus = await refreshPrinterQueue();
+      const jobs = Array.isArray(lastStatus?.jobs) ? lastStatus.jobs : [];
+      const matchingJobs = jobs.filter((job) => String(job.document || '').includes(receiptLabel));
+
+      if (!matchingJobs.length && lastStatus?.isReady !== false) return;
+      if (lastStatus?.isReady === false) {
+        throw new Error((lastStatus.messages || []).join(' ') || 'Printer needs attention.');
+      }
+    }
+
+    const queueJobs = Array.isArray(lastStatus?.jobs) ? lastStatus.jobs : [];
+    const matchingJobs = queueJobs.filter((job) => String(job.document || '').includes(receiptLabel));
+    if (matchingJobs.length) {
+      throw new Error(`Receipt ${transactionNo} is still in the Windows printer queue. Check paper, printer power, and printer errors before printing again.`);
+    }
+  };
+
+  const receiptPrintKey = (txn, copyStep) => `${txn?.completedSale?.transactionNo || txn?.transactionNo || txn?.id || 'receipt'}:${copyStep}`;
+
+  const isReceiptPrintBusy = (txn, step = 'reprint') => {
+    const copyStep = step === 'initial' ? 'initial' : (txn?.completedSale?.receiptPrinted ? 'reprint' : 'initial');
+    return receiptPrintLocksRef.current.has(receiptPrintKey(txn, copyStep));
   };
 
   const saveReceiptSettings = (updates) => {
@@ -470,9 +557,59 @@ const Cashier = ({ onLogout, user }) => {
   const printReceiptCopy = async (txn, step) => {
     const copyStep = step === 'reprint' ? 'reprint' : 'initial';
     const copyLabel = receiptStepLabel(copyStep);
-    await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel));
-    updateReceiptPrintState(txn.id, copyStep);
-    return copyLabel;
+    const transactionNo = txn.completedSale.transactionNo || txn.transactionNo;
+    const jobKey = receiptPrintKey(txn, copyStep);
+
+    if (receiptPrintLocksRef.current.has(jobKey)) {
+      throw new Error(`Receipt ${transactionNo} is already in the print queue.`);
+    }
+
+    const jobId = ++receiptPrintJobIdRef.current;
+    receiptPrintLocksRef.current.add(jobKey);
+    setReceiptPrintQueue((current) => [
+      ...current,
+      {
+        id: jobId,
+        key: jobKey,
+        transactionNo,
+        label: copyLabel,
+        status: 'Checking printer',
+      },
+    ]);
+
+    try {
+      const status = await refreshPrinterQueue();
+      if (status && !status.isReady) {
+        throw new Error((status.messages || []).join(' ') || 'Printer is not ready.');
+      }
+
+      if (copyStep === 'initial') {
+        updateReceiptPrintJob(jobId, { status: 'Opening drawer' });
+        await openCashDrawer({ skipStatusCheck: true });
+        updateReceiptPrintJob(jobId, { status: 'Waiting for drawer close' });
+        const drawerClosed = window.confirm('Close the cash drawer, then click OK to print the receipt.');
+        if (!drawerClosed) throw new Error('Receipt printing paused until the cash drawer is closed.');
+      }
+
+      updateReceiptPrintJob(jobId, { status: 'Printing' });
+      await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
+        documentName: `Receipt ${transactionNo}`,
+      });
+      updateReceiptPrintJob(jobId, { status: 'Waiting for printer' });
+      await waitForPrinterQueueToClear(transactionNo);
+      updateReceiptPrintState(txn.id, copyStep);
+      updateReceiptPrintJob(jobId, { status: 'Sent to printer' });
+      removeReceiptPrintJobLater(jobId);
+      return copyLabel;
+    } catch (error) {
+      updateReceiptPrintJob(jobId, {
+        status: 'Needs attention',
+        error: (typeof error === 'string' ? error : error.message) || 'Unable to print receipt.',
+      });
+      throw error;
+    } finally {
+      receiptPrintLocksRef.current.delete(jobKey);
+    }
   };
 
   const handlePrintReceiptPdf = async (txn = activeTxn) => {
@@ -882,9 +1019,58 @@ const Cashier = ({ onLogout, user }) => {
     showNotification('Transaction has been voided.');
   };
 
-  const handleOpenCashRegister = () => {
+  const handleOpenCashRegister = async () => {
     setCashRegisterOpen(true);
-    showNotification('Cash register opened successfully.');
+    try {
+      await openCashDrawer({ skipStatusCheck: true });
+      showNotification('Cash register opened successfully.');
+    } catch (err) {
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to open cash drawer.');
+    }
+  };
+
+  const resetCashOutModal = () => {
+    setShowCashOutModal(false);
+    setCashOutAmount('');
+    setCashOutReason('');
+    setCashOutApprovalMethod('barcode');
+    setCashOutApprovalCode('');
+    setCashOutApprovalEmail('');
+    setCashOutApprovalPassword('');
+    setCashOutError('');
+  };
+
+  const confirmCashOut = async () => {
+    const amount = Number(cashOutAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setCashOutError('Enter a valid cash-out amount.');
+      return;
+    }
+
+    try {
+      const authorization = approvalPayload({
+        method: cashOutApprovalMethod,
+        code: cashOutApprovalCode,
+        email: cashOutApprovalEmail,
+        password: cashOutApprovalPassword,
+      });
+      if (!authorization.code && (!authorization.email || !authorization.password)) {
+        setCashOutError(approvalError(cashOutApprovalMethod));
+        return;
+      }
+      const approver = await cashierApi.authorizeVoid(authorization);
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Cash Out',
+        detail: `Cash out PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'} approved by ${approver?.name || 'Manager'}${cashOutReason ? ` (${cashOutReason})` : ''}`,
+      });
+      await openCashDrawer({ skipStatusCheck: true });
+      setCashRegisterOpen(true);
+      showNotification(`Cash out recorded: ${money(amount)}.`);
+      resetCashOutModal();
+    } catch (err) {
+      setCashOutError((typeof err === 'string' ? err : err.message) || 'Unable to record cash out.');
+    }
   };
 
   const handleOpenHistory = () => {
@@ -1253,12 +1439,8 @@ const Cashier = ({ onLogout, user }) => {
       setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
-      if (receiptSettings.autoPrint) {
-        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Printing receipt.`);
-        autoPrintCompletedReceipt(completedTxn);
-      } else {
-        showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Print the receipt when ready.`);
-      }
+      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Open drawer, then print receipt.`);
+      autoPrintCompletedReceipt(completedTxn);
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
     }
@@ -1356,9 +1538,8 @@ const Cashier = ({ onLogout, user }) => {
       if (!combo) return;
 
       const editable = isEditableTarget(e.target);
-      const modified = e.ctrlKey || e.altKey || e.metaKey;
       const functionKey = /^F\d{1,2}$/.test(combo);
-      if (editable && !modified && !functionKey) return;
+      if (editable && !functionKey) return;
 
       const match = CASHIER_SHORTCUTS.find((item) => shortcutFor(item.action) === combo);
       if (!match || !actions[match.action]) return;
@@ -1522,6 +1703,10 @@ const Cashier = ({ onLogout, user }) => {
           ))}
         </div>
         <div className={styles['transaction-actions']}>
+          <button className={styles['transaction-cash-out']} onClick={() => setShowCashOutModal(true)}>
+            <Dash size={14} />
+            Cash Out
+          </button>
           <button className={styles['transaction-new']} onClick={handleNewTransaction}>
             <Plus size={14} />
             {withShortcut('New Transaction', 'newTransaction')}
@@ -1721,6 +1906,10 @@ const Cashier = ({ onLogout, user }) => {
                           value={item.quantity}
                           onChange={(e) => handleQuantityChange(item.id, e.target.value)}
                           onBlur={(e) => handleQuantityChange(item.id, e.target.value || 1)}
+                          onWheel={(e) => {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }}
                         />
                         <button
                           type="button"
@@ -1762,9 +1951,9 @@ const Cashier = ({ onLogout, user }) => {
             )}
 
             <div className={styles['payment-summary']}>
-              <div className={styles['summary-row']}><span>Subtotal:</span><span>{money(subtotal)}</span></div>
-              <div className={styles['summary-row']}><span>Discount ({discount}%):</span><span>-{money(discountAmount)}</span></div>
-              <div className={`${styles['summary-row']} ${styles['summary-total']}`}><span>Total:</span><span>{money(total)}</span></div>
+              <div className={styles['summary-row']}><span>Subtotal:</span><span>{money(displaySubtotal)}</span></div>
+              <div className={styles['summary-row']}><span>Discount ({displayDiscountPercent}%):</span><span>-{money(displayDiscountAmount)}</span></div>
+              <div className={`${styles['summary-row']} ${styles['summary-total']}`}><span>Total:</span><span>{money(displayTotal)}</span></div>
             </div>
 
             <div className={styles['quick-actions']}>
@@ -1785,6 +1974,13 @@ const Cashier = ({ onLogout, user }) => {
                 >
                   {withShortcut('Discount', 'requestDiscount')}
                 </button>
+                <button
+                  type="button"
+                  className={styles['payment-btn']}
+                  onClick={() => setShowCashOutModal(true)}
+                >
+                  Cash Out
+                </button>
               </div>
             </div>
 
@@ -1796,48 +1992,48 @@ const Cashier = ({ onLogout, user }) => {
               </div>
             </div>
 
-            {!isSplitPayment ? (
+            {!displayIsSplitPayment ? (
               <>
                 <div className={styles['payment-method']}>
                   <label className={styles['filter-label']}>Payment Method</label>
                   <div className={styles['payment-buttons']}>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isLockedTxn}>{withShortcut('Cash', 'paymentCash')}</button>
-                    <button className={`${styles['payment-btn']} ${paymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isLockedTxn}>{withShortcut('GCash', 'paymentGcash')}</button>
+                    <button className={`${styles['payment-btn']} ${displayPaymentMethod === 'cash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'cash' })} disabled={isLockedTxn}>{withShortcut('Cash', 'paymentCash')}</button>
+                    <button className={`${styles['payment-btn']} ${displayPaymentMethod === 'gcash' ? styles.active : ''}`} onClick={() => updateActiveTransaction({ paymentMethod: 'gcash' })} disabled={isLockedTxn}>{withShortcut('GCash', 'paymentGcash')}</button>
                   </div>
                 </div>
 
-                {paymentMethod === 'cash' && (
+                {displayPaymentMethod === 'cash' && (
                   <>
-                    <Input inputRef={cashAmountInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={cashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
-                    {cashAmount && (
+                    <Input inputRef={cashAmountInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={displayCashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
+                    {displayCashAmount && (
                       <div className={styles['change-display']}>
-                        <div className={styles['change-row']}><span>Cash Tendered:</span><span>{money(cashTendered)}</span></div>
-                        <div className={`${styles['change-due']} ${change < 0 ? styles.negative : ''}`}>
-                          <span>{change >= 0 ? 'Change Due' : 'Short By'}</span>
-                          <strong>{money(Math.abs(change))}</strong>
+                        <div className={styles['change-row']}><span>Cash Tendered:</span><span>{money(displayCashTendered)}</span></div>
+                        <div className={`${styles['change-due']} ${displayChange < 0 ? styles.negative : ''}`}>
+                          <span>{displayChange >= 0 ? 'Change Due' : 'Short By'}</span>
+                          <strong>{money(Math.abs(displayChange))}</strong>
                         </div>
                       </div>
                     )}
                   </>
                 )}
 
-                {paymentMethod === 'gcash' && (
+                {displayPaymentMethod === 'gcash' && (
                   <>
-                    <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={gcashAmount} onChange={(e) => updateActiveTransaction({ gcashAmount: e.target.value })} disabled={isLockedTxn} />
-                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={gcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isLockedTxn} />
-                    <div className={styles['total-display']}><span>Total amount: {money(total)}</span></div>
+                    <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={displayGcashAmount} onChange={(e) => updateActiveTransaction({ gcashAmount: e.target.value })} disabled={isLockedTxn} />
+                    <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={displayGcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isLockedTxn} />
+                    <div className={styles['total-display']}><span>Total amount: {money(displayTotal)}</span></div>
                   </>
                 )}
               </>
             ) : (
               <div className={styles['payment-method']}>
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input inputRef={splitCashInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={splitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
-                <Input inputRef={splitGcashInputRef} label="GCash Amount" type="number" placeholder="Enter GCash amount" value={splitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
-                <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={splitPayments.gcashRef || ''} onChange={(e) => handleSplitPaymentChange('gcashRef', e.target.value)} disabled={isLockedTxn} />
+                <Input inputRef={splitCashInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={displaySplitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
+                <Input inputRef={splitGcashInputRef} label="GCash Amount" type="number" placeholder="Enter GCash amount" value={displaySplitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
+                <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={displaySplitPayments.gcashRef || ''} onChange={(e) => handleSplitPaymentChange('gcashRef', e.target.value)} disabled={isLockedTxn} />
                 <div className={styles['change-display']}>
-                  <div className={styles['change-row']}><span>Total Paid:</span><span>{money(getTotalSplitPayment())}</span></div>
-                  <div className={`${styles['change-row']} ${getRemainingAmount() > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(getRemainingAmount())}</span></div>
+                  <div className={styles['change-row']}><span>Total Paid:</span><span>{money(displaySplitPaid)}</span></div>
+                  <div className={`${styles['change-row']} ${displaySplitRemaining > 0 ? styles.negative : ''}`}><span>Remaining:</span><span>{money(displaySplitRemaining)}</span></div>
                 </div>
               </div>
             )}
@@ -1859,6 +2055,7 @@ const Cashier = ({ onLogout, user }) => {
                   fullWidth
                   className={styles['receipt-print-action']}
                   onClick={() => handleReprintReceipt(activeTxn)}
+                  disabled={isReceiptPrintBusy(activeTxn)}
                 >
                   <Printer size={14} />
                   {withShortcut(receiptButtonText(activeTxn.completedSale), 'reprintReceipt')}
@@ -1874,6 +2071,28 @@ const Cashier = ({ onLogout, user }) => {
                     Print PDF Test
                   </Button>
                 )}
+              </div>
+            )}
+
+            {(receiptPrintQueue.length > 0 || printerQueueJobs.length > 0) && (
+              <div className={styles['receipt-queue-panel']}>
+                <div className={styles['receipt-queue-head']}>
+                  <strong>Receipt Print Queue</strong>
+                  <button type="button" onClick={refreshPrinterQueue}>Refresh</button>
+                </div>
+                {receiptPrintQueue.map((job) => (
+                  <div className={styles['receipt-queue-row']} key={job.id}>
+                    <span>{job.transactionNo}</span>
+                    <strong>{job.status}</strong>
+                    {job.error && <small>{job.error}</small>}
+                  </div>
+                ))}
+                {printerQueueJobs.map((job) => (
+                  <div className={styles['receipt-queue-row']} key={`windows-${job.id}`}>
+                    <span>{job.document || `Windows job ${job.id}`}</span>
+                    <strong>{job.statusText}</strong>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -2010,6 +2229,34 @@ const Cashier = ({ onLogout, user }) => {
           </>
         )}
         {discountError && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={showCashOutModal}
+        onClose={resetCashOutModal}
+        title="Cash Out"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={resetCashOutModal}>Cancel</button>
+            <button className="btn btn-primary" onClick={confirmCashOut}>Approve Cash Out</button>
+          </div>
+        }
+      >
+        <p>Cash-out requires manager approval. The cash drawer will open after approval.</p>
+        <Input label="Amount" type="number" placeholder="Enter cash-out amount" value={cashOutAmount} onChange={(e) => setCashOutAmount(e.target.value)} />
+        <Input label="Reason" placeholder="Example: petty cash, supplier payment, bank deposit" value={cashOutReason} onChange={(e) => setCashOutReason(e.target.value)} />
+        {renderApprovalFields({
+          name: 'cash-out',
+          method: cashOutApprovalMethod,
+          setMethod: setCashOutApprovalMethod,
+          code: cashOutApprovalCode,
+          setCode: setCashOutApprovalCode,
+          email: cashOutApprovalEmail,
+          setEmail: setCashOutApprovalEmail,
+          password: cashOutApprovalPassword,
+          setPassword: setCashOutApprovalPassword,
+        })}
+        {cashOutError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashOutError}</div>}
       </Modal>
 
       <Modal
@@ -2368,6 +2615,16 @@ const Cashier = ({ onLogout, user }) => {
               <strong>Receipt</strong>
               <small>Print and reprint</small>
             </button>
+            <button
+              type="button"
+              className={settingsTab === 'spacing' ? styles.active : ''}
+              onClick={() => setSettingsTab('spacing')}
+              role="tab"
+              aria-selected={settingsTab === 'spacing'}
+            >
+              <strong>Spacing</strong>
+              <small>Paper feed</small>
+            </button>
           </div>
 
           <div className={styles['receipt-settings-panel']}>
@@ -2461,6 +2718,17 @@ const Cashier = ({ onLogout, user }) => {
                     <small>Prints one receipt automatically after completing a transaction.</small>
                   </span>
                 </label>
+                <div className={styles['receipt-printer-setting']}>
+                  <Input
+                    label="Receipt Printer Name"
+                    value={receiptSettings.printerName || ''}
+                    placeholder={import.meta.env.VITE_RECEIPT_PRINTER_NAME || 'XP-58H'}
+                    onChange={(e) => saveReceiptSettings({ printerName: e.target.value })}
+                  />
+                  <small>
+                    Use the exact Windows printer name. Leave blank to use the configured default.
+                  </small>
+                </div>
                 <label className={styles['receipt-settings-toggle']}>
                   <input
                     type="checkbox"
@@ -2485,6 +2753,60 @@ const Cashier = ({ onLogout, user }) => {
                     </Button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {settingsTab === 'spacing' && (
+              <div className={styles['settings-section']}>
+                <div className={styles['settings-section-head']}>
+                  <div>
+                    <h4>Receipt Spacing</h4>
+                    <p>Adjusts extra paper feed before and after each printed receipt on this computer.</p>
+                  </div>
+                </div>
+                <div className={styles['receipt-spacing-grid']}>
+                  <div className={styles['receipt-printer-setting']}>
+                    <Input
+                      label="Before Receipt Feed Lines"
+                      type="number"
+                      min="0"
+                      max="8"
+                      step="1"
+                      value={receiptSettings.receiptBeforeFeedLines ?? 0}
+                      onChange={(e) => {
+                        const value = Math.min(8, Math.max(0, Math.floor(Number(e.target.value) || 0)));
+                        saveReceiptSettings({ receiptBeforeFeedLines: value });
+                      }}
+                    />
+                    <small>Use 0 if there is blank space before the store name.</small>
+                  </div>
+                  <div className={styles['receipt-printer-setting']}>
+                    <Input
+                      label="After Receipt Feed Lines"
+                      type="number"
+                      min="0"
+                      max="8"
+                      step="1"
+                      value={receiptSettings.receiptAfterFeedLines ?? receiptSettings.receiptFeedLines ?? 0}
+                      onChange={(e) => {
+                        const value = Math.min(8, Math.max(0, Math.floor(Number(e.target.value) || 0)));
+                        saveReceiptSettings({ receiptAfterFeedLines: value });
+                      }}
+                    />
+                    <small>Use 0 if there is blank space after Thank you.</small>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={styles['receipt-spacing-tight-button']}
+                  onClick={() => saveReceiptSettings({
+                    receiptBeforeFeedLines: 0,
+                    receiptAfterFeedLines: 0,
+                    receiptFeedLines: 0,
+                  })}
+                >
+                  Set before and after to tightest
+                </button>
               </div>
             )}
           </div>

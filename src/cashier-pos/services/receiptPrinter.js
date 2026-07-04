@@ -1,11 +1,17 @@
 const RECEIPT_WIDTH = 32
 const DEFAULT_PRINTER_NAME = 'XP-58H'
 const DEFAULT_COPY_COUNT = 1
+const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings'
 const STORE_NAME = 'ARJOV CONSUMER GOODS TRADING'
 const STORE_ADDRESS_LINES = [
   'Aparente Street Ext.',
   'Purok Malakas Brgy. San Isidro',
   'General Santos City',
+]
+const REFUND_RETURN_POLICY_LINES = [
+  'Refunds/returns accepted within',
+  '24 hours from purchase only.',
+  'Keep receipt for verification.',
 ]
 
 function tauriInvoke() {
@@ -15,6 +21,70 @@ function tauriInvoke() {
 function envNumber(value, fallback) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(parsed)))
+}
+
+function savedReceiptPrinterName() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(RECEIPT_SETTINGS_KEY) || '{}')
+    return String(settings.printerName || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+function receiptPrinterName(options = {}) {
+  return String(options.printerName || savedReceiptPrinterName() || import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME).trim()
+}
+
+function savedReceiptSpacing() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(RECEIPT_SETTINGS_KEY) || '{}')
+    return {
+      beforeLines: clampNumber(settings.receiptBeforeFeedLines, 0, 0, 8),
+      afterLines: clampNumber(settings.receiptAfterFeedLines ?? settings.receiptFeedLines, 0, 0, 8),
+    }
+  } catch {
+    return { beforeLines: 0, afterLines: 0 }
+  }
+}
+
+function printerStatusMessage(status) {
+  const messages = Array.isArray(status?.messages) ? status.messages : []
+  const queueCount = Array.isArray(status?.jobs) ? status.jobs.length : 0
+  const detail = messages.length ? messages.join(' ') : 'Printer is not ready.'
+  return queueCount > 0 ? `${detail} Windows queue has ${queueCount} job(s).` : detail
+}
+
+export async function getReceiptPrinterStatus(options = {}) {
+  const printerName = receiptPrinterName(options)
+  const invoke = tauriInvoke()
+
+  if (!invoke) {
+    return {
+      printerName: 'browser print dialog',
+      isReady: true,
+      status: 0,
+      messages: [],
+      jobs: [],
+    }
+  }
+
+  return invoke('printer_status', { printerName })
+}
+
+async function assertReceiptPrinterReady(options = {}) {
+  if (options.skipStatusCheck) return null
+  const status = await getReceiptPrinterStatus(options)
+  if (!status?.isReady) {
+    throw new Error(printerStatusMessage(status))
+  }
+  return status
 }
 
 function moneyValue(value) {
@@ -128,9 +198,10 @@ export function buildReceiptText({ transactionNo, cashierName, completedAt, item
     center('Scan for lookup'),
     barcodeLine(transactionNo),
     line(),
+    ...REFUND_RETURN_POLICY_LINES.map(center),
+    line(),
     center('NOT AN OFFICIAL RECEIPT'),
     center('Thank you!'),
-    '\n\n\n',
   ].filter(Boolean).join('\n')
 }
 
@@ -143,7 +214,7 @@ function buildPrintableHtml(receipts) {
       '<': '&lt;',
       '>': '&gt;',
     }[char])))
-    .join('\n\n')
+    .join('\n')
 
   return `<!doctype html>
 <html>
@@ -251,17 +322,27 @@ function downloadPdf(filename, contents) {
 }
 
 export async function printCompletedReceipt(receiptData, options = {}) {
-  const printerName = import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME
+  const printerName = receiptPrinterName(options)
   const receipts = receiptTexts(receiptData, options)
+  const openCashDrawer = Boolean(options.openCashDrawer)
+  const spacing = savedReceiptSpacing()
+  const beforeFeedLines = clampNumber(options.beforeFeedLines ?? spacing.beforeLines, 0, 0, 8)
+  const afterFeedLines = clampNumber(options.afterFeedLines ?? spacing.afterLines, 0, 0, 8)
+  const documentName = options.documentName || `Receipt ${receiptData?.transactionNo || ''}`.trim()
   const invoke = tauriInvoke()
 
   if (invoke) {
+    await assertReceiptPrinterReady({ ...options, printerName })
     const contents = receipts.join('\n')
     try {
       return await invoke('print_receipt', {
         printerName,
         contents,
         copies: 1,
+        openCashDrawer,
+        documentName,
+        beforeFeedLines,
+        afterFeedLines,
       })
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || ''
@@ -270,6 +351,10 @@ export async function printCompletedReceipt(receiptData, options = {}) {
           printerName: '',
           contents,
           copies: 1,
+          openCashDrawer,
+          documentName,
+          beforeFeedLines,
+          afterFeedLines,
         })
       }
       throw error
@@ -278,6 +363,43 @@ export async function printCompletedReceipt(receiptData, options = {}) {
 
   printWithBrowser(receipts)
   return { printerName: 'browser print dialog', copies: receipts.length }
+}
+
+export async function openCashDrawer(options = {}) {
+  const printerName = receiptPrinterName(options)
+  const invoke = tauriInvoke()
+
+  if (!invoke) {
+    throw new Error('Cash drawer opening is only available in the desktop app.')
+  }
+
+  await assertReceiptPrinterReady({ ...options, printerName })
+
+  try {
+    return await invoke('print_receipt', {
+      printerName,
+      contents: '',
+      copies: 1,
+      openCashDrawer: true,
+      documentName: 'Cash drawer kick',
+      beforeFeedLines: 0,
+      afterFeedLines: 0,
+    })
+  } catch (error) {
+    const message = typeof error === 'string' ? error : error?.message || ''
+    if (printerName && /deleted|1905|open printer/i.test(message)) {
+      return invoke('print_receipt', {
+        printerName: '',
+        contents: '',
+        copies: 1,
+        openCashDrawer: true,
+        documentName: 'Cash drawer kick',
+        beforeFeedLines: 0,
+        afterFeedLines: 0,
+      })
+    }
+    throw error
+  }
 }
 
 export async function printReceiptPdf(receiptData, options = {}) {
