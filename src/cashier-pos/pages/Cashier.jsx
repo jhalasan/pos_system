@@ -133,6 +133,14 @@ const DEFAULT_SHORTCUT_SETTINGS = {
   shortcuts: CASHIER_SHORTCUTS.reduce((map, item) => ({ ...map, [item.action]: item.defaultKeys }), {}),
 };
 const CASHIER_AUDIT_ENTRY_KEY = 'nexa_cashier_audit_entry';
+const CASHIER_SHIFT_KEY = 'nexa_cashier_shift_session';
+const CASHIER_DEVICE_KEY = 'nexa_cashier_device_id';
+const IDLE_LOCK_MS = 5 * 60 * 1000;
+const CASH_FLOW_CATEGORIES = {
+  in: ['Additional drawer fund', 'Correction', 'Customer change return', 'Other'],
+  out: ['Supplier payment', 'Bank deposit', 'Petty cash', 'Correction', 'Other'],
+};
+const DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
 
 function loadReceiptSettings() {
   try {
@@ -173,11 +181,36 @@ function loadCashierAuditEntry() {
       cashBeginning: '',
       cashEnding: '',
       cashOnHand: '',
+      actualCashEnding: '',
+      countMode: 'manual',
+      denominations: {},
       ...JSON.parse(localStorage.getItem(CASHIER_AUDIT_ENTRY_KEY) || '{}'),
     };
   } catch {
-    return { cashBeginning: '', cashEnding: '', cashOnHand: '' };
+    return { cashBeginning: '', cashEnding: '', cashOnHand: '', actualCashEnding: '', countMode: 'manual', denominations: {} };
   }
+}
+
+function shiftStorageKey(userId) {
+  return `${CASHIER_SHIFT_KEY}:${userId || 'cashier'}`;
+}
+
+function loadCashierShift(userId) {
+  try {
+    const session = JSON.parse(localStorage.getItem(shiftStorageKey(userId)) || 'null');
+    return session?.status === 'open' ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+function cashierDeviceId() {
+  let deviceId = localStorage.getItem(CASHIER_DEVICE_KEY);
+  if (!deviceId) {
+    deviceId = `POS-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    localStorage.setItem(CASHIER_DEVICE_KEY, deviceId);
+  }
+  return deviceId;
 }
 
 function normalizeShortcut(value) {
@@ -272,14 +305,16 @@ const Cashier = ({ onLogout, user }) => {
   const [discountAmountInput, setDiscountAmountInput] = useState('');
   const [discountError, setDiscountError] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
-  const [showCashOutModal, setShowCashOutModal] = useState(false);
-  const [cashOutAmount, setCashOutAmount] = useState('');
-  const [cashOutReason, setCashOutReason] = useState('');
-  const [cashOutApprovalMethod, setCashOutApprovalMethod] = useState('barcode');
-  const [cashOutApprovalCode, setCashOutApprovalCode] = useState('');
-  const [cashOutApprovalEmail, setCashOutApprovalEmail] = useState('');
-  const [cashOutApprovalPassword, setCashOutApprovalPassword] = useState('');
-  const [cashOutError, setCashOutError] = useState('');
+  const [showCashFlowModal, setShowCashFlowModal] = useState(false);
+  const [cashFlowType, setCashFlowType] = useState('out');
+  const [cashFlowAmount, setCashFlowAmount] = useState('');
+  const [cashFlowCategory, setCashFlowCategory] = useState(CASH_FLOW_CATEGORIES.out[0]);
+  const [cashFlowReason, setCashFlowReason] = useState('');
+  const [cashFlowApprovalMethod, setCashFlowApprovalMethod] = useState('barcode');
+  const [cashFlowApprovalCode, setCashFlowApprovalCode] = useState('');
+  const [cashFlowApprovalEmail, setCashFlowApprovalEmail] = useState('');
+  const [cashFlowApprovalPassword, setCashFlowApprovalPassword] = useState('');
+  const [cashFlowError, setCashFlowError] = useState('');
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState('');
@@ -312,6 +347,21 @@ const Cashier = ({ onLogout, user }) => {
   const [cashierAuditEntry, setCashierAuditEntry] = useState(loadCashierAuditEntry);
   const [cashierAuditSaving, setCashierAuditSaving] = useState(false);
   const [cashierAuditMessage, setCashierAuditMessage] = useState('');
+  const [shiftSession, setShiftSession] = useState(() => loadCashierShift(user?.id));
+  const [showShiftOpen, setShowShiftOpen] = useState(false);
+  const [showShiftClose, setShowShiftClose] = useState(false);
+  const [shiftOpeningAmount, setShiftOpeningAmount] = useState('');
+  const [shiftClosingAmount, setShiftClosingAmount] = useState('');
+  const [shiftNote, setShiftNote] = useState('');
+  const [shiftError, setShiftError] = useState('');
+  const [shiftSaving, setShiftSaving] = useState(false);
+  const [deviceId] = useState(cashierDeviceId);
+  const [idleLocked, setIdleLocked] = useState(false);
+  const [idleUnlockMode, setIdleUnlockMode] = useState('barcode');
+  const [idleUnlockBarcode, setIdleUnlockBarcode] = useState('');
+  const [idleUnlockPassword, setIdleUnlockPassword] = useState('');
+  const [idleUnlockError, setIdleUnlockError] = useState('');
+  const [idleUnlocking, setIdleUnlocking] = useState(false);
   const activeTxn = useMemo(
     () => transactions.find((txn) => txn.id === activeTransaction) || transactions[0] || createTransaction(1),
     [transactions, activeTransaction]
@@ -373,6 +423,29 @@ const Cashier = ({ onLogout, user }) => {
     );
   }, [historyRecords, historySearch]);
 
+  const completedCashSales = useMemo(() => transactions.reduce((sum, txn) => {
+    const sale = txn.completedSale;
+    if (!sale || txn.status !== 'completed') return sum;
+    if (sale.paymentMethod === 'cash') return sum + (Number(sale.totalAmount) || 0);
+    if (sale.paymentMethod === 'split') return sum + (Number(sale.splitPayments?.cash ?? sale.cashAmount) || 0);
+    return sum;
+  }, 0), [transactions]);
+
+  const shiftCashIn = Number(shiftSession?.cashIn) || 0;
+  const shiftCashOut = Number(shiftSession?.cashOut) || 0;
+  const shiftOpeningCash = Number(shiftSession?.openingAmount) || 0;
+  const expectedShiftCash = shiftOpeningCash + completedCashSales + shiftCashIn - shiftCashOut;
+  const auditDenominationTotal = useMemo(() => (
+    DENOMINATIONS.reduce((sum, denomination) => (
+      sum + ((Number(cashierAuditEntry.denominations?.[denomination]) || 0) * denomination)
+    ), 0)
+  ), [cashierAuditEntry.denominations]);
+  const auditCountMode = cashierAuditEntry.countMode || 'manual';
+  const auditActualCashEnding = auditCountMode === 'denomination'
+    ? auditDenominationTotal
+    : Number(cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand || 0);
+  const auditVariance = auditActualCashEnding - expectedShiftCash;
+
   const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => {
     const normalizedProductId = String(productId || '')
     return transactions.reduce((sum, txn) => {
@@ -419,6 +492,57 @@ const Cashier = ({ onLogout, user }) => {
   const showNotification = (message) => {
     setNotification(message);
     window.setTimeout(() => setNotification(''), 3200);
+  };
+
+  const withDevice = (detail) => `${detail} Device ${deviceId}.`;
+
+  const sameCashier = (candidate) => {
+    if (!candidate) return false;
+    if (user?.id && candidate.id) return String(candidate.id) === String(user.id);
+    return String(candidate.email || '').toLowerCase() === String(user?.email || '').toLowerCase();
+  };
+
+  const lockForIdle = () => {
+    setIdleLocked(true);
+    setIdleUnlockBarcode('');
+    setIdleUnlockPassword('');
+    setIdleUnlockError('');
+    cashierApi.logActivity({
+      cashierId: user?.id,
+      action: 'Session Locked',
+      detail: withDevice(`Cashier session locked after inactivity for ${user?.name || user?.email || 'Cashier'}.`),
+    }).catch(() => {});
+  };
+
+  const unlockIdleSession = async () => {
+    setIdleUnlockError('');
+    setIdleUnlocking(true);
+    try {
+      const session = idleUnlockMode === 'barcode'
+        ? await cashierApi.loginWithBarcode(idleUnlockBarcode)
+        : await cashierApi.login(user?.email || '', idleUnlockPassword);
+      if (!sameCashier(session.user)) {
+        setIdleUnlockError('Use the same cashier account to unlock this session.');
+        return;
+      }
+      setIdleLocked(false);
+      setIdleUnlockBarcode('');
+      setIdleUnlockPassword('');
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Session Unlocked',
+        detail: withDevice(`Cashier session unlocked by ${user?.name || user?.email || 'Cashier'}.`),
+      }).catch(() => {});
+    } catch (err) {
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Security Alert',
+        detail: withDevice(`Failed unlock attempt for ${user?.name || user?.email || 'Cashier'} using ${idleUnlockMode}.`),
+      }).catch(() => {});
+      setIdleUnlockError((typeof err === 'string' ? err : err.message) || 'Unable to unlock session.');
+    } finally {
+      setIdleUnlocking(false);
+    }
   };
 
   const updateReceiptPrintJob = (jobId, updates) => {
@@ -519,30 +643,180 @@ const Cashier = ({ onLogout, user }) => {
     setCashierAuditMessage('');
   };
 
-  const saveCashierAuditEntry = async () => {
-    const cashBeginning = Number(cashierAuditEntry.cashBeginning);
-    const cashEnding = Number(cashierAuditEntry.cashEnding);
-    const cashOnHand = Number(cashierAuditEntry.cashOnHand);
+  const updateAuditDenomination = (denomination, value) => {
+    setCashierAuditEntry((current) => {
+      const denominations = {
+        ...(current.denominations || {}),
+        [denomination]: Math.max(0, Math.floor(Number(value) || 0)),
+      };
+      const next = {
+        ...current,
+        denominations,
+        countMode: 'denomination',
+        cashOnHand: String(DENOMINATIONS.reduce((sum, item) => (
+          sum + ((Number(denominations[item]) || 0) * item)
+        ), 0)),
+        actualCashEnding: String(DENOMINATIONS.reduce((sum, item) => (
+          sum + ((Number(denominations[item]) || 0) * item)
+        ), 0)),
+      };
+      localStorage.setItem(CASHIER_AUDIT_ENTRY_KEY, JSON.stringify(next));
+      return next;
+    });
+    setCashierAuditMessage('');
+  };
 
-    if (![cashBeginning, cashEnding, cashOnHand].every((value) => Number.isFinite(value) && value >= 0)) {
-      setCashierAuditMessage('Enter valid cash beginning, ending, and on-hand amounts.');
+  const persistShiftSession = (session) => {
+    setShiftSession(session);
+    localStorage.setItem(shiftStorageKey(user?.id), JSON.stringify(session));
+  };
+
+  const openShift = async () => {
+    const openingAmount = Number(shiftOpeningAmount);
+    if (!Number.isFinite(openingAmount) || openingAmount < 0) {
+      setShiftError('Enter a valid cash beginning amount.');
+      return;
+    }
+
+    setShiftSaving(true);
+    setShiftError('');
+    try {
+      const session = {
+        id: `shift_${Date.now()}`,
+        status: 'open',
+        cashierId: user?.id || '',
+        cashierName: user?.name || user?.email || 'Cashier',
+        openingAmount,
+        cashIn: 0,
+        cashOut: 0,
+        openedAt: new Date().toISOString(),
+        note: shiftNote.trim(),
+      };
+      persistShiftSession(session);
+      setCashierAuditEntry((current) => {
+        const next = { ...current, cashBeginning: String(openingAmount) };
+        localStorage.setItem(CASHIER_AUDIT_ENTRY_KEY, JSON.stringify(next));
+        return next;
+      });
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Shift Open',
+        detail: withDevice(`Shift opened by ${session.cashierName}: beginning PHP ${openingAmount.toFixed(2)}${session.note ? `; note ${session.note}` : ''}.`),
+      }).catch(() => {});
+      setShowShiftOpen(false);
+      setShiftOpeningAmount('');
+      setShiftNote('');
+      showNotification(`Shift opened with ${money(openingAmount)}.`);
+    } finally {
+      setShiftSaving(false);
+    }
+  };
+
+  const closeShift = async () => {
+    const closingAmount = Number(shiftClosingAmount);
+    if (!Number.isFinite(closingAmount) || closingAmount < 0) {
+      setShiftError('Enter a valid actual cash ending amount.');
+      return;
+    }
+
+    setShiftSaving(true);
+    setShiftError('');
+    try {
+      const variance = closingAmount - expectedShiftCash;
+      const closed = {
+        ...shiftSession,
+        status: 'closed',
+        closingAmount,
+        expectedClosingAmount: expectedShiftCash,
+        variance,
+        closedAt: new Date().toISOString(),
+        closeNote: shiftNote.trim(),
+      };
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Shift Close',
+        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
+      }).catch(() => {});
+      localStorage.removeItem(shiftStorageKey(user?.id));
+      setShiftSession(null);
+      setShowShiftClose(false);
+      setShiftClosingAmount('');
+      setShiftNote('');
+      showNotification(`Shift closed. Variance: ${money(variance)}.`);
+      if (onLogout) {
+        onLogout();
+        navigate('/login');
+      }
+    } finally {
+      setShiftSaving(false);
+    }
+  };
+
+  const saveCashierAuditEntry = async () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      setCashierAuditMessage('Open a shift before saving a cash audit.');
+      return;
+    }
+    const cashBeginning = Number(cashierAuditEntry.cashBeginning);
+    const cashEnding = Number(cashierAuditEntry.cashEnding || expectedShiftCash);
+    const countMode = cashierAuditEntry.countMode || 'manual';
+    const denominationBreakdown = DENOMINATIONS
+      .map((denomination) => ({
+        denomination,
+        count: Number(cashierAuditEntry.denominations?.[denomination]) || 0,
+      }))
+      .filter((item) => item.count > 0);
+    const breakdownText = denominationBreakdown
+      .map((item) => `${item.denomination}x${item.count}`)
+      .join(', ');
+    const cashOnHand = countMode === 'denomination'
+      ? auditDenominationTotal
+      : Number(cashierAuditEntry.cashOnHand || cashierAuditEntry.actualCashEnding);
+    const actualCashEnding = countMode === 'denomination'
+      ? auditDenominationTotal
+      : Number(cashierAuditEntry.actualCashEnding || cashOnHand);
+
+    if (![cashBeginning, cashEnding, cashOnHand, actualCashEnding].every((value) => Number.isFinite(value) && value >= 0)) {
+      setCashierAuditMessage('Enter valid cash beginning, ending, actual ending, and on-hand amounts.');
       return;
     }
 
     setCashierAuditSaving(true);
     try {
+      const opened = await openCashRegisterForActivity(
+        'cash audit',
+        `Cash register opened for cash audit by ${user?.name || user?.email || 'Cashier'}.`
+      );
+      if (!opened) {
+        setCashierAuditMessage('Unable to open cash register for audit.');
+        return;
+      }
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Audit',
-        detail: `Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}.`,
+        detail: withDevice(`Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, actual PHP ${actualCashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}, automatic cash count PHP ${auditDenominationTotal.toFixed(2)}, count mode ${countMode}${breakdownText ? `, breakdown ${breakdownText}` : ''}, variance PHP ${(actualCashEnding - expectedShiftCash).toFixed(2)}.`),
       });
-      setCashierAuditMessage('Cash audit saved to activity logs.');
-      showNotification('Cash audit saved.');
+      setCashierAuditMessage('Cash audit saved to activity logs. Register opened for count verification.');
+      showNotification('Cash audit saved and register opened.');
     } catch (err) {
       setCashierAuditMessage((typeof err === 'string' ? err : err.message) || 'Unable to save cash audit.');
     } finally {
       setCashierAuditSaving(false);
     }
+  };
+
+  const openRegisterForAudit = async () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      setCashierAuditMessage('Open a shift before opening the register for audit.');
+      return;
+    }
+    const opened = await openCashRegisterForActivity(
+      'cash audit',
+      `Cash register opened for cash audit by ${user?.name || user?.email || 'Cashier'}.`
+    );
+    if (opened) setCashierAuditMessage('Register opened for cash audit.');
   };
 
   const ShortcutHint = ({ action }) => {
@@ -741,6 +1015,34 @@ const Cashier = ({ onLogout, user }) => {
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, [activeTransaction]);
+
+  useEffect(() => {
+    const session = loadCashierShift(user?.id);
+    setShiftSession(session);
+    setShowShiftOpen(!session);
+    if (session) {
+      setCashierAuditEntry((current) => ({
+        ...current,
+        cashBeginning: current.cashBeginning || String(session.openingAmount ?? ''),
+      }));
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user || idleLocked) return undefined;
+    let timerId;
+    const resetTimer = () => {
+      window.clearTimeout(timerId);
+      timerId = window.setTimeout(lockForIdle, IDLE_LOCK_MS);
+    };
+    const events = ['click', 'keydown', 'mousemove', 'touchstart'];
+    events.forEach((eventName) => window.addEventListener(eventName, resetTimer, { passive: true }));
+    resetTimer();
+    return () => {
+      window.clearTimeout(timerId);
+      events.forEach((eventName) => window.removeEventListener(eventName, resetTimer));
+    };
+  }, [idleLocked, user?.id]);
 
   const handleSplitPaymentChange = (method, value) => {
     updateActiveTransaction((txn) => ({
@@ -1077,7 +1379,7 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Register Opened',
-        detail: detail || `Cash register opened by ${user?.name || user?.email || 'Cashier'} for ${reason}.`,
+        detail: withDevice(detail || `Cash register opened by ${user?.name || user?.email || 'Cashier'} for ${reason}.`),
       }).catch(() => {});
       return true;
     } catch (err) {
@@ -1087,49 +1389,87 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const resetCashOutModal = () => {
-    setShowCashOutModal(false);
-    setCashOutAmount('');
-    setCashOutReason('');
-    setCashOutApprovalMethod('barcode');
-    setCashOutApprovalCode('');
-    setCashOutApprovalEmail('');
-    setCashOutApprovalPassword('');
-    setCashOutError('');
+  const resetCashFlowModal = () => {
+    setShowCashFlowModal(false);
+    setCashFlowType('out');
+    setCashFlowAmount('');
+    setCashFlowCategory(CASH_FLOW_CATEGORIES.out[0]);
+    setCashFlowReason('');
+    setCashFlowApprovalMethod('barcode');
+    setCashFlowApprovalCode('');
+    setCashFlowApprovalEmail('');
+    setCashFlowApprovalPassword('');
+    setCashFlowError('');
   };
 
-  const confirmCashOut = async () => {
-    const amount = Number(cashOutAmount);
+  const openCashFlowModal = (type = 'out') => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      showNotification('Open a cashier shift before recording cash flow.');
+      return;
+    }
+    setCashFlowType(type);
+    setCashFlowCategory(CASH_FLOW_CATEGORIES[type]?.[0] || CASH_FLOW_CATEGORIES.out[0]);
+    setShowCashFlowModal(true);
+    setCashFlowError('');
+  };
+
+  const confirmCashFlow = async () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      setCashFlowError('Open a cashier shift before recording cash flow.');
+      return;
+    }
+    const amount = Number(cashFlowAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setCashOutError('Enter a valid cash-out amount.');
+      setCashFlowError('Enter a valid cash flow amount.');
       return;
     }
 
     try {
       const authorization = approvalPayload({
-        method: cashOutApprovalMethod,
-        code: cashOutApprovalCode,
-        email: cashOutApprovalEmail,
-        password: cashOutApprovalPassword,
+        method: cashFlowApprovalMethod,
+        code: cashFlowApprovalCode,
+        email: cashFlowApprovalEmail,
+        password: cashFlowApprovalPassword,
       });
       if (!authorization.code && (!authorization.email || !authorization.password)) {
-        setCashOutError(approvalError(cashOutApprovalMethod));
+        setCashFlowError(approvalError(cashFlowApprovalMethod));
         return;
       }
       const approver = await cashierApi.authorizeVoid(authorization);
+      const label = cashFlowType === 'in' ? 'Cash In' : 'Cash Out';
+      const signedAmount = cashFlowType === 'in' ? amount : -amount;
+      const opened = await openCashRegisterForActivity(
+        label.toLowerCase(),
+        `Cash register opened for ${label.toLowerCase()} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}.`
+      );
+      if (!opened) {
+        setCashFlowError('Manager approved, but the cash register did not open. Try again before moving cash.');
+        return;
+      }
+      const nextSession = shiftSession
+        ? {
+            ...shiftSession,
+            cashIn: (Number(shiftSession.cashIn) || 0) + (cashFlowType === 'in' ? amount : 0),
+            cashOut: (Number(shiftSession.cashOut) || 0) + (cashFlowType === 'out' ? amount : 0),
+          }
+        : null;
+      if (nextSession) persistShiftSession(nextSession);
       await cashierApi.logActivity({
         cashierId: user?.id,
-        action: 'Cash Out',
-        detail: `Cash out PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'} approved by ${approver?.name || 'Manager'}${cashOutReason ? ` (${cashOutReason})` : ''}`,
+        action: label,
+        detail: withDevice(`${label} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'} approved by ${approver?.name || 'Manager'}; category ${cashFlowCategory}; signed PHP ${signedAmount.toFixed(2)}${cashFlowReason ? `; note ${cashFlowReason}` : ''}.`),
       });
-      await openCashRegisterForActivity(
-        'cash out',
-        `Cash register opened for cash out PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}.`
-      );
-      showNotification(`Cash out recorded: ${money(amount)}.`);
-      resetCashOutModal();
+      showNotification(`${label} recorded: ${money(amount)}.`);
+      resetCashFlowModal();
     } catch (err) {
-      setCashOutError((typeof err === 'string' ? err : err.message) || 'Unable to record cash out.');
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Security Alert',
+        detail: withDevice(`Failed cash flow attempt by ${user?.name || user?.email || 'Cashier'} for ${cashFlowType === 'in' ? 'cash in' : 'cash out'} PHP ${amount.toFixed(2)}.`),
+      }).catch(() => {});
+      setCashFlowError((typeof err === 'string' ? err : err.message) || 'Unable to record cash flow.');
     }
   };
 
@@ -1415,6 +1755,11 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleCompleteTransaction = async () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      showNotification('Open a cashier shift before completing sales.');
+      return;
+    }
     if (!validatePayment()) return;
 
     const completingTransactionId = activeTxn.id;
@@ -1555,6 +1900,12 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleLogout = () => {
+    if (shiftSession) {
+      setShiftClosingAmount(String(expectedShiftCash.toFixed(2)));
+      setShowShiftClose(true);
+      setShiftError('');
+      return;
+    }
     if (onLogout) {
       onLogout();
       navigate('/login');
@@ -1562,7 +1913,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   useEffect(() => {
-    const modalOpen = showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings;
+    const modalOpen = idleLocked || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose;
 
     const actions = {
       focusBarcode: () => {
@@ -1731,10 +2082,10 @@ const Cashier = ({ onLogout, user }) => {
             variant="outline"
             size="sm"
             className={styles['cash-out-header-button']}
-            onClick={() => setShowCashOutModal(true)}
+            onClick={() => openCashFlowModal('out')}
           >
             <Dash size={16} />
-            Cash Out
+            Cash Flow
           </Button>
         </div>
         <div className={styles['header-actions']}>
@@ -2286,31 +2637,122 @@ const Cashier = ({ onLogout, user }) => {
       </Modal>
 
       <Modal
-        isOpen={showCashOutModal}
-        onClose={resetCashOutModal}
-        title="Cash Out"
+        isOpen={showShiftOpen}
+        onClose={() => {}}
+        title="Open Shift"
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={resetCashOutModal}>Cancel</button>
-            <button className="btn btn-primary" onClick={confirmCashOut}>Approve Cash Out</button>
+            <button className="btn btn-primary" onClick={openShift} disabled={shiftSaving}>
+              {shiftSaving ? 'Opening...' : 'Open Shift'}
+            </button>
           </div>
         }
       >
-        <p>Cash-out requires manager approval. The cash drawer will open after approval.</p>
-        <Input label="Amount" type="number" placeholder="Enter cash-out amount" value={cashOutAmount} onChange={(e) => setCashOutAmount(e.target.value)} />
-        <Input label="Reason" placeholder="Example: petty cash, supplier payment, bank deposit" value={cashOutReason} onChange={(e) => setCashOutReason(e.target.value)} />
+        <p>Enter the beginning cash before using the cashier POS.</p>
+        <Input
+          label="Cash Beginning"
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="0.00"
+          value={shiftOpeningAmount}
+          onChange={(e) => setShiftOpeningAmount(e.target.value)}
+          disabled={shiftSaving}
+        />
+        <Input
+          label="Note"
+          placeholder="Optional opening note"
+          value={shiftNote}
+          onChange={(e) => setShiftNote(e.target.value)}
+          disabled={shiftSaving}
+        />
+        {shiftError && <div style={{ color: '#dc2626', marginTop: 10 }}>{shiftError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={showShiftClose}
+        onClose={() => setShowShiftClose(false)}
+        title="Close Shift"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={() => setShowShiftClose(false)} disabled={shiftSaving}>Cancel</button>
+            <button className="btn btn-primary" onClick={closeShift} disabled={shiftSaving}>
+              {shiftSaving ? 'Closing...' : 'Close Shift & Logout'}
+            </button>
+          </div>
+        }
+      >
+        <div className={styles['audit-summary-grid']}>
+          <div><span>Cash Beginning</span><strong>{money(shiftOpeningCash)}</strong></div>
+          <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
+          <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
+          <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
+          <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
+        </div>
+        <Input
+          label="Actual Cash Ending"
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder="0.00"
+          value={shiftClosingAmount}
+          onChange={(e) => setShiftClosingAmount(e.target.value)}
+          disabled={shiftSaving}
+        />
+        <Input
+          label="Closing Note"
+          placeholder="Optional note for shortage, overage, or correction"
+          value={shiftNote}
+          onChange={(e) => setShiftNote(e.target.value)}
+          disabled={shiftSaving}
+        />
+        {shiftError && <div style={{ color: '#dc2626', marginTop: 10 }}>{shiftError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={showCashFlowModal}
+        onClose={resetCashFlowModal}
+        title="Cash Flow"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={resetCashFlowModal}>Cancel</button>
+            <button className="btn btn-primary" onClick={confirmCashFlow}>Approve & Open Register</button>
+          </div>
+        }
+      >
+        <p>Cash flow requires manager approval. The cash drawer opens before the cash movement is recorded.</p>
+        <div className={styles['cash-flow-type-row']}>
+          <button type="button" className={cashFlowType === 'in' ? styles.active : ''} onClick={() => {
+            setCashFlowType('in');
+            setCashFlowCategory(CASH_FLOW_CATEGORIES.in[0]);
+          }}>Cash In</button>
+          <button type="button" className={cashFlowType === 'out' ? styles.active : ''} onClick={() => {
+            setCashFlowType('out');
+            setCashFlowCategory(CASH_FLOW_CATEGORIES.out[0]);
+          }}>Cash Out</button>
+        </div>
+        <Input label="Amount" type="number" placeholder="Enter amount" value={cashFlowAmount} onChange={(e) => setCashFlowAmount(e.target.value)} />
+        <label className={styles['cash-flow-field']}>
+          <span>Category</span>
+          <select value={cashFlowCategory} onChange={(e) => setCashFlowCategory(e.target.value)}>
+            {(CASH_FLOW_CATEGORIES[cashFlowType] || CASH_FLOW_CATEGORIES.out).map((category) => (
+              <option key={category}>{category}</option>
+            ))}
+          </select>
+        </label>
+        <Input label="Note" placeholder="Optional detail for audit review" value={cashFlowReason} onChange={(e) => setCashFlowReason(e.target.value)} />
         {renderApprovalFields({
-          name: 'cash-out',
-          method: cashOutApprovalMethod,
-          setMethod: setCashOutApprovalMethod,
-          code: cashOutApprovalCode,
-          setCode: setCashOutApprovalCode,
-          email: cashOutApprovalEmail,
-          setEmail: setCashOutApprovalEmail,
-          password: cashOutApprovalPassword,
-          setPassword: setCashOutApprovalPassword,
+          name: 'cash-flow',
+          method: cashFlowApprovalMethod,
+          setMethod: setCashFlowApprovalMethod,
+          code: cashFlowApprovalCode,
+          setCode: setCashFlowApprovalCode,
+          email: cashFlowApprovalEmail,
+          setEmail: setCashFlowApprovalEmail,
+          password: cashFlowApprovalPassword,
+          setPassword: setCashFlowApprovalPassword,
         })}
-        {cashOutError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashOutError}</div>}
+        {cashFlowError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashFlowError}</div>}
       </Modal>
 
       <Modal
@@ -2768,8 +3210,31 @@ const Cashier = ({ onLogout, user }) => {
                 <div className={styles['settings-section-head']}>
                   <div>
                     <h4>Cash Audit</h4>
-                    <p>Record cash beginning, cash ending, and actual cash on hand into the activity logs.</p>
+                    <p>Record opening cash, cash flow, counted cash, expected ending cash, and variance.</p>
                   </div>
+                </div>
+                <div className={styles['audit-summary-grid']}>
+                  <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
+                  <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
+                  <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
+                  <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
+                  <div><span>Variance</span><strong className={auditVariance < 0 ? styles.negative : auditVariance > 0 ? styles.positive : ''}>{money(auditVariance)}</strong></div>
+                </div>
+                <div className={styles['cash-flow-type-row']}>
+                  <button
+                    type="button"
+                    className={auditCountMode === 'manual' ? styles.active : ''}
+                    onClick={() => updateCashierAuditEntry('countMode', 'manual')}
+                  >
+                    Manual Total
+                  </button>
+                  <button
+                    type="button"
+                    className={auditCountMode === 'denomination' ? styles.active : ''}
+                    onClick={() => updateCashierAuditEntry('countMode', 'denomination')}
+                  >
+                    Count by Denomination
+                  </button>
                 </div>
                 <div className={styles['audit-entry-grid']}>
                   <Input
@@ -2783,34 +3248,69 @@ const Cashier = ({ onLogout, user }) => {
                     disabled={cashierAuditSaving}
                   />
                   <Input
-                    label="Cash Ending"
+                    label="Expected Cash Ending"
                     type="number"
                     min="0"
                     step="0.01"
                     placeholder="0.00"
-                    value={cashierAuditEntry.cashEnding}
+                    value={cashierAuditEntry.cashEnding || expectedShiftCash.toFixed(2)}
                     onChange={(e) => updateCashierAuditEntry('cashEnding', e.target.value)}
                     disabled={cashierAuditSaving}
                   />
                   <Input
-                    label="Cash On Hand"
+                    label="Actual Cash Ending"
                     type="number"
                     min="0"
                     step="0.01"
                     placeholder="0.00"
-                    value={cashierAuditEntry.cashOnHand}
-                    onChange={(e) => updateCashierAuditEntry('cashOnHand', e.target.value)}
-                    disabled={cashierAuditSaving}
+                    value={auditCountMode === 'denomination'
+                      ? auditDenominationTotal.toFixed(2)
+                      : (cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand)}
+                    onChange={(e) => {
+                      updateCashierAuditEntry('actualCashEnding', e.target.value);
+                      updateCashierAuditEntry('cashOnHand', e.target.value);
+                    }}
+                    disabled={cashierAuditSaving || auditCountMode === 'denomination'}
                   />
                 </div>
-                <button
-                  type="button"
-                  className={styles['receipt-spacing-tight-button']}
-                  onClick={saveCashierAuditEntry}
-                  disabled={cashierAuditSaving}
-                >
-                  {cashierAuditSaving ? 'Saving Audit...' : 'Save Audit Entry'}
-                </button>
+                {auditCountMode === 'denomination' && (
+                  <div className={styles['denomination-grid']}>
+                    {DENOMINATIONS.map((denomination) => (
+                      <label key={denomination} className={styles['denomination-row']}>
+                        <span>{money(denomination)}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={cashierAuditEntry.denominations?.[denomination] || ''}
+                          onChange={(e) => updateAuditDenomination(denomination, e.target.value)}
+                          disabled={cashierAuditSaving}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <div className={styles['audit-entry-message']}>
+                  Automatic cash count: {money(auditDenominationTotal)}
+                </div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className={styles['receipt-spacing-tight-button']}
+                    onClick={openRegisterForAudit}
+                    disabled={cashierAuditSaving}
+                  >
+                    Open Register
+                  </button>
+                  <button
+                    type="button"
+                    className={styles['receipt-spacing-tight-button']}
+                    onClick={saveCashierAuditEntry}
+                    disabled={cashierAuditSaving}
+                  >
+                    {cashierAuditSaving ? 'Saving Audit...' : 'Save Audit Entry'}
+                  </button>
+                </div>
                 {cashierAuditMessage && (
                   <div className={styles['audit-entry-message']}>{cashierAuditMessage}</div>
                 )}
@@ -2969,6 +3469,62 @@ const Cashier = ({ onLogout, user }) => {
           disabled={completedVoidLoading}
         />
         {completedVoidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{completedVoidError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={idleLocked}
+        onClose={() => {}}
+        title="Session Locked"
+        footer={(
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" onClick={unlockIdleSession} disabled={idleUnlocking}>
+              {idleUnlocking ? 'Unlocking...' : 'Unlock'}
+            </button>
+          </div>
+        )}
+      >
+        <p>This cashier session was locked after inactivity. Unlock with the same cashier account.</p>
+        <div className={styles['cash-flow-type-row']}>
+          <button
+            type="button"
+            className={idleUnlockMode === 'barcode' ? styles.active : ''}
+            onClick={() => {
+              setIdleUnlockMode('barcode');
+              setIdleUnlockError('');
+            }}
+          >
+            Barcode
+          </button>
+          <button
+            type="button"
+            className={idleUnlockMode === 'password' ? styles.active : ''}
+            onClick={() => {
+              setIdleUnlockMode('password');
+              setIdleUnlockError('');
+            }}
+          >
+            Password
+          </button>
+        </div>
+        {idleUnlockMode === 'barcode' ? (
+          <Input
+            label="Cashier Barcode"
+            placeholder="Scan cashier barcode"
+            value={idleUnlockBarcode}
+            onChange={(e) => setIdleUnlockBarcode(e.target.value)}
+            disabled={idleUnlocking}
+          />
+        ) : (
+          <Input
+            label={`Password for ${user?.email || 'cashier'}`}
+            type="password"
+            placeholder="Enter cashier password"
+            value={idleUnlockPassword}
+            onChange={(e) => setIdleUnlockPassword(e.target.value)}
+            disabled={idleUnlocking}
+          />
+        )}
+        {idleUnlockError && <div style={{ color: '#dc2626', marginTop: 10 }}>{idleUnlockError}</div>}
       </Modal>
 
       <SyncStatusIndicator scope="cashier" />

@@ -737,6 +737,22 @@ ul { list-style: none; }
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
 }
+.table-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.app-loading {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
 table.data {
   width: 100%; border-collapse: collapse; font-size: 13px;
 }
@@ -1547,6 +1563,55 @@ table.data tbody tr.product-row-out .stock-zero {
 }
 .clickable-row:hover {
   background: var(--surface-2);
+}
+.transaction-log-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+.transaction-log-table th,
+.transaction-log-table td {
+  white-space: nowrap;
+}
+.transaction-log-table th:nth-child(1),
+.transaction-log-table td:nth-child(1) {
+  width: 135px;
+}
+.transaction-log-table th:nth-child(2),
+.transaction-log-table td:nth-child(2) {
+  width: 120px;
+}
+.transaction-log-table th:nth-child(3),
+.transaction-log-table td:nth-child(3) {
+  width: 130px;
+}
+.transaction-log-table th:nth-child(4),
+.transaction-log-table td:nth-child(4) {
+  width: 72px;
+  text-align: center;
+}
+.transaction-log-table th:nth-child(5),
+.transaction-log-table td:nth-child(5) {
+  width: 92px;
+}
+.transaction-log-table th:nth-child(6),
+.transaction-log-table td:nth-child(6),
+.transaction-log-table th:nth-child(7),
+.transaction-log-table td:nth-child(7),
+.transaction-log-table th:nth-child(8),
+.transaction-log-table td:nth-child(8),
+.transaction-log-table th:nth-child(9),
+.transaction-log-table td:nth-child(9),
+.transaction-log-table th:nth-child(10),
+.transaction-log-table td:nth-child(10) {
+  width: 104px;
+}
+.transaction-log-table th:nth-child(11),
+.transaction-log-table td:nth-child(11) {
+  width: 115px;
+}
+.transaction-log-table .prod-name {
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .transaction-detail {
   display: grid;

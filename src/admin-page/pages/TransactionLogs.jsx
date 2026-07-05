@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
@@ -9,6 +9,8 @@ import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/services/receiptPrinter'
 import GCashPayments from './GCashPayments'
+
+const PAGE_SIZE = 10
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10)
@@ -117,6 +119,7 @@ export default function TransactionLogs() {
   const [subTab, setSubTab] = useState('transactions')
   const [selectedReceipt, setSelectedReceipt] = useState(null)
   const [toast, setToast] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const cashierOptions = useMemo(() => {
     const names = new Set()
@@ -157,6 +160,11 @@ export default function TransactionLogs() {
 
   const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
   const voidedCount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').length
+  const visibleReceipts = filteredReceipts.slice(0, visibleCount)
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [action, cashierName, customFrom, customTo, dateRange, query, status, subTab])
 
   async function handleReprint(receipt) {
     try {
@@ -372,7 +380,7 @@ export default function TransactionLogs() {
           </div>
         ) : (
           <div className="table-wrap">
-            <table className="data">
+            <table className="data transaction-log-table">
               <thead>
                 <tr>
                   <th>Transaction No.</th>
@@ -389,7 +397,7 @@ export default function TransactionLogs() {
                 </tr>
               </thead>
               <tbody>
-                {filteredReceipts.map((receipt) => {
+                {visibleReceipts.map((receipt) => {
                   const receiptStatus = normalizedStatus(receipt)
                   const payment = paymentBreakdown(receipt)
                   return (
@@ -433,6 +441,13 @@ export default function TransactionLogs() {
                 })}
               </tbody>
             </table>
+            {filteredReceipts.length > visibleReceipts.length && (
+              <div className="table-more-row">
+                <button className="btn btn-outline" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
+                  Show More ({filteredReceipts.length - visibleReceipts.length} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

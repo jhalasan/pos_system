@@ -4,7 +4,7 @@
     "listRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
     "viewRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
     "createRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
-    "updateRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "updateRule": null,
     "deleteRule": null,
     "name": "activity_logs",
     "type": "base",

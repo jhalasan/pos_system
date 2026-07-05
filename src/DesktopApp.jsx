@@ -1,24 +1,24 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
-import CashierLogin from './cashier-pos/pages/CashierLogin'
-import Cashier from './cashier-pos/pages/Cashier'
 import { isAuthed } from './admin-page/auth'
 import AdminLayout from './admin-page/components/AdminLayout'
-import AdminLogin from './admin-page/pages/Login'
-import Dashboard from './admin-page/pages/Dashboard'
-import Inventory from './admin-page/pages/Inventory'
-import ProductManagement from './admin-page/pages/ProductManagement'
-import BarcodeTools from './admin-page/pages/BarcodeTools'
-import CashierManagement from './admin-page/pages/CashierManagement'
-import Analytics from './admin-page/pages/Analytics'
-import TransactionLogs from './admin-page/pages/TransactionLogs'
-import Audit from './admin-page/pages/Audit'
-import ActivityLogs from './admin-page/pages/ActivityLogs'
-import Settings from './admin-page/pages/Settings'
 import './admin-page/index.css'
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth'
+const AdminLogin = lazy(() => import('./admin-page/pages/Login'))
+const Dashboard = lazy(() => import('./admin-page/pages/Dashboard'))
+const Inventory = lazy(() => import('./admin-page/pages/Inventory'))
+const ProductManagement = lazy(() => import('./admin-page/pages/ProductManagement'))
+const BarcodeTools = lazy(() => import('./admin-page/pages/BarcodeTools'))
+const CashierManagement = lazy(() => import('./admin-page/pages/CashierManagement'))
+const Analytics = lazy(() => import('./admin-page/pages/Analytics'))
+const TransactionLogs = lazy(() => import('./admin-page/pages/TransactionLogs'))
+const Audit = lazy(() => import('./admin-page/pages/Audit'))
+const ActivityLogs = lazy(() => import('./admin-page/pages/ActivityLogs'))
+const Settings = lazy(() => import('./admin-page/pages/Settings'))
+const CashierLogin = lazy(() => import('./cashier-pos/pages/CashierLogin'))
+const Cashier = lazy(() => import('./cashier-pos/pages/Cashier'))
 
 function RequireAdminAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/admin-login" replace />
@@ -45,6 +45,7 @@ export default function DesktopApp() {
 
   return (
     <Router>
+      <Suspense fallback={<div className="app-loading">Loading...</div>}>
       <Routes>
         <Route path="/" element={<RoleSelection />} />
         <Route
@@ -87,6 +88,7 @@ export default function DesktopApp() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </Suspense>
     </Router>
   )
 }

@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import Modal from '../components/Modal'
-import { IconDownload, IconList } from '../components/Icons'
+import { IconDownload, IconList, IconSearch } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
@@ -27,6 +27,15 @@ const actionBadge = {
   'Stock Update': 'badge-warning',
   'Password Reset': 'badge-info',
   'Cloud Sync': 'badge-info',
+  'Cash In': 'badge-success',
+  'Cash Out': 'badge-danger',
+  'Shift Open': 'badge-info',
+  'Shift Close': 'badge-warning',
+  'Cash Audit': 'badge-info',
+  'Cash Register Opened': 'badge-warning',
+  'Session Locked': 'badge-neutral',
+  'Session Unlocked': 'badge-info',
+  'Security Alert': 'badge-danger',
 }
 
 const baseActionTypes = [
@@ -41,9 +50,20 @@ const baseActionTypes = [
   'Stock Update',
   'Cashier',
   'Settings',
+  'Cash In',
+  'Cash Out',
+  'Shift Open',
+  'Shift Close',
+  'Cash Audit',
+  'Cash Register Opened',
+  'Session Locked',
+  'Session Unlocked',
+  'Security Alert',
   'Login',
   'Logout',
 ]
+
+const PAGE_SIZE = 10
 
 function getDateRange(range) {
   const now = new Date()
@@ -83,10 +103,18 @@ function logMatchesFilters(log, filters) {
   const label = actionLabel(log.action)
   const mu = filters.userType === 'All' || log.userType === filters.userType
   const ma = filters.action === 'All' || label === filters.action
+  const query = String(filters.query || '').trim().toLowerCase()
+  const mq = !query || [
+    log.user,
+    log.userType,
+    label,
+    log.detail,
+    log.time,
+  ].some((value) => String(value || '').toLowerCase().includes(query))
   const dt = new Date(log.time)
   const md = (!filters.range.start || dt >= filters.range.start) &&
     (!filters.range.end || dt <= filters.range.end)
-  return mu && ma && md
+  return mu && ma && mq && md
 }
 
 function actionLabel(action) {
@@ -99,11 +127,15 @@ function actionLabel(action) {
 export default function ActivityLogs() {
   const { data: activityLogs, loading, error } = useApi(api.activityLogs, [])
   const [userType, setUserType] = useState('All')
+  const [query, setQuery] = useState('')
   const [action, setAction] = useState('All')
   const [dateRange, setDateRange] = useState('Today')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [exportFilters, setExportFilters] = useState({
     userType: 'All',
     action: 'All',
@@ -114,15 +146,24 @@ export default function ActivityLogs() {
 
   const actionTypes = [...new Set([...baseActionTypes, ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
 
-  const selectedRange = useMemo(() => getDateRange(dateRange), [dateRange])
+  const selectedRange = useMemo(() => (
+    dateRange === 'Custom' ? getCustomDateRange(customFrom, customTo) : getDateRange(dateRange)
+  ), [customFrom, customTo, dateRange])
 
   const filtered = useMemo(() => {
     return activityLogs.filter((log) => logMatchesFilters(log, {
       userType,
       action,
+      query,
       range: selectedRange,
     }))
-  }, [activityLogs, userType, action, selectedRange])
+  }, [activityLogs, userType, action, query, selectedRange])
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [action, customFrom, customTo, dateRange, query, userType])
+
+  const visibleLogs = filtered.slice(0, visibleCount)
 
   const exportPreview = useMemo(() => {
     const range = exportFilters.dateRange === 'Custom'
@@ -186,6 +227,15 @@ export default function ActivityLogs() {
 
       <div className="card activity-card">
         <div className="toolbar activity-toolbar">
+          <div className="input-search">
+            <IconSearch size={16} />
+            <input
+              className="input"
+              placeholder="Search user, action, details..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
           <div className="field">
             <select className="select" value={userType} onChange={(e) => setUserType(e.target.value)}>
               <option value="All">All User Types</option>
@@ -205,8 +255,19 @@ export default function ActivityLogs() {
               <option value="Last 7 Days">Last 7 Days</option>
               <option value="Last 30 Days">Last 30 Days</option>
               <option value="All Time">All Time</option>
+              <option value="Custom">Custom</option>
             </select>
           </div>
+          {dateRange === 'Custom' && (
+            <>
+              <div className="field">
+                <input className="input" type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+              </div>
+              <div className="field">
+                <input className="input" type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+              </div>
+            </>
+          )}
           <span className="count">{filtered.length} record(s)</span>
         </div>
 
@@ -229,7 +290,7 @@ export default function ActivityLogs() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((l) => (
+                {visibleLogs.map((l) => (
                   <tr key={l.id}>
                     <td className="mono">{new Date(l.time).toLocaleString()}</td>
                     <td className="prod-name">{l.user}</td>
@@ -248,6 +309,13 @@ export default function ActivityLogs() {
                 ))}
               </tbody>
             </table>
+            {filtered.length > visibleLogs.length && (
+              <div className="table-more-row">
+                <button className="btn btn-outline" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
+                  Show More ({filtered.length - visibleLogs.length} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,18 +1,20 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { isAuthed } from './auth'
 import AdminLayout from './components/AdminLayout'
 import RoleSelect from './pages/RoleSelect'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Inventory from './pages/Inventory'
-import ProductManagement from './pages/ProductManagement'
-import BarcodeTools from './pages/BarcodeTools'
-import CashierManagement from './pages/CashierManagement'
-import Analytics from './pages/Analytics'
-import TransactionLogs from './pages/TransactionLogs'
-import ActivityLogs from './pages/ActivityLogs'
-import Audit from './pages/Audit'
-import Settings from './pages/Settings'
+
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Inventory = lazy(() => import('./pages/Inventory'))
+const ProductManagement = lazy(() => import('./pages/ProductManagement'))
+const BarcodeTools = lazy(() => import('./pages/BarcodeTools'))
+const CashierManagement = lazy(() => import('./pages/CashierManagement'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const TransactionLogs = lazy(() => import('./pages/TransactionLogs'))
+const ActivityLogs = lazy(() => import('./pages/ActivityLogs'))
+const Audit = lazy(() => import('./pages/Audit'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 function RequireAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/login" replace />
@@ -20,6 +22,7 @@ function RequireAuth({ children }) {
 
 export default function App() {
   return (
+    <Suspense fallback={<div className="app-loading">Loading...</div>}>
     <Routes>
       <Route path="/" element={<RoleSelect />} />
       <Route path="/login" element={<Login />} />
@@ -49,5 +52,6 @@ export default function App() {
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   )
 }

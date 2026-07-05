@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import { IconDownload, IconPeso, IconSearch, IconWallet } from '../components/Icons'
@@ -6,6 +6,8 @@ import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
+
+const PAGE_SIZE = 10
 
 function formatDate(value) {
   if (!value) return '-'
@@ -80,6 +82,7 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
   const [cashierName, setCashierName] = useState('all')
   const [status, setStatus] = useState('all')
   const [toast, setToast] = useState('')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const cashierOptions = useMemo(() => {
     const names = new Set()
@@ -120,6 +123,11 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
   const splitTotal = filteredPayments
     .filter((payment) => payment.paymentType === 'Split')
     .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
+  const visiblePayments = filteredPayments.slice(0, visibleCount)
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE)
+  }, [cashierName, customFrom, customTo, dateRange, query, status, type])
 
   async function handleExport() {
     const result = await exportCsv(`gcash-payments-${new Date().toISOString().slice(0, 10)}.csv`, [
@@ -273,7 +281,7 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
                 </tr>
               </thead>
               <tbody>
-                {filteredPayments.map((payment) => (
+                {visiblePayments.map((payment) => (
                   <tr key={`${payment.id}-${payment.paymentType}`}>
                     <td>{formatDate(payment.createdAt)}</td>
                     <td>
@@ -294,6 +302,13 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
                 ))}
               </tbody>
             </table>
+            {filteredPayments.length > visiblePayments.length && (
+              <div className="table-more-row">
+                <button className="btn btn-outline" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
+                  Show More ({filteredPayments.length - visiblePayments.length} remaining)
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

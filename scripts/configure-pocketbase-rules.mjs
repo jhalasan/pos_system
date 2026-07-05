@@ -77,7 +77,8 @@ await updateCollection('activity_logs', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,
-  updateRule: cashierRule,
+  updateRule: null,
+  deleteRule: null,
 })
 
 await updateCollection('sales', {
