@@ -234,7 +234,7 @@
 }
 
 .transaction-new {
-  height: 36px;
+  height: 45px;
   padding: 0 16px;
   background-color: #15803d;
   color: #ffffff;
@@ -251,7 +251,7 @@
 }
 
 .transaction-cash-out {
-  height: 36px;
+  height: 45px;
   padding: 0 14px;
   background-color: #ffffff;
   color: #b45309;
@@ -2131,6 +2131,68 @@
 :global(:root[data-theme="dark"]) .search-result-item:hover {
   background-color: #263244;
   border-color: #475569;
+}
+
+:global(:root.theme-dark) .search-result-item,
+:global(:root[data-theme="dark"]) .search-result-item {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .search-result-item.selected,
+:global(:root[data-theme="dark"]) .search-result-item.selected {
+  background-color: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+:global(:root.theme-dark) .last-scanned,
+:global(:root[data-theme="dark"]) .last-scanned {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .last-scanned span:first-child,
+:global(:root[data-theme="dark"]) .last-scanned span:first-child {
+  color: var(--primary);
+}
+
+:global(:root.theme-dark) .last-scanned strong,
+:global(:root[data-theme="dark"]) .last-scanned strong {
+  color: var(--text);
+}
+
+:global(:root.theme-dark) .last-scanned small,
+:global(:root[data-theme="dark"]) .last-scanned small {
+  color: var(--text-muted);
+}
+
+:global(:root.theme-dark) .product-thumb,
+:global(:root[data-theme="dark"]) .product-thumb {
+  background-color: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+:global(:root.theme-dark) .cart-item:hover,
+:global(:root[data-theme="dark"]) .cart-item:hover {
+  background-color: var(--surface);
+  border-color: var(--border-strong);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+}
+
+:global(:root.theme-dark) .quantity-control,
+:global(:root[data-theme="dark"]) .quantity-control {
+  background-color: var(--surface);
+  border-color: var(--border);
+}
+
+:global(:root.theme-dark) .quantity-control input,
+:global(:root[data-theme="dark"]) .quantity-control input {
+  background-color: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
 }
 
 :global(:root.theme-dark) .payment-btn.active,
