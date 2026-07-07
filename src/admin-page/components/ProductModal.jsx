@@ -182,6 +182,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }
 
   function setFormNumberValue(key, value) {
+    if (typeof value === 'string' && value.trim() === '') {
+      setFormValue(key, '')
+      return
+    }
+
     const numericValue = Number(value)
     setFormValue(key, Number.isFinite(numericValue) ? numericValue : 0)
   }
@@ -234,14 +239,20 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     setSellingUnits((current) => current.map((row, idx) => {
       if (idx !== index) return row
       if (key === 'price') {
-        return { ...row, price: Number(value) || 0, isPriceManual: true }
+        return {
+          ...row,
+          price: value === '' ? '' : Number(value) || 0,
+          isPriceManual: true,
+        }
       }
       if (key === 'conversion') {
-        const normalizedConversion = Number(value) > 0 ? Number(value) : 1
+        const normalizedConversion = value === '' ? '' : (Number(value) > 0 ? Number(value) : 1)
         return {
           ...row,
           conversion: normalizedConversion,
-          price: deriveSellingPrice(Number(form.cost), Number(form.profitMargin), normalizedConversion, Number(form.conversionQuantity)),
+          price: normalizedConversion === ''
+            ? row.price
+            : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), normalizedConversion, Number(form.conversionQuantity)),
           isPriceManual: false,
         }
       }
@@ -487,7 +498,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
                   </thead>
                   <tbody>
                     {sellingUnits.map((row, index) => (
-                      <tr key={`${row.barcode || 'unit'}-${index}`}>
+                      <tr key={index}>
                         <td>
                           <input
                             className="input"
