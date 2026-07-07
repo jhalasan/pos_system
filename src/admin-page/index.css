@@ -817,7 +817,7 @@ table.data tbody tr.product-row-out .stock-zero {
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: #f3b4b4; }
-.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; width: 100%; }
 .cashier-print-btn { min-height: 34px; padding: 0 10px; font-size: 12px; }
 
 .toolbar {

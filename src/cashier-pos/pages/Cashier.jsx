@@ -467,7 +467,9 @@ const Cashier = ({ onLogout, user }) => {
   const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => {
     const normalizedProductId = String(productId || '')
     return transactions.reduce((sum, txn) => {
+      // Only consider active/pending transactions when reserving stock.
       if (txn.id === excludedTransactionId) return sum;
+      if (txn.status === 'completed' || txn.status === 'voided') return sum;
       return txn.cartItems.reduce((innerSum, cartItem) => {
         const itemProductId = String(cartItem.productId || cartItem.id || '')
         const itemId = String(cartItem.id || '')
