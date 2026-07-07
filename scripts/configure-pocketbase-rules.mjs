@@ -87,11 +87,57 @@ await updateCollection('sales', {
   createRule: cashierRule,
   updateRule: cashierRule,
 })
+await patchField('sales', 'status', {
+  values: ['completed', 'voided', 'adjusted'],
+})
 
 await updateCollection('sale_items', {
   listRule: readRule,
   viewRule: readRule,
   createRule: cashierRule,
+})
+
+await updateCollection('stock_movements', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
+})
+await patchField('stock_movements', 'movement_type', {
+  values: ['stock_in', 'stock_out', 'adjustment', 'void_return', 'sale', 'refund_return', 'exchange_return'],
+})
+
+await updateCollection('cash_register_sessions', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+  updateRule: cashierRule,
+  deleteRule: adminRule,
+})
+
+await updateCollection('cash_movements', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
+})
+
+await updateCollection('cash_audits', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: cashierRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
+})
+
+await updateCollection('audit_reviews', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: adminRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
 })
 
 await updateCollection('users', {

@@ -1289,6 +1289,49 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.initial-quantity-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.initial-quantity-product {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.initial-quantity-product strong,
+.initial-quantity-product span,
+.initial-quantity-product small {
+  display: block;
+  min-width: 0;
+}
+
+.initial-quantity-product strong {
+  color: #0f172a;
+  font-size: 15px;
+  line-height: 1.3;
+}
+
+.initial-quantity-product span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.initial-quantity-product small {
+  margin-top: 5px;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .stock-pill {
   display: inline-flex;
   align-items: center;
@@ -1462,6 +1505,107 @@
   background-color: #f9fafb;
   border-radius: 6px;
   margin-top: 8px;
+}
+
+.cash-modal-hint {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.cash-modal-hint span,
+.cash-modal-hint small {
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cash-modal-hint strong {
+  color: #0f172a;
+  font-size: 22px;
+  line-height: 1.2;
+}
+
+.cash-modal-hint small {
+  color: #475569;
+  font-weight: 600;
+}
+
+.payment-flow-panel {
+  display: grid;
+  gap: 16px;
+  outline: none;
+}
+
+.payment-flow-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.payment-flow-summary > div {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.payment-flow-summary span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.payment-flow-summary strong {
+  color: #0f172a;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+
+.payment-flow-change {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  text-align: center;
+}
+
+.payment-flow-change span {
+  color: #166534;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.payment-flow-change strong {
+  color: #14532d;
+  font-size: 34px;
+  line-height: 1.1;
+}
+
+.payment-flow-change small,
+.payment-flow-instruction {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.payment-flow-error {
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .change-row {

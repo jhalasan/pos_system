@@ -1,55 +1,23 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
 import { IconUsers, IconUserPlus, IconScan, IconTrash, IconEdit, IconImage } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
-import { code128Bars, escapeHtml } from '../utils/code128Barcode'
+import {
+  BROWSER_PRINT_VALUE,
+  listBarcodePrinters,
+  printBarcodeLabels,
+  saveBarcodeLabelsPdf,
+  saveBarcodePrintSettings,
+  savedBarcodePrintSettings,
+} from '../utils/barcodePrinter'
 
 const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', password: '', passwordConfirm: '' }
 
 function nextCashierBarcode() {
   return `81${String(Date.now()).slice(-10)}${String(Math.floor(Math.random() * 100)).padStart(2, '0')}`
-}
-
-function printCashierBarcode(cashier) {
-  const code = String(cashier.cashierBarcode || '').trim()
-  if (!code) {
-    alert('This cashier does not have a barcode yet.')
-    return
-  }
-
-  const { bars, width } = code128Bars(code)
-  if (!bars.length) {
-    alert('Cashier barcode can only contain standard printable characters.')
-    return
-  }
-
-  const name = escapeHtml(cashier.name || 'Cashier')
-  const escapedCode = escapeHtml(code)
-  const rects = bars.map((bar) => `<rect x="${bar.x}" y="0" width="${bar.width}" height="74" fill="#111827" />`).join('')
-  const frame = document.createElement('iframe')
-  frame.title = 'Cashier barcode print'
-  frame.style.position = 'fixed'
-  frame.style.right = '0'
-  frame.style.bottom = '0'
-  frame.style.width = '0'
-  frame.style.height = '0'
-  frame.style.border = '0'
-  frame.srcdoc = `<!doctype html><html><head><title>Cashier Barcode</title><style>
-    @page { size: 58mm auto; margin: 4mm; }
-    body { font-family: Arial, sans-serif; text-align: center; margin: 0; color: #111827; }
-    h1 { font-size: 13px; margin: 0 0 6px; }
-    svg { width: 46mm; height: 22mm; display: block; margin: 0 auto 4px; }
-    .code { font-family: Consolas, monospace; font-size: 10px; letter-spacing: 0; overflow-wrap: anywhere; }
-  </style></head><body><h1>${name}</h1><svg viewBox="0 0 ${width} 78" preserveAspectRatio="none">${rects}</svg><div class="code">${escapedCode}</div></body></html>`
-  frame.onload = () => {
-    frame.contentWindow?.focus()
-    frame.contentWindow?.print()
-    setTimeout(() => frame.remove(), 1000)
-  }
-  document.body.appendChild(frame)
 }
 
 export default function CashierManagement() {
@@ -63,6 +31,10 @@ export default function CashierManagement() {
   const [toast, setToast] = useState('')
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [printSettings, setPrintSettings] = useState(savedBarcodePrintSettings)
+  const [printers, setPrinters] = useState([])
+  const [selectedCashierIds, setSelectedCashierIds] = useState([])
+  const [printingBarcode, setPrintingBarcode] = useState('')
   const isEdit = Boolean(editingCashier)
 
   const set = (k) => (e) => {
@@ -74,6 +46,10 @@ export default function CashierManagement() {
     return () => {
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
     }
+  }, [])
+
+  useEffect(() => {
+    listBarcodePrinters().then(setPrinters)
   }, [])
 
   function flash(msg) {
@@ -199,6 +175,99 @@ export default function CashierManagement() {
   }
 
   const active = list.filter((c) => c.status === 'active').length
+  const printableCashiers = useMemo(() => list
+    .filter((cashier) => String(cashier.cashierBarcode || '').trim())
+    .map((cashier) => ({
+      id: cashier.id,
+      title: cashier.name || 'Cashier',
+      value: cashier.cashierBarcode,
+      meta: [cashier.cashierId || cashier.id, cashier.shift].filter(Boolean).join(' | '),
+    })), [list])
+  const selectedCashierBarcodes = useMemo(() => {
+    const selected = new Set(selectedCashierIds)
+    return printableCashiers.filter((cashier) => selected.has(cashier.id))
+  }, [printableCashiers, selectedCashierIds])
+
+  function updatePrintSettings(patch) {
+    setPrintSettings(saveBarcodePrintSettings({ ...printSettings, ...patch }))
+  }
+
+  function toggleCashierSelection(id) {
+    setSelectedCashierIds((current) => (
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id]
+    ))
+  }
+
+  function selectAllCashiers() {
+    setSelectedCashierIds(printableCashiers.map((cashier) => cashier.id))
+  }
+
+  async function printCashierBarcode(cashier) {
+    const code = String(cashier.cashierBarcode || '').trim()
+    if (!code) {
+      flash('This cashier does not have a barcode yet.')
+      return
+    }
+
+    setPrintingBarcode(cashier.id)
+    try {
+      const result = await printBarcodeLabels({
+        title: cashier.name || 'Cashier',
+        value: code,
+        meta: [cashier.cashierId || cashier.id, cashier.shift].filter(Boolean).join(' | '),
+      }, printSettings)
+      const copies = Number(result?.copies) || printSettings.copies
+      if (result?.preview) {
+        flash(`Preview opened for ${copies} cashier barcode label${copies === 1 ? '' : 's'}.`)
+      } else {
+        flash(`Sent ${copies} cashier barcode label${copies === 1 ? '' : 's'} to ${result?.printerName || 'printer'}.`)
+      }
+    } catch (err) {
+      flash(err.message || 'Unable to print cashier barcode.')
+    } finally {
+      setPrintingBarcode('')
+    }
+  }
+
+  async function saveCashierBarcode(cashier) {
+    const code = String(cashier.cashierBarcode || '').trim()
+    if (!code) {
+      flash('This cashier does not have a barcode yet.')
+      return
+    }
+
+    setPrintingBarcode(`save-${cashier.id}`)
+    try {
+      const path = await saveBarcodeLabelsPdf({
+        title: cashier.name || 'Cashier',
+        value: code,
+        meta: [cashier.cashierId || cashier.id, cashier.shift].filter(Boolean).join(' | '),
+      }, {
+        ...printSettings,
+        documentName: `Cashier Barcode ${cashier.name || code}`,
+      })
+      flash(path ? `Cashier barcode PDF saved to ${path}.` : 'Cashier barcode PDF save cancelled.')
+    } catch (err) {
+      flash(err.message || 'Unable to save cashier barcode PDF.')
+    } finally {
+      setPrintingBarcode('')
+    }
+  }
+
+  async function printSelectedCashiers() {
+    setPrintingBarcode('selected')
+    try {
+      const path = await saveBarcodeLabelsPdf(selectedCashierBarcodes, {
+        ...printSettings,
+        documentName: `Cashier Barcodes (${selectedCashierBarcodes.length})`,
+      })
+      flash(path ? `Cashier barcode PDF saved to ${path}.` : 'Cashier barcode PDF save cancelled.')
+    } catch (err) {
+      flash(err.message || 'Unable to print selected cashier barcode PDF.')
+    } finally {
+      setPrintingBarcode('')
+    }
+  }
 
   if (loading) {
     return (
@@ -224,6 +293,43 @@ export default function CashierManagement() {
         title="Cashier Management"
         subtitle="Manage cashier accounts, shifts, and access."
       >
+        <label className="barcode-print-count barcode-printer-select">
+          <span>Printer</span>
+          <select
+            className="select"
+            value={printSettings.printerName || BROWSER_PRINT_VALUE}
+            onChange={(e) => updatePrintSettings({ printerName: e.target.value })}
+            aria-label="Cashier barcode printer"
+          >
+            <option value={BROWSER_PRINT_VALUE}>Print dialog / sheet</option>
+            {printSettings.printerName && printSettings.printerName !== BROWSER_PRINT_VALUE && !printers.some((printer) => printer.name === printSettings.printerName) && (
+              <option value={printSettings.printerName}>{printSettings.printerName}</option>
+            )}
+            {printers.map((printer) => (
+              <option key={printer.name} value={printer.name}>
+                {printer.name}{printer.isDefault ? ' (Default)' : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="barcode-print-count">
+          <span>Labels</span>
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="99"
+            value={printSettings.copies}
+            onChange={(e) => updatePrintSettings({ copies: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })}
+            aria-label="Cashier barcode labels to print"
+          />
+        </label>
+        <button className="btn btn-outline" onClick={selectAllCashiers} disabled={printableCashiers.length === 0}>
+          Select All
+        </button>
+        <button className="btn btn-primary" onClick={printSelectedCashiers} disabled={selectedCashierBarcodes.length === 0 || printingBarcode === 'selected'}>
+          {printingBarcode === 'selected' ? 'Saving...' : `Print Selected (${selectedCashierBarcodes.length})`}
+        </button>
         <button className="btn btn-outline" onClick={() => alert('Scan a cashier ID badge to look up an account.')}>
           <IconScan size={16} /> Scan ID
         </button>
@@ -258,6 +364,7 @@ export default function CashierManagement() {
             <table className="data">
               <thead>
                 <tr>
+                  <th className="t-center">Select</th>
                   <th>Cashier</th>
                   <th>Cashier ID</th>
                   <th>Barcode</th>
@@ -270,6 +377,15 @@ export default function CashierManagement() {
               <tbody>
                 {list.map((c) => (
                   <tr key={c.id}>
+                    <td className="t-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedCashierIds.includes(c.id)}
+                        onChange={() => toggleCashierSelection(c.id)}
+                        disabled={!c.cashierBarcode}
+                        aria-label={`Select ${c.name} barcode`}
+                      />
+                    </td>
                     <td>
                       <div className="prod-cell">
                         <div className="user-chip" style={{ border: 'none', padding: 0 }}>
@@ -299,8 +415,21 @@ export default function CashierManagement() {
                         <button className="icon-btn" title="Edit" onClick={() => openEditCashier(c)}>
                           <IconEdit size={15} />
                         </button>
-                        <button className="btn btn-outline cashier-print-btn" title="Print cashier barcode" onClick={() => printCashierBarcode(c)}>
-                          <IconScan size={15} /> Print
+                        <button
+                          className="btn btn-outline cashier-print-btn"
+                          title="Print cashier barcode"
+                          onClick={() => printCashierBarcode(c)}
+                          disabled={printingBarcode === c.id}
+                        >
+                          <IconScan size={15} /> {printingBarcode === c.id ? 'Printing...' : 'Print'}
+                        </button>
+                        <button
+                          className="btn btn-outline cashier-print-btn"
+                          title="Save cashier barcode PDF"
+                          onClick={() => saveCashierBarcode(c)}
+                          disabled={printingBarcode === `save-${c.id}`}
+                        >
+                          {printingBarcode === `save-${c.id}` ? 'Saving...' : 'Save PDF'}
                         </button>
                         <button className="icon-btn del" title="Remove" onClick={() => removeCashier(c)}>
                           <IconTrash size={15} />

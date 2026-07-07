@@ -1625,6 +1625,21 @@ export const desktopAdminApi = {
 
     return localLogs
   },
+  async markAuditReviewed(data = {}) {
+    await startAdminRuntime()
+    if (!(await isCloudReachable())) return null
+    const reviewedBy = adminSession?.id || pb.authStore.record?.id || ''
+    if (!reviewedBy) return null
+
+    return pb.collection('audit_reviews').create({
+      reviewed_by: reviewedBy,
+      date_from: data.fromDate ? `${data.fromDate}T00:00:00.000Z` : new Date().toISOString(),
+      date_to: data.toDate ? `${data.toDate}T23:59:59.999Z` : new Date().toISOString(),
+      row_count: Math.max(0, Math.floor(Number(data.rowCount) || 0)),
+      note: String(data.note || '').trim(),
+      reviewed_at: new Date().toISOString(),
+    }, { requestKey: `audit-review:${reviewedBy}:${data.fromDate || 'all'}:${data.toDate || 'all'}:${Date.now()}` }).catch(() => null)
+  },
   gcashPayments: fetchGcashPayments,
   async settingsAdmins() {
     await startAdminRuntime()

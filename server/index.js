@@ -276,6 +276,25 @@ async function createLog(log) {
   }
 }
 
+async function createStockMovement(payload) {
+  try {
+    await (await pbCollection('stock_movements')).create({
+      product_id: payload.productId,
+      movement_type: payload.movementType,
+      quantity: Number(payload.quantity) || 0,
+      previous_quantity: Number(payload.previousQuantity) || 0,
+      new_quantity: Number(payload.newQuantity) || 0,
+      reference_type: payload.referenceType || '',
+      reference_id: payload.referenceId || '',
+      notes: payload.notes || '',
+      user_id: payload.userId || '',
+      created_at: payload.createdAt || new Date().toISOString(),
+    })
+  } catch (error) {
+    console.warn(`Could not write stock movement: ${error.message}`)
+  }
+}
+
 async function authorizeManagerApproval({ code, email, password }) {
   const barcode = String(code || '').trim()
   if (barcode) {
@@ -942,6 +961,9 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     transaction_no: transactionNo,
     cashier_id: cashierId,
     total_amount: totalAmount,
+    subtotal_amount: subtotalAmount,
+    discount_percent: discountPercent,
+    discount_amount: discountAmount,
     payment_method: paymentMethod,
     ref_number: refNumber,
     status: 'completed',
@@ -949,6 +971,8 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   })
 
   for (const { product, item, quantity, baseQuantity } of productRecords) {
+    const previousQty = Number(product.quantity) || 0
+    const nextQty = Math.max(0, previousQty - baseQuantity)
     await saleItems.create({
       sale_id: sale.id,
       product_id: product.id,
@@ -956,7 +980,19 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
       price_at_sale: Number(item.price) || Number(product.price) || 0,
     })
     await products.update(product.id, {
-      quantity: numberFieldValue((Number(product.quantity) || 0) - baseQuantity),
+      quantity: numberFieldValue(nextQty),
+    })
+    await createStockMovement({
+      productId: product.id,
+      movementType: 'sale',
+      quantity: baseQuantity,
+      previousQuantity: previousQty,
+      newQuantity: nextQty,
+      referenceType: 'sale',
+      referenceId: sale.id,
+      userId: cashierId,
+      notes: `Sale ${transactionNo}`,
+      createdAt: sale.created_at || new Date().toISOString(),
     })
   }
 
@@ -1010,8 +1046,22 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
     const productId = productRelationId(item.product_id)
     if (!productId) continue
     const product = await products.getOne(productId)
+    const previousQty = Number(product.quantity) || 0
+    const returnedQty = Number(item.quantity_sold) || 0
+    const nextQty = previousQty + returnedQty
     await products.update(product.id, {
-      quantity: numberFieldValue((Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0)),
+      quantity: numberFieldValue(nextQty),
+    })
+    await createStockMovement({
+      productId: product.id,
+      movementType: 'void_return',
+      quantity: returnedQty,
+      previousQuantity: previousQty,
+      newQuantity: nextQty,
+      referenceType: 'void',
+      referenceId: sale.id,
+      userId: cashierId || productRelationId(sale.cashier_id),
+      notes: `Voided sale ${sale.transaction_no || sale.id}${reason ? `: ${reason}` : ''}`,
     })
   }
 
@@ -1083,8 +1133,19 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
 
   const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
   const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
-  const nextQty = (Number(record.quantity) || 0) + (qty * conversion)
+  const previousQty = Number(record.quantity) || 0
+  const movementQty = qty * conversion
+  const nextQty = previousQty + movementQty
   const updated = await (await pbCollection('products')).update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
+  await createStockMovement({
+    productId: record.id,
+    movementType: 'stock_in',
+    quantity: movementQty,
+    previousQuantity: previousQty,
+    newQuantity: nextQty,
+    referenceType: 'inventory_scan',
+    notes: `Stock in by barcode ${barcode}`,
+  })
   await createLog({ action: 'Stock Update', detail: `Added ${qty * conversion} base unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
 }))
@@ -1105,9 +1166,19 @@ app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
   const baseUnitsToRemove = qty * conversion
   if (currentQty < baseUnitsToRemove) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} base unit(s) in stock.` })
 
+  const nextQty = currentQty - baseUnitsToRemove
   const updated = await (await pbCollection('products')).update(record.id, {
-    quantity: numberFieldValue(currentQty - baseUnitsToRemove),
+    quantity: numberFieldValue(nextQty),
   }, { expand: 'category' })
+  await createStockMovement({
+    productId: record.id,
+    movementType: 'stock_out',
+    quantity: baseUnitsToRemove,
+    previousQuantity: currentQty,
+    newQuantity: nextQty,
+    referenceType: 'stock_out',
+    notes: `${reason}${note ? ` (${note})` : ''}`,
+  })
   await createLog({
     action: 'Stock Out',
     detail: `Removed ${baseUnitsToRemove} base unit(s) from "${record.name}" - ${reason}${note ? ` (${note})` : ''}`,
@@ -1344,6 +1415,36 @@ app.delete('/api/cashiers/:id', asyncRoute(async (req, res) => {
 app.get('/api/activity-logs', asyncRoute(async (_req, res) => {
   const records = await listRecords('activity_logs', '?sort=-timestamp,-created&expand=user_id&perPage=500')
   res.json(records.map(toActivityLog))
+}))
+
+app.post('/api/audit-reviews', asyncRoute(async (req, res) => {
+  const reviewedBy = String(req.body?.reviewedBy || '').trim()
+    || (await (await pbCollection('users')).getFirstListItem('role="admin"', { fields: 'id' }).catch(() => null))?.id
+  if (!reviewedBy) return res.status(400).json({ error: 'Admin reviewer is required.' })
+
+  const fromDate = String(req.body?.fromDate || '').trim()
+  const toDate = String(req.body?.toDate || '').trim()
+  const reviewedAt = new Date().toISOString()
+  const created = await (await pbCollection('audit_reviews')).create({
+    reviewed_by: reviewedBy,
+    date_from: fromDate ? `${fromDate}T00:00:00.000Z` : reviewedAt,
+    date_to: toDate ? `${toDate}T23:59:59.999Z` : reviewedAt,
+    row_count: Math.max(0, Math.floor(Number(req.body?.rowCount) || 0)),
+    note: String(req.body?.note || '').trim(),
+    reviewed_at: reviewedAt,
+  })
+
+  await createLog({
+    userId: reviewedBy,
+    action: 'Audit Review',
+    detail: `Marked audit range ${fromDate || 'all'} to ${toDate || 'all'} as reviewed.`,
+  })
+
+  res.status(201).json({
+    id: created.id,
+    reviewedAt: created.reviewed_at,
+    rowCount: created.row_count,
+  })
 }))
 
 app.get('/api/dashboard', asyncRoute(async (_req, res) => {

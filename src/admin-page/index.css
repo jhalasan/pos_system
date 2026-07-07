@@ -1274,6 +1274,31 @@ table.data tbody tr.product-row-out .stock-zero {
   gap: 18px;
   align-items: start;
 }
+.barcode-print-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.barcode-print-count .input {
+  width: 64px;
+  height: 28px;
+  padding: 4px 8px;
+  text-align: center;
+}
+.barcode-printer-select .select {
+  width: min(260px, 38vw);
+  height: 28px;
+  padding: 3px 28px 3px 8px;
+  font-size: 12px;
+}
 .barcode-card .panel-body {
   display: grid;
   gap: 16px;
@@ -1313,13 +1338,23 @@ table.data tbody tr.product-row-out .stock-zero {
 }
 .barcode-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 14px;
   align-items: center;
   padding: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+}
+.barcode-select-check {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+}
+.barcode-select-check input {
+  width: 16px;
+  height: 16px;
 }
 .barcode-record {
   min-width: 0;
@@ -1784,6 +1819,8 @@ table.data tbody tr.product-row-out .stock-zero {
   .stock-batch-qty { grid-column: 1 / -1; }
   .stock-batch-row .icon-btn { grid-column: 2; }
   .barcode-summary { grid-template-columns: 1fr; }
+  .barcode-print-count { width: 100%; justify-content: space-between; }
+  .barcode-printer-select .select { width: min(100%, 240px); }
   .barcode-action-panel { grid-template-columns: 1fr; align-items: stretch; }
   .barcode-action-panel .btn { width: 100%; }
   .barcode-record-head { align-items: flex-start; flex-direction: column; }

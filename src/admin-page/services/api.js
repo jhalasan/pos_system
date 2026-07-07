@@ -135,6 +135,10 @@ const webApi = {
   updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
   deleteCashier: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),
   activityLogs: () => request('/activity-logs'),
+  markAuditReviewed: (data) => request('/audit-reviews', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
   settingsAdmins: () => request('/settings/admins'),
   updateAdminQuickLogin: (id, enabled) => request(`/settings/admins/${id}/quick-login`, {
     method: 'PATCH',

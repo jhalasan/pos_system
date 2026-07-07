@@ -141,6 +141,26 @@ function stockDeltaForOp(op) {
   return 0
 }
 
+async function createStockMovement(pb, product, op, previousQuantity, nextQuantity) {
+  const delta = Number(nextQuantity) - Number(previousQuantity)
+  if (!product?.id || delta === 0) return
+
+  const movementType = delta > 0 ? 'stock_in' : 'stock_out'
+  await pb.collection('stock_movements').create({
+    product_id: product.id,
+    movement_type: movementType,
+    quantity: Math.abs(delta),
+    previous_quantity: Number(previousQuantity) || 0,
+    new_quantity: Number(nextQuantity) || 0,
+    reference_type: op.type,
+    reference_id: op.id,
+    notes: op.payload?.note || op.payload?.reason || '',
+    created_at: new Date().toISOString(),
+  }, {
+    requestKey: `stock-movement:${op.id}`,
+  }).catch(() => null)
+}
+
 async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, options = {}) {
   const normalized = normalizeProduct(cloudRecord, pb)
 
@@ -397,12 +417,15 @@ export class AdminSyncEngine extends EventTarget {
         return
       }
 
+      const previousQuantity = Number(product.quantity) || 0
+      const nextQuantity = previousQuantity + Number(op.payload.qty || 0)
       const updated = await this.pb.collection('products').update(product.id, {
-        quantity: numberFieldValue((Number(product.quantity) || 0) + Number(op.payload.qty || 0)),
+        quantity: numberFieldValue(nextQuantity),
       }, {
         expand: 'category',
         requestKey: op.id,
       })
+      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
       await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
         preservePendingStock: true,
         currentOpId: op.id,
@@ -415,12 +438,15 @@ export class AdminSyncEngine extends EventTarget {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
 
+      const previousQuantity = Number(product.quantity) || 0
+      const nextQuantity = Math.max(0, previousQuantity - Number(op.payload.qty || 0))
       const updated = await this.pb.collection('products').update(product.id, {
-        quantity: numberFieldValue((Number(product.quantity) || 0) - Number(op.payload.qty || 0)),
+        quantity: numberFieldValue(nextQuantity),
       }, {
         expand: 'category',
         requestKey: op.id,
       })
+      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
       await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
         preservePendingStock: true,
         currentOpId: op.id,

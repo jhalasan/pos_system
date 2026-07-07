@@ -4,8 +4,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             select_export_folder,
             write_export_file,
+            save_print_file,
             print_receipt,
-            printer_status
+            printer_status,
+            list_printers
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexa POS Cashier");
@@ -38,6 +40,44 @@ fn write_export_file(directory: String, filename: String, contents: String) -> R
     std::fs::write(&path, contents).map_err(|err| err.to_string())?;
 
     Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn save_print_file(default_filename: String, contents: String, file_type: String, extension: String) -> Result<Option<String>, String> {
+    let safe_extension = extension
+        .trim()
+        .trim_start_matches('.')
+        .chars()
+        .filter(|char| char.is_ascii_alphanumeric())
+        .collect::<String>();
+    let extension = if safe_extension.is_empty() { "pdf".to_string() } else { safe_extension };
+
+    let mut safe_filename = default_filename.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "-");
+    if safe_filename.trim().is_empty() {
+        safe_filename = format!("print-file.{extension}");
+    }
+    if !safe_filename.to_lowercase().ends_with(&format!(".{}", extension.to_lowercase())) {
+        safe_filename.push('.');
+        safe_filename.push_str(&extension);
+    }
+
+    let file_label = if file_type.trim().is_empty() {
+        "Print file".to_string()
+    } else {
+        file_type.trim().to_string()
+    };
+
+    let Some(path) = rfd::FileDialog::new()
+        .set_title("Save print file")
+        .set_file_name(&safe_filename)
+        .add_filter(&file_label, &[extension.as_str()])
+        .save_file()
+    else {
+        return Ok(None);
+    };
+
+    std::fs::write(&path, contents).map_err(|err| err.to_string())?;
+    Ok(Some(path.to_string_lossy().to_string()))
 }
 
 #[tauri::command]
@@ -93,6 +133,18 @@ struct PrinterJobInfo {
 #[tauri::command]
 fn printer_status(printer_name: String) -> Result<PrinterStatusResult, String> {
     printer_status_impl(printer_name)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PrinterInfo {
+    name: String,
+    is_default: bool,
+}
+
+#[tauri::command]
+fn list_printers() -> Result<Vec<PrinterInfo>, String> {
+    list_printers_impl()
 }
 
 #[cfg(windows)]
@@ -336,6 +388,95 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
         messages: vec!["Printer status checks are currently supported only on Windows.".to_string()],
         jobs: Vec::new(),
     })
+}
+
+#[cfg(windows)]
+fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Graphics::Printing::{
+        EnumPrintersW, GetDefaultPrinterW, PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS,
+        PRINTER_INFO_4W,
+    };
+
+    fn ptr_to_string(value: *const u16) -> String {
+        if value.is_null() {
+            return String::new();
+        }
+        let mut len = 0usize;
+        unsafe {
+            while *value.add(len) != 0 {
+                len += 1;
+            }
+            String::from_utf16_lossy(std::slice::from_raw_parts(value, len))
+        }
+    }
+
+    fn default_printer_name() -> String {
+        let mut size = 0u32;
+        unsafe {
+            GetDefaultPrinterW(null_mut(), &mut size);
+        }
+        if size == 0 {
+            return String::new();
+        }
+
+        let mut buffer = vec![0u16; size as usize];
+        let ok = unsafe { GetDefaultPrinterW(buffer.as_mut_ptr(), &mut size) };
+        if ok == 0 {
+            return String::new();
+        }
+
+        let end = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+        String::from_utf16_lossy(&buffer[..end])
+    }
+
+    let flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
+    let mut needed = 0u32;
+    let mut returned = 0u32;
+    unsafe {
+        EnumPrintersW(flags, null_mut(), 4, null_mut(), 0, &mut needed, &mut returned);
+    }
+    if needed == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut buffer = vec![0u8; needed as usize];
+    let ok = unsafe {
+        EnumPrintersW(
+            flags,
+            null_mut(),
+            4,
+            buffer.as_mut_ptr(),
+            needed,
+            &mut needed,
+            &mut returned,
+        )
+    };
+    if ok == 0 {
+        return Err(format!("Unable to list Windows printers: {}", std::io::Error::last_os_error()));
+    }
+
+    let default_name = default_printer_name();
+    let entries = buffer.as_ptr() as *const PRINTER_INFO_4W;
+    let mut printers = Vec::new();
+    for index in 0..returned as usize {
+        let printer = unsafe { *entries.add(index) };
+        let name = ptr_to_string(printer.pPrinterName);
+        if name.trim().is_empty() {
+            continue;
+        }
+        printers.push(PrinterInfo {
+            is_default: !default_name.is_empty() && name == default_name,
+            name,
+        });
+    }
+    printers.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(printers)
+}
+
+#[cfg(not(windows))]
+fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
+    Ok(Vec::new())
 }
 
 #[cfg(windows)]

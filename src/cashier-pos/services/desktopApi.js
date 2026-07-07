@@ -332,6 +332,32 @@ async function createCloudActivityLog({ cashierId, action, detail }) {
   }, { requestKey: `activity:${cashierId}:${action}:${Date.now()}` }).catch(() => null)
 }
 
+async function createCloudRecord(collection, payload, requestKey) {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return null
+
+  const activeRuntime = await runtime()
+  return activeRuntime.pb.collection(collection).create(payload, { requestKey }).catch(() => null)
+}
+
+async function updateCloudRecord(collection, id, payload, requestKey) {
+  const recordId = String(id || '').trim()
+  if (!recordId || recordId.startsWith('shift_')) return null
+  if (globalThis.navigator && !globalThis.navigator.onLine) return null
+
+  const activeRuntime = await runtime()
+  return activeRuntime.pb.collection(collection).update(recordId, payload, { requestKey }).catch(() => null)
+}
+
+function optionalRelation(value) {
+  const normalized = String(value || '').trim()
+  return normalized && !normalized.startsWith('shift_') ? normalized : undefined
+}
+
+function numberPayload(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(0, number) : 0
+}
+
 async function authorizeManagerApproval(authorization = {}) {
   const payload = typeof authorization === 'string' ? { code: authorization } : authorization
   const code = String(payload?.code || '').trim()
@@ -450,7 +476,9 @@ export const desktopCashierApi = {
           .equals('cashier')
           .filter((record) => record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
           .first()
-      } catch {}
+      } catch {
+        account = null
+      }
     }
 
     if (!account && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
@@ -613,6 +641,91 @@ export const desktopCashierApi = {
     return createCloudActivityLog({ cashierId, action, detail })
   },
 
+  async openCashRegisterSession(session = {}) {
+    const cashierId = String(session.cashierId || '').trim()
+    if (!cashierId) return null
+
+    return createCloudRecord('cash_register_sessions', {
+      cashier_id: cashierId,
+      opening_amount: numberPayload(session.openingAmount),
+      closing_amount: 0,
+      expected_closing_amount: 0,
+      actual_closing_amount: 0,
+      variance: 0,
+      cash_in_total: 0,
+      cash_out_total: 0,
+      status: 'open',
+      opened_at: session.openedAt || new Date().toISOString(),
+      notes: String(session.note || '').trim(),
+      device_id: String(session.deviceId || '').trim(),
+    }, `cash-session:${session.id || cashierId}:${session.openedAt || Date.now()}`)
+  },
+
+  async closeCashRegisterSession(session = {}) {
+    return updateCloudRecord('cash_register_sessions', session.id, {
+      closing_amount: numberPayload(session.closingAmount),
+      expected_closing_amount: numberPayload(session.expectedClosingAmount),
+      actual_closing_amount: numberPayload(session.closingAmount),
+      variance: Number(session.variance) || 0,
+      cash_in_total: numberPayload(session.cashIn),
+      cash_out_total: numberPayload(session.cashOut),
+      status: 'closed',
+      closed_at: session.closedAt || new Date().toISOString(),
+      notes: String(session.closeNote || session.note || '').trim(),
+      device_id: String(session.deviceId || '').trim(),
+    }, `cash-session-close:${session.id}:${session.closedAt || Date.now()}`)
+  },
+
+  async recordCashMovement(movement = {}) {
+    const cashierId = String(movement.cashierId || '').trim()
+    if (!cashierId) return null
+
+    const payload = {
+      cashier_id: cashierId,
+      type: movement.type === 'in' ? 'in' : 'out',
+      amount: numberPayload(movement.amount),
+      category: String(movement.category || '').trim(),
+      note: String(movement.note || '').trim(),
+      approval_method: movement.approvalMethod === 'password' ? 'password' : movement.approvalMethod === 'barcode' ? 'barcode' : 'manual',
+      device_id: String(movement.deviceId || '').trim(),
+      created_at: movement.createdAt || new Date().toISOString(),
+    }
+    const sessionId = optionalRelation(movement.sessionId)
+    const approvedBy = optionalRelation(movement.approvedBy)
+    if (sessionId) payload.session_id = sessionId
+    if (approvedBy) payload.approved_by = approvedBy
+
+    return createCloudRecord('cash_movements', payload, `cash-movement:${movement.id || cashierId}:${payload.created_at}`)
+  },
+
+  async recordCashAudit(audit = {}) {
+    const cashierId = String(audit.cashierId || '').trim()
+    if (!cashierId) return null
+
+    const payload = {
+      cashier_id: cashierId,
+      cash_beginning: numberPayload(audit.cashBeginning),
+      cash_sales: numberPayload(audit.cashSales),
+      cash_in: numberPayload(audit.cashIn),
+      cash_out: numberPayload(audit.cashOut),
+      expected_cash: numberPayload(audit.expectedCash),
+      cash_ending: numberPayload(audit.cashEnding),
+      actual_cash: numberPayload(audit.actualCash),
+      cash_on_hand: numberPayload(audit.cashOnHand),
+      denomination_total: numberPayload(audit.denominationTotal),
+      variance: Number(audit.variance) || 0,
+      count_mode: audit.countMode === 'denomination' ? 'denomination' : 'manual',
+      denominations: Array.isArray(audit.denominations) ? audit.denominations : [],
+      note: String(audit.note || '').trim(),
+      device_id: String(audit.deviceId || '').trim(),
+      created_at: audit.createdAt || new Date().toISOString(),
+    }
+    const sessionId = optionalRelation(audit.sessionId)
+    if (sessionId) payload.session_id = sessionId
+
+    return createCloudRecord('cash_audits', payload, `cash-audit:${audit.id || cashierId}:${payload.created_at}`)
+  },
+
   async voidCompletedSale({ saleId, cashierId, authorization, reason }) {
     const localSale = await findLocalSale(saleId)
     if (!localSale) throw new Error('Completed sale not found on this device.')
@@ -641,9 +754,24 @@ export const desktopCashierApi = {
             const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
             if (!productId) continue
             const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
+            const previousQuantity = Number(product.quantity) || 0
+            const returnedQuantity = Number(item.quantity_sold) || 0
+            const nextQuantity = previousQuantity + returnedQuantity
             await activeRuntime.pb.collection('products').update(product.id, {
-              quantity: numberFieldValue((Number(product.quantity) || 0) + (Number(item.quantity_sold) || 0)),
+              quantity: numberFieldValue(nextQuantity),
             }, { requestKey: null })
+            await activeRuntime.pb.collection('stock_movements').create({
+              product_id: product.id,
+              movement_type: 'void_return',
+              quantity: returnedQuantity,
+              previous_quantity: previousQuantity,
+              new_quantity: nextQuantity,
+              reference_type: 'void',
+              reference_id: cloudSale.id,
+              notes: `Voided sale ${localSale.transactionNo}`,
+              user_id: cashierId || localSale.cashierId,
+              created_at: new Date().toISOString(),
+            }, { requestKey: `stock-movement:void:${cloudSale.id}:${product.id}` }).catch(() => null)
           }
 
           await activeRuntime.pb.collection('sales').update(cloudSale.id, {
@@ -705,9 +833,23 @@ export const desktopCashierApi = {
           const quantity = Math.max(0, Number(item.quantity) || 0)
           if (!productId || quantity <= 0) continue
           const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
+          const previousQuantity = Number(product.quantity) || 0
+          const nextQuantity = previousQuantity + quantity
           await activeRuntime.pb.collection('products').update(product.id, {
-            quantity: numberFieldValue((Number(product.quantity) || 0) + quantity),
+            quantity: numberFieldValue(nextQuantity),
           }, { requestKey: null })
+          await activeRuntime.pb.collection('stock_movements').create({
+            product_id: product.id,
+            movement_type: type === 'exchange' ? 'exchange_return' : 'refund_return',
+            quantity,
+            previous_quantity: previousQuantity,
+            new_quantity: nextQuantity,
+            reference_type: type === 'exchange' ? 'exchange' : 'refund',
+            reference_id: cloudSale.id,
+            notes: `${type === 'exchange' ? 'Exchange' : 'Refund'} ${localSale.transactionNo}${reason ? `: ${reason}` : ''}`,
+            user_id: cashierId || localSale.cashierId,
+            created_at: new Date().toISOString(),
+          }, { requestKey: `stock-movement:${type}:${cloudSale.id}:${product.id}:${quantity}` }).catch(() => null)
         }
 
         await activeRuntime.pb.collection('sales').update(cloudSale.id, {

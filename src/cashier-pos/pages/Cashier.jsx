@@ -250,12 +250,12 @@ function isEditableTarget(target) {
   return target.isContentEditable || tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT';
 }
 
-function receiptStepLabel(step) {
+function receiptStepLabel() {
   return 'Receipt';
 }
 
-function nextReceiptStep(step) {
-  return step === 'initial' ? 'reprint' : 'reprint';
+function nextReceiptStep() {
+  return 'reprint';
 }
 
 function receiptButtonText(sale) {
@@ -270,8 +270,10 @@ const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const barcodeInputRef = useRef(null);
   const searchProductInputRef = useRef(null);
+  const initialQuantityInputRef = useRef(null);
   const quantityInputRefs = useRef(new Map());
-  const cashAmountInputRef = useRef(null);
+  const paymentAmountInputRef = useRef(null);
+  const paymentFlowPanelRef = useRef(null);
   const splitCashInputRef = useRef(null);
   const splitGcashInputRef = useRef(null);
   const [transactions, setTransactions] = useState(() => [createTransaction(1)]);
@@ -279,6 +281,17 @@ const Cashier = ({ onLogout, user }) => {
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
   const [barcode, setBarcode] = useState('');
   const [searchProduct, setSearchProduct] = useState('');
+  const [pendingCartProduct, setPendingCartProduct] = useState(null);
+  const [initialCartQuantity, setInitialCartQuantity] = useState('1');
+  const [initialCartQuantityError, setInitialCartQuantityError] = useState('');
+  const [paymentFlow, setPaymentFlow] = useState({
+    open: false,
+    step: 'amount',
+    amount: '',
+    error: '',
+    busy: false,
+    completedTxn: null,
+  });
   const [cashRegisterOpen, setCashRegisterOpen] = useState(false);
   const [notification, setNotification] = useState('');
   const [receiptPrintQueue, setReceiptPrintQueue] = useState([]);
@@ -404,6 +417,11 @@ const Cashier = ({ onLogout, user }) => {
   const displayChange = Number(completedPaymentSnapshot?.change ?? change) || 0;
   const displaySplitPaid = (Number(displaySplitPayments.cash) || 0) + (Number(displaySplitPayments.gcash) || 0);
   const displaySplitRemaining = Math.max(0, displayTotal - displaySplitPaid);
+  const paymentFlowPaid = parseFloat(paymentFlow.amount) || 0;
+  const paymentFlowChange = Math.max(0, paymentFlowPaid - total);
+  const paymentFlowTransactionNo = paymentFlow.completedTxn?.completedSale?.transactionNo
+    || paymentFlow.completedTxn?.transactionNo
+    || activeTxn.transactionNo;
 
   const filteredProducts = useMemo(() => {
     const query = searchProduct.trim().toLowerCase();
@@ -472,6 +490,11 @@ const Cashier = ({ onLogout, user }) => {
     const source = products.find((product) => product.id === productId) || item;
     return getRemainingStock(source, excludedTransactionId);
   };
+
+  const pendingCartConversion = Number(pendingCartProduct?.conversion) > 0 ? Number(pendingCartProduct.conversion) : 1;
+  const pendingCartAvailableQty = pendingCartProduct
+    ? Math.floor(stockForProduct(pendingCartProduct) / pendingCartConversion)
+    : 0;
 
   const updateActiveTransaction = (changes) => {
     setTransactions((current) => current.map((txn) => (
@@ -691,8 +714,11 @@ const Cashier = ({ onLogout, user }) => {
         cashOut: 0,
         openedAt: new Date().toISOString(),
         note: shiftNote.trim(),
+        deviceId,
       };
-      persistShiftSession(session);
+      const cloudSession = await cashierApi.openCashRegisterSession?.(session).catch(() => null);
+      const savedSession = cloudSession?.id ? { ...session, id: cloudSession.id } : session;
+      persistShiftSession(savedSession);
       setCashierAuditEntry((current) => {
         const next = { ...current, cashBeginning: String(openingAmount) };
         localStorage.setItem(CASHIER_AUDIT_ENTRY_KEY, JSON.stringify(next));
@@ -731,7 +757,9 @@ const Cashier = ({ onLogout, user }) => {
         variance,
         closedAt: new Date().toISOString(),
         closeNote: shiftNote.trim(),
+        deviceId,
       };
+      await cashierApi.closeCashRegisterSession?.(closed).catch(() => {});
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Shift Close',
@@ -792,6 +820,25 @@ const Cashier = ({ onLogout, user }) => {
         setCashierAuditMessage('Unable to open cash register for audit.');
         return;
       }
+      await cashierApi.recordCashAudit?.({
+        sessionId: shiftSession.id,
+        cashierId: user?.id,
+        cashBeginning,
+        cashSales: completedCashSales,
+        cashIn: shiftCashIn,
+        cashOut: shiftCashOut,
+        expectedCash: expectedShiftCash,
+        cashEnding,
+        actualCash: actualCashEnding,
+        cashOnHand,
+        denominationTotal: auditDenominationTotal,
+        variance: actualCashEnding - expectedShiftCash,
+        countMode,
+        denominations: denominationBreakdown,
+        note: cashierAuditEntry.note || '',
+        deviceId,
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Audit',
@@ -879,8 +926,10 @@ const Cashier = ({ onLogout, user }) => {
     payment: txn.completedSale,
   });
 
-  const printReceiptCopy = async (txn, step) => {
+  const printReceiptCopy = async (txn, step, options = {}) => {
     const copyStep = step === 'reprint' ? 'reprint' : 'initial';
+    const openDrawerBeforePrint = options.openDrawerBeforePrint ?? copyStep === 'initial';
+    const confirmDrawerClosed = options.confirmDrawerClosed ?? copyStep === 'initial';
     const copyLabel = receiptStepLabel(copyStep);
     const transactionNo = txn.completedSale.transactionNo || txn.transactionNo;
     const jobKey = receiptPrintKey(txn, copyStep);
@@ -908,9 +957,11 @@ const Cashier = ({ onLogout, user }) => {
         throw new Error((status.messages || []).join(' ') || 'Printer is not ready.');
       }
 
-      if (copyStep === 'initial') {
+      if (openDrawerBeforePrint) {
         updateReceiptPrintJob(jobId, { status: 'Opening drawer' });
         await openCashDrawer({ skipStatusCheck: true });
+      }
+      if (confirmDrawerClosed) {
         updateReceiptPrintJob(jobId, { status: 'Waiting for drawer close' });
         const drawerClosed = window.confirm('Close the cash drawer, then click OK to print the receipt.');
         if (!drawerClosed) throw new Error('Receipt printing paused until the cash drawer is closed.');
@@ -949,17 +1000,6 @@ const Cashier = ({ onLogout, user }) => {
       showNotification(`${copyLabel} PDF test saved to ${result.path}.`);
     } catch (err) {
       showNotification((typeof err === 'string' ? err : err.message) || 'Unable to open PDF test print.');
-    }
-  };
-
-  const autoPrintCompletedReceipt = async (txn) => {
-    if (!txn?.completedSale) return;
-
-    try {
-      await printReceiptCopy(txn, 'initial');
-      showNotification(`Receipt printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
-    } catch (err) {
-      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to print receipt.');
     }
   };
 
@@ -1006,7 +1046,6 @@ const Cashier = ({ onLogout, user }) => {
   }
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadProducts();
     loadNextTransactionNumber();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1015,6 +1054,18 @@ const Cashier = ({ onLogout, user }) => {
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, [activeTransaction]);
+
+  useEffect(() => {
+    if (!paymentFlow.open) return;
+    window.requestAnimationFrame(() => {
+      if (paymentFlow.step === 'amount') {
+        paymentAmountInputRef.current?.focus();
+        paymentAmountInputRef.current?.select?.();
+      } else {
+        paymentFlowPanelRef.current?.focus();
+      }
+    });
+  }, [paymentFlow.open, paymentFlow.step]);
 
   useEffect(() => {
     const session = loadCashierShift(user?.id);
@@ -1054,10 +1105,6 @@ const Cashier = ({ onLogout, user }) => {
     const cash = splitCashInputRef.current?.value ?? splitPayments.cash;
     const gcash = splitGcashInputRef.current?.value ?? splitPayments.gcash;
     return (parseFloat(cash) || 0) + (parseFloat(gcash) || 0);
-  };
-
-  const getRemainingAmount = () => {
-    return Math.max(0, total - getTotalSplitPayment());
   };
 
   const resetPaymentState = () => {
@@ -1456,6 +1503,18 @@ const Cashier = ({ onLogout, user }) => {
           }
         : null;
       if (nextSession) persistShiftSession(nextSession);
+      await cashierApi.recordCashMovement?.({
+        sessionId: shiftSession.id,
+        cashierId: user?.id,
+        type: cashFlowType,
+        amount,
+        category: cashFlowCategory,
+        note: cashFlowReason,
+        approvedBy: approver?.id,
+        approvalMethod: approver?.method || cashFlowApprovalMethod,
+        deviceId,
+        createdAt: new Date().toISOString(),
+      }).catch(() => {});
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: label,
@@ -1560,12 +1619,7 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const handleAddToCart = (product) => {
-    if (isLockedTxn) {
-      showNotification('This transaction is already completed. Start a new transaction to continue selling.');
-      return;
-    }
-
+  const openInitialQuantityPrompt = (product) => {
     const conversion = Number(product.conversion) > 0 ? Number(product.conversion) : 1
     const availableQty = Math.floor(stockForProduct(product) / conversion)
 
@@ -1574,13 +1628,45 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
+    setPendingCartProduct(product);
+    setInitialCartQuantity('1');
+    setInitialCartQuantityError('');
+    window.requestAnimationFrame(() => {
+      initialQuantityInputRef.current?.focus();
+      initialQuantityInputRef.current?.select?.();
+    });
+  };
+
+  const closeInitialQuantityPrompt = () => {
+    setPendingCartProduct(null);
+    setInitialCartQuantity('1');
+    setInitialCartQuantityError('');
+    window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
+  };
+
+  const commitProductToCart = (product, quantity) => {
+    const conversion = Number(product.conversion) > 0 ? Number(product.conversion) : 1
+    const availableQty = Math.floor(stockForProduct(product) / conversion)
+    const requestedQty = Math.floor(Number(quantity) || 0)
+
+    if (requestedQty <= 0) {
+      setInitialCartQuantityError('Enter a quantity of at least 1.')
+      return false
+    }
+
+    if (requestedQty > availableQty) {
+      setInitialCartQuantityError(`Only ${availableQty} item(s) available for ${product.name}.`)
+      return false
+    }
+
     const itemId = `${product.id}:${String(product.barcode || '').trim()}`
     const nextCartItems = (() => {
       const existing = cartItems.find((item) => item.id === itemId);
       if (existing) {
+        const nextQuantity = existing.quantity + requestedQty
         return cartItems.map((item) =>
           item.id === itemId
-            ? { ...item, quantity: item.quantity + 1, total: item.price * (item.quantity + 1) }
+            ? { ...item, quantity: nextQuantity, total: item.price * nextQuantity }
             : item
         );
       }
@@ -1591,7 +1677,7 @@ const Cashier = ({ onLogout, user }) => {
           id: itemId,
           productId: product.id,
           name: product.name,
-          quantity: 1,
+          quantity: requestedQty,
           unit: product.unit,
           price: product.price,
           conversion,
@@ -1601,7 +1687,7 @@ const Cashier = ({ onLogout, user }) => {
           category: product.category,
           imageUrl: product.imageUrl,
           image: product.image,
-          total: product.price,
+          total: product.price * requestedQty,
         },
       ];
     })();
@@ -1621,6 +1707,23 @@ const Cashier = ({ onLogout, user }) => {
     setSearchProduct('');
     setBarcode('');
     window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
+    return true
+  };
+
+  const handleAddToCart = (product) => {
+    if (isLockedTxn) {
+      showNotification('This transaction is already completed. Start a new transaction to continue selling.');
+      return;
+    }
+
+    openInitialQuantityPrompt(product);
+  };
+
+  const confirmInitialQuantity = () => {
+    if (!pendingCartProduct) return;
+    if (commitProductToCart(pendingCartProduct, initialCartQuantity)) {
+      closeInitialQuantityPrompt();
+    }
   };
 
   const handleSearchKeyDown = (e) => {
@@ -1731,7 +1834,7 @@ const Cashier = ({ onLogout, user }) => {
     }
 
     if (paymentMethod === 'cash') {
-      const enteredCash = cashAmountInputRef.current?.value ?? cashAmount;
+      const enteredCash = cashAmount;
       const paid = parseFloat(enteredCash) || 0;
       if (!enteredCash || paid < total) {
         alert('Please enter a cash amount large enough to cover the total.');
@@ -1754,18 +1857,11 @@ const Cashier = ({ onLogout, user }) => {
     return true;
   };
 
-  const handleCompleteTransaction = async () => {
-    if (!shiftSession) {
-      setShowShiftOpen(true);
-      showNotification('Open a cashier shift before completing sales.');
-      return;
-    }
-    if (!validatePayment()) return;
-
+  const completeActiveTransaction = async ({ paidCashOverride } = {}) => {
     const completingTransactionId = activeTxn.id;
     const completedTransactionNo = activeTxn.transactionNo;
     const completedAt = new Date().toISOString();
-    const paidCash = parseFloat(cashAmountInputRef.current?.value ?? cashAmount) || 0;
+    const paidCash = parseFloat(paidCashOverride ?? cashAmount) || 0;
     const paidGcash = parseFloat(gcashAmount) || 0;
     const paidSplitCash = parseFloat(splitCashInputRef.current?.value ?? splitPayments.cash) || 0;
     const paidSplitGcash = parseFloat(splitGcashInputRef.current?.value ?? splitPayments.gcash) || 0;
@@ -1815,10 +1911,6 @@ const Cashier = ({ onLogout, user }) => {
         refNumber: isSplitPayment ? `split:${JSON.stringify(completedSplitPayments)}` : gcashRef,
         items: completedItems,
       });
-      await openCashRegisterForActivity(
-        'completed transaction',
-        `Cash register opened after completed transaction ${sale.transactionNo || completedTransactionNo}.`
-      );
 
       await loadProducts();
       const result = await cashierApi.nextTransactionNumber();
@@ -1848,10 +1940,165 @@ const Cashier = ({ onLogout, user }) => {
       setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
-      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed. Cash drawer opened.`);
-      autoPrintCompletedReceipt(completedTxn);
+      showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed.`);
+      return completedTxn;
     } catch (err) {
       showNotification(err.message || 'Unable to complete transaction.');
+      throw err;
+    }
+  };
+
+  const closePaymentFlow = () => {
+    setPaymentFlow({
+      open: false,
+      step: 'amount',
+      amount: '',
+      error: '',
+      busy: false,
+      completedTxn: null,
+    });
+    window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
+  };
+
+  const openCashPaymentFlow = () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      showNotification('Open a cashier shift before completing sales.');
+      return;
+    }
+    if (isLockedTxn) {
+      alert(isVoidedTxn ? 'This transaction has already been voided.' : 'This transaction is already completed.');
+      return;
+    }
+    if (cartItems.length === 0) {
+      alert('Add items to the cart before completing the transaction.');
+      return;
+    }
+
+    setPaymentFlow({
+      open: true,
+      step: 'amount',
+      amount: cashAmount || String(total),
+      error: '',
+      busy: false,
+      completedTxn: null,
+    });
+    window.requestAnimationFrame(() => {
+      paymentAmountInputRef.current?.focus();
+      paymentAmountInputRef.current?.select?.();
+    });
+  };
+
+  const advancePaymentFlow = async () => {
+    if (!paymentFlow.open || paymentFlow.busy) return;
+
+    if (paymentFlow.step === 'amount') {
+      const paid = parseFloat(paymentFlow.amount) || 0;
+      if (!paymentFlow.amount || paid < total) {
+        setPaymentFlow((current) => ({
+          ...current,
+          error: `Enter at least ${money(total)} to complete this cash sale.`,
+        }));
+        return;
+      }
+
+      setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
+      try {
+        updateActiveTransaction({ cashAmount: String(paid) });
+        const completedTxn = await completeActiveTransaction({ paidCashOverride: paid });
+        setPaymentFlow((current) => ({
+          ...current,
+          busy: false,
+          step: 'change',
+          amount: String(paid),
+          completedTxn,
+        }));
+      } catch (err) {
+        setPaymentFlow((current) => ({
+          ...current,
+          busy: false,
+          error: (typeof err === 'string' ? err : err.message) || 'Unable to complete transaction.',
+        }));
+      }
+      return;
+    }
+
+    if (paymentFlow.step === 'change') {
+      setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
+      try {
+        const txn = paymentFlow.completedTxn;
+        await openCashRegisterForActivity(
+          'completed transaction',
+          `Cash register opened after completed transaction ${txn?.completedSale?.transactionNo || txn?.transactionNo || activeTxn.transactionNo}.`
+        );
+        setPaymentFlow((current) => ({ ...current, busy: false, step: 'register' }));
+      } catch (err) {
+        setPaymentFlow((current) => ({
+          ...current,
+          busy: false,
+          error: (typeof err === 'string' ? err : err.message) || 'Unable to open cash register.',
+        }));
+      }
+      return;
+    }
+
+    if (paymentFlow.step === 'register') {
+      const txn = paymentFlow.completedTxn;
+      if (!txn) {
+        closePaymentFlow();
+        return;
+      }
+      setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
+      try {
+        await printReceiptCopy(txn, 'initial', {
+          openDrawerBeforePrint: false,
+          confirmDrawerClosed: false,
+        });
+        showNotification(`Receipt printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
+        closePaymentFlow();
+      } catch (err) {
+        setPaymentFlow((current) => ({
+          ...current,
+          busy: false,
+          error: (typeof err === 'string' ? err : err.message) || 'Unable to print receipt.',
+        }));
+      }
+    }
+  };
+
+  const handleCompleteTransaction = async () => {
+    if (!shiftSession) {
+      setShowShiftOpen(true);
+      showNotification('Open a cashier shift before completing sales.');
+      return;
+    }
+
+    if (!isSplitPayment && paymentMethod === 'cash') {
+      openCashPaymentFlow();
+      return;
+    }
+
+    if (!validatePayment()) return;
+
+    try {
+      const completedTxn = await completeActiveTransaction();
+      if (paymentMethod === 'cash' || isSplitPayment) {
+        await openCashRegisterForActivity(
+          'completed transaction',
+          `Cash register opened after completed transaction ${completedTxn.completedSale.transactionNo || completedTxn.transactionNo}.`
+        );
+        await printReceiptCopy(completedTxn, 'initial', {
+          openDrawerBeforePrint: false,
+          confirmDrawerClosed: false,
+        });
+      } else {
+        await printReceiptCopy(completedTxn, 'initial', {
+          openDrawerBeforePrint: false,
+          confirmDrawerClosed: false,
+        });
+      }
+    } catch {
+      // completeActiveTransaction already surfaced the error.
     }
   };
 
@@ -1913,7 +2160,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   useEffect(() => {
-    const modalOpen = idleLocked || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose;
+    const modalOpen = idleLocked || Boolean(pendingCartProduct) || paymentFlow.open || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose;
 
     const actions = {
       focusBarcode: () => {
@@ -1931,7 +2178,6 @@ const Cashier = ({ onLogout, user }) => {
       paymentCash: () => {
         if (isLockedTxn) return;
         updateActiveTransaction({ isSplitPayment: false, paymentMethod: 'cash' });
-        window.requestAnimationFrame(() => cashAmountInputRef.current?.focus());
       },
       paymentGcash: () => {
         if (isLockedTxn) return;
@@ -2408,18 +2654,21 @@ const Cashier = ({ onLogout, user }) => {
                 </div>
 
                 {displayPaymentMethod === 'cash' && (
-                  <>
-                    <Input inputRef={cashAmountInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={displayCashAmount} onChange={(e) => updateActiveTransaction({ cashAmount: e.target.value })} disabled={isLockedTxn} />
-                    {displayCashAmount && (
-                      <div className={styles['change-display']}>
-                        <div className={styles['change-row']}><span>Cash Tendered:</span><span>{money(displayCashTendered)}</span></div>
-                        <div className={`${styles['change-due']} ${displayChange < 0 ? styles.negative : ''}`}>
-                          <span>{displayChange >= 0 ? 'Change Due' : 'Short By'}</span>
-                          <strong>{money(Math.abs(displayChange))}</strong>
-                        </div>
+                  isCompletedTxn ? (
+                    <div className={styles['change-display']}>
+                      <div className={styles['change-row']}><span>Cash Tendered:</span><span>{money(displayCashTendered)}</span></div>
+                      <div className={`${styles['change-due']} ${displayChange < 0 ? styles.negative : ''}`}>
+                        <span>{displayChange >= 0 ? 'Change Due' : 'Short By'}</span>
+                        <strong>{money(Math.abs(displayChange))}</strong>
                       </div>
-                    )}
-                  </>
+                    </div>
+                  ) : (
+                    <div className={styles['cash-modal-hint']}>
+                      <span>Total amount</span>
+                      <strong>{money(displayTotal)}</strong>
+                      <small>Press Complete Transaction to enter the cash amount.</small>
+                    </div>
+                  )
                 )}
 
                 {displayPaymentMethod === 'gcash' && (
@@ -2512,6 +2761,129 @@ const Cashier = ({ onLogout, user }) => {
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={paymentFlow.open}
+        onClose={paymentFlow.busy ? () => {} : closePaymentFlow}
+        title="Complete Cash Sale"
+        closeButton={!paymentFlow.busy}
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || paymentFlow.step !== 'amount'}>Cancel</button>
+            <button className="btn btn-primary" onClick={advancePaymentFlow} disabled={paymentFlow.busy}>
+              {paymentFlow.busy
+                ? 'Processing...'
+                : paymentFlow.step === 'amount'
+                  ? 'Show Change'
+                  : paymentFlow.step === 'change'
+                    ? 'Open Register'
+                    : 'Print Receipt'}
+            </button>
+          </div>
+        }
+      >
+        <div
+          ref={paymentFlowPanelRef}
+          tabIndex={-1}
+          className={styles['payment-flow-panel']}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              advancePaymentFlow();
+            }
+          }}
+        >
+          <div className={styles['payment-flow-summary']}>
+            <div>
+              <span>Transaction</span>
+              <strong>{paymentFlowTransactionNo}</strong>
+            </div>
+            <div>
+              <span>Total</span>
+              <strong>{money(total)}</strong>
+            </div>
+          </div>
+
+          {paymentFlow.step === 'amount' && (
+            <Input
+              label="Cash Amount"
+              type="number"
+              min={total}
+              step="0.01"
+              placeholder="Enter cash amount"
+              inputRef={paymentAmountInputRef}
+              value={paymentFlow.amount}
+              onChange={(e) => setPaymentFlow((current) => ({ ...current, amount: e.target.value, error: '' }))}
+              disabled={paymentFlow.busy}
+            />
+          )}
+
+          {paymentFlow.step !== 'amount' && (
+            <div className={styles['payment-flow-change']}>
+              <span>Change Due</span>
+              <strong>{money(paymentFlowChange)}</strong>
+              <small>Cash tendered: {money(paymentFlowPaid)}</small>
+            </div>
+          )}
+
+          {paymentFlow.step === 'change' && (
+            <p className={styles['payment-flow-instruction']}>Press Enter to open the cash register.</p>
+          )}
+
+          {paymentFlow.step === 'register' && (
+            <p className={styles['payment-flow-instruction']}>Close the cash register, then press Enter to print the receipt.</p>
+          )}
+
+          {paymentFlow.error && <div className={styles['payment-flow-error']}>{paymentFlow.error}</div>}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(pendingCartProduct)}
+        onClose={closeInitialQuantityPrompt}
+        title="Add Quantity"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={closeInitialQuantityPrompt}>Cancel</button>
+            <button className="btn btn-primary" onClick={confirmInitialQuantity}>
+              Add to Cart
+            </button>
+          </div>
+        }
+      >
+        {pendingCartProduct && (
+          <div className={styles['initial-quantity-panel']}>
+            <div className={styles['initial-quantity-product']}>
+              <ProductThumb product={pendingCartProduct} />
+              <div>
+                <strong>{pendingCartProduct.name}</strong>
+                <span>{pendingCartProduct.barcode || 'No barcode'} | {money(pendingCartProduct.price)}</span>
+                <small>Available: {pendingCartAvailableQty} {pendingCartProduct.unit || 'item(s)'}</small>
+              </div>
+            </div>
+            <Input
+              label="Quantity"
+              type="number"
+              min="1"
+              max={pendingCartAvailableQty}
+              step="1"
+              inputRef={initialQuantityInputRef}
+              value={initialCartQuantity}
+              onChange={(e) => {
+                setInitialCartQuantity(e.target.value);
+                setInitialCartQuantityError('');
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  confirmInitialQuantity();
+                }
+              }}
+              error={initialCartQuantityError}
+            />
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={showVoidAuth}

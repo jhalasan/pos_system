@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import { IconDollar, IconDownload, IconList, IconSearch, IconUsers } from '../components/Icons'
@@ -6,6 +6,7 @@ import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
+import { currentAdminUser } from '../auth'
 
 const AUDIT_REVIEW_KEY = 'nexa_reviewed_cash_audits'
 const PAGE_SIZE = 10
@@ -125,7 +126,7 @@ export default function Audit() {
   const [logCustomTo, setLogCustomTo] = useState('')
   const [logAction, setLogAction] = useState('all')
   const [logQuery, setLogQuery] = useState('')
-  const [logVisibleCount, setLogVisibleCount] = useState(PAGE_SIZE)
+  const [logVisibleState, setLogVisibleState] = useState({ key: '', count: PAGE_SIZE })
   const [toast, setToast] = useState('')
   const [reviewedAudits, setReviewedAudits] = useState(loadReviewedAudits)
 
@@ -139,14 +140,14 @@ export default function Audit() {
   const logFromTime = logFromDate ? new Date(`${logFromDate}T00:00:00`).getTime() : null
   const logToTime = logToDate ? new Date(`${logToDate}T23:59:59.999`).getTime() : null
   const selectedLogDateLabel = rangeLabel(logDateRange, logFromDate, logToDate)
-  const inRange = (value) => {
+  const inRange = useCallback((value) => {
     const time = new Date(value).getTime()
     return (!fromTime || time >= fromTime) && (!toTime || time <= toTime)
-  }
-  const inLogRange = (value) => {
+  }, [fromTime, toTime])
+  const inLogRange = useCallback((value) => {
     const time = new Date(value).getTime()
     return (!logFromTime || time >= logFromTime) && (!logToTime || time <= logToTime)
-  }
+  }, [logFromTime, logToTime])
 
   const auditRows = useMemo(() => {
     const rows = new Map()
@@ -170,6 +171,8 @@ export default function Audit() {
           cashFlowEntries: 0,
           securityAlerts: 0,
           entries: [],
+          latestShiftAuditTime: 0,
+          latestShiftOpenTime: 0,
         })
       }
       return rows.get(key)
@@ -195,29 +198,37 @@ export default function Audit() {
       }
       if (log.action === 'Cash Audit' || log.action === 'Shift Close') {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
-        row.cashBeginning = amountAfter('beginning', log.detail) || row.cashBeginning
-        row.cashIn = amountAfter('cash in', log.detail) || row.cashIn
-        row.cashOut = amountAfter('cash out', log.detail) || row.cashOut
-        row.expectedCashEnding = amountAfter('expected', log.detail) || row.expectedCashEnding
-        row.actualCashEnding = amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || row.actualCashEnding
-        row.automaticCashCount = amountAfter('automatic cash count', log.detail) || row.automaticCashCount
-        row.countMode = countModeFromDetail(log.detail) || row.countMode
-        row.breakdown = breakdownFromDetail(log.detail) || row.breakdown
-        row.variance = amountAfter('variance', log.detail)
-        row.hasManualAudit = true
+        const logTime = new Date(log.time).getTime() || 0
+        const isLatestShiftAudit = logTime >= row.latestShiftAuditTime
+        if (isLatestShiftAudit) {
+          row.latestShiftAuditTime = logTime
+          row.cashBeginning = amountAfter('beginning', log.detail) || row.cashBeginning
+          row.expectedCashEnding = amountAfter('expected', log.detail) || row.expectedCashEnding
+          row.actualCashEnding = amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || row.actualCashEnding
+          row.automaticCashCount = amountAfter('automatic cash count', log.detail) || row.automaticCashCount
+          row.countMode = countModeFromDetail(log.detail) || row.countMode
+          row.breakdown = breakdownFromDetail(log.detail) || row.breakdown
+          row.variance = amountAfter('variance', log.detail)
+          row.hasManualAudit = true
+        }
         row.entries.push({
           ...log,
-          amount: row.actualCashEnding,
-          category: row.countMode ? `Count: ${row.countMode}` : '',
+          amount: amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || 0,
+          category: countModeFromDetail(log.detail) ? `Count: ${countModeFromDetail(log.detail)}` : '',
           device: deviceFromDetail(log.detail),
-          automaticCashCount: row.automaticCashCount,
-          breakdown: row.breakdown,
+          automaticCashCount: amountAfter('automatic cash count', log.detail),
+          breakdown: breakdownFromDetail(log.detail),
         })
       }
       if (log.action === 'Shift Open') {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
-        row.cashBeginning = amountAfter('beginning', log.detail) || row.cashBeginning
-        row.entries.push({ ...log, amount: row.cashBeginning, device: deviceFromDetail(log.detail) })
+        const logTime = new Date(log.time).getTime() || 0
+        const beginning = amountAfter('beginning', log.detail)
+        if (!row.hasManualAudit && logTime >= row.latestShiftOpenTime) {
+          row.latestShiftOpenTime = logTime
+          row.cashBeginning = beginning || row.cashBeginning
+        }
+        row.entries.push({ ...log, amount: beginning, device: deviceFromDetail(log.detail) })
       }
       if (log.action === 'Cash Register Opened') {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
@@ -263,7 +274,7 @@ export default function Audit() {
         flags,
       }
     }).sort((a, b) => a.cashierName.localeCompare(b.cashierName))
-  }, [logs, receipts, fromTime, toTime])
+  }, [logs, receipts, inRange])
 
   const auditLogRows = useMemo(() => {
     const auditActions = new Set([
@@ -285,10 +296,14 @@ export default function Audit() {
         device: deviceFromDetail(log.detail),
         amount: log.action === 'Cash In' || log.action === 'Cash Out'
           ? Math.abs(cashFlowAmount(log))
-          : amountAfter('actual', log.detail) || amountAfter('cash out', log.detail) || amountAfter('cash in', log.detail) || 0,
+          : amountAfter('actual', log.detail)
+            || amountAfter('beginning', log.detail)
+            || amountAfter('cash out', log.detail)
+            || amountAfter('cash in', log.detail)
+            || 0,
       }))
       .sort((a, b) => new Date(b.time) - new Date(a.time))
-  }, [logs, logFromTime, logToTime])
+  }, [logs, inLogRange])
 
   const search = query.trim().toLowerCase()
   const filteredAuditRows = useMemo(() => {
@@ -324,11 +339,9 @@ export default function Audit() {
     ].some((value) => String(value || '').toLowerCase().includes(logSearch))
       && (logAction === 'all' || log.action === logAction))
   }, [auditLogRows, logAction, logSearch])
+  const logVisibleKey = [logAction, logCustomFrom, logCustomTo, logDateRange, logQuery].join('|')
+  const logVisibleCount = logVisibleState.key === logVisibleKey ? logVisibleState.count : PAGE_SIZE
   const visibleAuditLogRows = filteredAuditLogRows.slice(0, logVisibleCount)
-
-  useEffect(() => {
-    setLogVisibleCount(PAGE_SIZE)
-  }, [logAction, logCustomFrom, logCustomTo, logDateRange, logQuery])
 
   const totalActual = filteredAuditRows.reduce((sum, row) => sum + row.actualCashEnding, 0)
   const totalCashIn = filteredAuditRows.reduce((sum, row) => sum + row.cashIn, 0)
@@ -359,16 +372,24 @@ export default function Audit() {
     window.setTimeout(() => setToast(''), 2400)
   }
 
-  function markReviewed() {
+  async function markReviewed() {
+    const reviewedAt = new Date().toISOString()
     const next = {
       ...reviewedAudits,
       [reviewKey]: {
-        reviewedAt: new Date().toISOString(),
+        reviewedAt,
         rowCount: filteredAuditRows.length,
       },
     }
     localStorage.setItem(AUDIT_REVIEW_KEY, JSON.stringify(next))
     setReviewedAudits(next)
+    const admin = currentAdminUser()
+    await api.markAuditReviewed?.({
+      fromDate,
+      toDate,
+      rowCount: filteredAuditRows.length,
+      reviewedBy: admin?.id,
+    }).catch(() => null)
     setToast('Audit range marked as reviewed.')
     window.setTimeout(() => setToast(''), 2400)
   }
@@ -648,7 +669,10 @@ export default function Audit() {
           </table>
           {filteredAuditLogRows.length > visibleAuditLogRows.length && (
             <div className="table-more-row">
-              <button className="btn btn-outline" onClick={() => setLogVisibleCount((count) => count + PAGE_SIZE)}>
+              <button
+                className="btn btn-outline"
+                onClick={() => setLogVisibleState({ key: logVisibleKey, count: logVisibleCount + PAGE_SIZE })}
+              >
                 Show More ({filteredAuditLogRows.length - visibleAuditLogRows.length} remaining)
               </button>
             </div>

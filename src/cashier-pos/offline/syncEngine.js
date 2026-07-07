@@ -42,6 +42,9 @@ function cloudSalePayload(sale) {
     transaction_no: sale.transactionNo,
     cashier_id: sale.cashierId,
     total_amount: sale.totalAmount,
+    subtotal_amount: sale.subtotalAmount,
+    discount_percent: sale.discountPercent,
+    discount_amount: sale.discountAmount,
     payment_method: sale.paymentMethod,
     ref_number: sale.refNumber,
     status: 'completed',
@@ -90,6 +93,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     if (!productId) continue
 
     const product = await pb.collection('products').getOne(productId, { requestKey: null })
+    const previousQuantity = Number(product.quantity) || 0
     const matchingSaleItems = cloudSaleItems.filter((saleItem) => {
       const saleItemProductId = Array.isArray(saleItem.product_id) ? saleItem.product_id[0] : saleItem.product_id
       return saleItemProductId === productId
@@ -97,12 +101,27 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     const syncedQty = matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0)
     const baseQuantityToDeduct = toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1)
     const effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
+    const nextQuantity = Math.max(0, previousQuantity - effectiveQtyToDeduct)
 
     await pb.collection('products').update(product.id, {
-      quantity: numberFieldValue((Number(product.quantity) || 0) - effectiveQtyToDeduct),
+      quantity: numberFieldValue(nextQuantity),
     }, {
       requestKey: `product-stock:${sale.clientSaleId}:${productId}`,
     })
+    await pb.collection('stock_movements').create({
+      product_id: product.id,
+      movement_type: 'sale',
+      quantity: effectiveQtyToDeduct,
+      previous_quantity: previousQuantity,
+      new_quantity: nextQuantity,
+      reference_type: 'sale',
+      reference_id: cloudSaleItems[0]?.sale_id || sale.transactionNo,
+      notes: `Sale ${sale.transactionNo}`,
+      user_id: sale.cashierId,
+      created_at: sale.createdAt || new Date().toISOString(),
+    }, {
+      requestKey: `stock-movement:sale:${sale.clientSaleId}:${productId}`,
+    }).catch(() => null)
   }
 }
 

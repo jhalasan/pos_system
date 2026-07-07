@@ -69,6 +69,10 @@ const webCashierApi = {
     method: 'POST',
     body: JSON.stringify({ cashierId, action, detail }),
   }),
+  openCashRegisterSession: async () => null,
+  closeCashRegisterSession: async () => null,
+  recordCashMovement: async () => null,
+  recordCashAudit: async () => null,
   completeSale: (sale) => request('/cashier/sales', {
     method: 'POST',
     body: JSON.stringify(sale),
