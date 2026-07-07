@@ -534,6 +534,34 @@
         "type": "number"
       },
       {
+        "help": "",
+        "hidden": false,
+        "id": "number_base_quantity_sold",
+        "max": null,
+        "min": 0,
+        "name": "base_quantity_sold",
+        "onlyInt": false,
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "number"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text_matching_unit_barcode",
+        "max": 0,
+        "min": 0,
+        "name": "matching_unit_barcode",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
         "hidden": false,
         "id": "autodate2990389176",
         "name": "created",

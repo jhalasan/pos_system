@@ -79,13 +79,23 @@ async function productBody(pb, data) {
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
   }
+  // include selling units when present so desktop/admin sync preserves additional units
+  if (Array.isArray(data.sellingUnits) && data.sellingUnits.length > 0) {
+    payload.selling_units = data.sellingUnits
+  } else if (Array.isArray(data.selling_units) && data.selling_units.length > 0) {
+    payload.selling_units = data.selling_units
+  }
 
   const imageBlob = data.imageBlob || data.imageFile
   if (!imageBlob) return payload
 
   const formData = new FormData()
   for (const [key, value] of Object.entries(payload)) {
-    formData.append(key, value ?? '')
+    if (key === 'selling_units') {
+      formData.append(key, JSON.stringify(value || []))
+    } else {
+      formData.append(key, value ?? '')
+    }
   }
   formData.append('product_img', imageBlob, data.imageName || imageBlob.name || 'product-image.webp')
   return formData

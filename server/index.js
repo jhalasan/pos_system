@@ -256,11 +256,15 @@ async function receiptRecordFromSale(sale, saleItemsCollection) {
       const product = Array.isArray(item.expand?.product_id)
         ? item.expand.product_id[0]
         : item.expand?.product_id
+      const matchingUnitBarcode = item.matching_unit_barcode || ''
+      const baseQuantity = Number(item.base_quantity_sold) || null
       return {
         productId: productRelationId(item.product_id) || item.id,
         id: item.id,
         name: product?.name || item.product_id || 'Product',
-        barcode: product?.barcode || '',
+        barcode: item.barcode || product?.barcode || '',
+        matchingUnitBarcode,
+        baseQuantity,
         quantity: saleItemQuantity(item),
         price: saleItemPrice(item, product),
       }
@@ -978,6 +982,8 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
       product_id: product.id,
       quantity_sold: quantity,
       price_at_sale: Number(item.price) || Number(product.price) || 0,
+      base_quantity_sold: baseQuantity,
+      matching_unit_barcode: String(item.barcode || '').trim(),
     })
     await products.update(product.id, {
       quantity: numberFieldValue(nextQty),
@@ -1047,7 +1053,23 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
     if (!productId) continue
     const product = await products.getOne(productId)
     const previousQty = Number(product.quantity) || 0
-    const returnedQty = Number(item.quantity_sold) || 0
+    let returnedQty = Number(item.base_quantity_sold) || 0
+    if (!returnedQty) {
+      // Fallback: try to infer conversion from matching_unit_barcode or unit price
+      const sellingUnits = parseSellingUnits(product.selling_units ?? product.sellingUnits)
+      const matchingByBarcode = sellingUnits.find((u) => String(u?.barcode || '').trim() && String(u.barcode).trim() === String(item.matching_unit_barcode || '').trim())
+      if (matchingByBarcode) {
+        returnedQty = (Number(item.quantity_sold) || 0) * (Number(matchingByBarcode.conversion) > 0 ? Number(matchingByBarcode.conversion) : 1)
+      } else {
+        const matchingByPrice = sellingUnits.find((u) => Number(u?.price) && Number(u.price) === Number(item.price_at_sale))
+        if (matchingByPrice) {
+          returnedQty = (Number(item.quantity_sold) || 0) * (Number(matchingByPrice.conversion) > 0 ? Number(matchingByPrice.conversion) : 1)
+        } else {
+          // Last resort: assume quantity_sold is already base units
+          returnedQty = Number(item.quantity_sold) || 0
+        }
+      }
+    }
     const nextQty = previousQty + returnedQty
     await products.update(product.id, {
       quantity: numberFieldValue(nextQty),

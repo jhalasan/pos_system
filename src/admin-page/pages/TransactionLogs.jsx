@@ -493,7 +493,12 @@ export default function TransactionLogs() {
                   <div className="receipt-item" key={`${item.productId || item.id}-${item.name}`}>
                     <div>
                       <strong>{item.name || 'Item'}</strong>
-                      <span>{Number(item.quantity) || 0} {item.unit || 'unit'} x {peso(item.price)}</span>
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>
+                        {Number(item.quantity) || 0} {item.unit || 'unit'} x {peso(item.price)}
+                        {item.matchingUnitBarcode ? (
+                          <span style={{ marginLeft: 8 }}>| Scanned Barcode: {item.matchingUnitBarcode}</span>
+                        ) : null}
+                      </div>
                     </div>
                     <strong>{peso((Number(item.quantity) || 0) * (Number(item.price) || 0))}</strong>
                   </div>

@@ -50,16 +50,16 @@ function booleanFieldValue(value) {
 }
 
 function parseSellingUnits(value) {
-  if (!Array.isArray(value)) return []
-  return value
-    .map((row) => ({
-      barcode: String(row?.barcode || '').trim(),
-      unit: String(row?.unit || '').trim(),
-      conversion: Number(row?.conversion) > 0 ? Number(row.conversion) : 1,
-      price: Number(row?.price) || 0,
-      isPriceManual: Boolean(row?.isPriceManual),
-    }))
-    .filter((row) => row.barcode || row.unit || row.conversion || row.price)
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
 }
 
 export function toProduct(record) {
