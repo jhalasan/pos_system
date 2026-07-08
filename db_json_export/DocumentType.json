@@ -1,0 +1,86 @@
+[
+  {
+    "Id": 1,
+    "Name": "Purchase",
+    "Code": "100",
+    "DocumentCategoryId": 1,
+    "WarehouseId": 1,
+    "StockDirection": 1,
+    "EditorType": 0,
+    "PrintTemplate": "Purchase",
+    "PriceType": 2,
+    "LanguageKey": "Document.Category.Expenses.Purchase"
+  },
+  {
+    "Id": 2,
+    "Name": "Sales",
+    "Code": "200",
+    "DocumentCategoryId": 2,
+    "WarehouseId": 1,
+    "StockDirection": 2,
+    "EditorType": 0,
+    "PrintTemplate": "Invoice",
+    "PriceType": 1,
+    "LanguageKey": "Document.Category.Sales.Sales"
+  },
+  {
+    "Id": 3,
+    "Name": "Inventory Count",
+    "Code": "300",
+    "DocumentCategoryId": 3,
+    "WarehouseId": 1,
+    "StockDirection": 1,
+    "EditorType": 1,
+    "PrintTemplate": "InventoryCount",
+    "PriceType": 0,
+    "LanguageKey": "Document.Category.Inventory.InventoryCount"
+  },
+  {
+    "Id": 4,
+    "Name": "Refund",
+    "Code": "220",
+    "DocumentCategoryId": 2,
+    "WarehouseId": 1,
+    "StockDirection": 1,
+    "EditorType": 0,
+    "PrintTemplate": "Refund",
+    "PriceType": 1,
+    "LanguageKey": "Document.Category.Sales.Refund"
+  },
+  {
+    "Id": 5,
+    "Name": "Stock Return",
+    "Code": "120",
+    "DocumentCategoryId": 1,
+    "WarehouseId": 1,
+    "StockDirection": 2,
+    "EditorType": 0,
+    "PrintTemplate": "StockReturn",
+    "PriceType": 2,
+    "LanguageKey": "Document.Category.Expenses.StockReturn"
+  },
+  {
+    "Id": 6,
+    "Name": "Loss And Damage",
+    "Code": "400",
+    "DocumentCategoryId": 4,
+    "WarehouseId": 1,
+    "StockDirection": 2,
+    "EditorType": 2,
+    "PrintTemplate": "LossAndDamage",
+    "PriceType": 0,
+    "LanguageKey": "Document.Category.Loss.LossAndDamage"
+  },
+  {
+    "Id": 7,
+    "Name": "Proforma",
+    "Code": "230",
+    "DocumentCategoryId": 2,
+    "WarehouseId": 1,
+    "StockDirection": 0,
+    "EditorType": 0,
+    "PrintTemplate": "Proforma",
+    "PriceType": 1,
+    "LanguageKey": "Document.Category.Sales.Proforma"
+  }
+]

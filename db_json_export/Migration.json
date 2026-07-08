@@ -1,0 +1,618 @@
+[
+  {
+    "ID": 1,
+    "Version": "1.0",
+    "Description": "Add customer discount",
+    "FileName": "1_0__Add_customer_discount.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 2,
+    "Version": "2.0",
+    "Description": "Add printers table",
+    "FileName": "2_0__Add_printers_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 3,
+    "Version": "3.0",
+    "Description": "Add email and phone columns",
+    "FileName": "3_0__Add_email_and_phone_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 4,
+    "Version": "4.0",
+    "Description": "Add ApplicationProperty table",
+    "FileName": "4_0__Add_ApplicationProperty_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 5,
+    "Version": "5.0",
+    "Description": "Add product margin fields",
+    "FileName": "5_0__Add_product_margin_fields.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 6,
+    "Version": "6.0",
+    "Description": "API base url",
+    "FileName": "6_0__API_base_url.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 7,
+    "Version": "7.0",
+    "Description": "Add loyalty table",
+    "FileName": "7_0__Add_loyalty_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 8,
+    "Version": "8.0",
+    "Description": "API SSL base url",
+    "FileName": "8_0__API_SSL_base_url.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 9,
+    "Version": "9.0",
+    "Description": "Add discount column",
+    "FileName": "9_0__Add_discount_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:31"
+  },
+  {
+    "ID": 10,
+    "Version": "10.0",
+    "Description": "Add promotions tables",
+    "FileName": "10_0__Add_promotions_tables.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 11,
+    "Version": "11.0",
+    "Description": "Extend promotions tables",
+    "FileName": "11_0__Extend_promotions_tables.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 12,
+    "Version": "12.0",
+    "Description": "Document releations",
+    "FileName": "12_0__Document_releations.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 13,
+    "Version": "13.0",
+    "Description": "Add Stock table",
+    "FileName": "13_0__Add_Stock_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 14,
+    "Version": "14.0",
+    "Description": "Add external document number",
+    "FileName": "14_0__Add_external_document_number.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 15,
+    "Version": "15.0",
+    "Description": "Alter Document date and customer columns",
+    "FileName": "15_0__Alter_Document_date_and_customer_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 16,
+    "Version": "16.0",
+    "Description": "Add PaymentType Enabled And QuickPayment columns",
+    "FileName": "16_0__Add_PaymentType_Enabled_And_QuickPayment_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 17,
+    "Version": "17.0",
+    "Description": "Add Document notes columns",
+    "FileName": "17_0__Add_Document_notes_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 18,
+    "Version": "18.0",
+    "Description": "Barcode table",
+    "FileName": "18_0__Barcode_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 19,
+    "Version": "19.0",
+    "Description": "Add Document DueDate column",
+    "FileName": "19_0__Add_Document_DueDate_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 20,
+    "Version": "20.0",
+    "Description": "Add User IsEnabled column",
+    "FileName": "20_0__Add_User_IsEnabled_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 21,
+    "Version": "21.0",
+    "Description": "Add Customer IsEnabled and IsSupplier flags",
+    "FileName": "21_0__Add_Customer_IsEnabled_and_IsSupplier_flags.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 22,
+    "Version": "22.0",
+    "Description": "Add Refund document type",
+    "FileName": "22_0__Add_Refund_document_type.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 23,
+    "Version": "23.0",
+    "Description": "Add ZReport table",
+    "FileName": "23_0__Add_ZReport_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 24,
+    "Version": "24.0",
+    "Description": "Add CashDrawer columns",
+    "FileName": "24_0__Add_CashDrawer_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 25,
+    "Version": "25.0",
+    "Description": "Add Stock ProductId Index",
+    "FileName": "25_0__Add_Stock_ProductId_Index.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 26,
+    "Version": "26.0",
+    "Description": "Add Product Image column",
+    "FileName": "26_0__Add_Product_Image_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 27,
+    "Version": "27.0",
+    "Description": "Add Payment type shortcut",
+    "FileName": "27_0__Add_Payment_type_shortcut.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 28,
+    "Version": "28.0",
+    "Description": "Add DiscountType column",
+    "FileName": "28_0__Add_DiscountType_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 29,
+    "Version": "29.0",
+    "Description": "Add Document discounts",
+    "FileName": "29_0__Add_Document_discounts.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 30,
+    "Version": "30.0",
+    "Description": "Add PosOrder and PosOrderItem tables",
+    "FileName": "30_0__Add_PosOrder_and_PosOrderItem_tables.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 31,
+    "Version": "31.0",
+    "Description": "Footer and header alignment column",
+    "FileName": "31_0__Footer_and_header_alignment_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 32,
+    "Version": "32.0",
+    "Description": "Add DocumentItem Total columns",
+    "FileName": "32_0__Add_DocumentItem_Total_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 33,
+    "Version": "33.0",
+    "Description": "Add ItemPriceView",
+    "FileName": "33_0__Add_ItemPriceView.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 34,
+    "Version": "34.0",
+    "Description": "Add product and group Color column",
+    "FileName": "34_0__Add_product_and_group_Color_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:32"
+  },
+  {
+    "ID": 35,
+    "Version": "35.0",
+    "Description": "Add printer formatting enabled column",
+    "FileName": "35_0__Add_printer_formatting_enabled_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 36,
+    "Version": "36.0",
+    "Description": "Add A4 Printer settings columns",
+    "FileName": "36_0__Add_A4_Printer_settings_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 37,
+    "Version": "37.0",
+    "Description": "Printer CodePage and Charset",
+    "FileName": "37_0__Printer_CodePage_and_Charset.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 38,
+    "Version": "38.0",
+    "Description": "PaymentType and document paid field",
+    "FileName": "38_0__PaymentType_and_document_paid_field.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 39,
+    "Version": "39.0",
+    "Description": "Add User email column",
+    "FileName": "39_0__Add_User_email_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 40,
+    "Version": "40.0",
+    "Description": "Company logo",
+    "FileName": "40_0__Company_logo.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 41,
+    "Version": "41.0",
+    "Description": "Add Customer due date column",
+    "FileName": "41_0__Add_Customer_due_date_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 42,
+    "Version": "42.0",
+    "Description": "Payment date",
+    "FileName": "42_0__Payment_date.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 43,
+    "Version": "43.0",
+    "Description": "Add PurchaseReturn document type",
+    "FileName": "43_0__Add_PurchaseReturn_document_type.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 44,
+    "Version": "44.0",
+    "Description": "Add DocumentType PriceType column",
+    "FileName": "44_0__Add_DocumentType_PriceType_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 45,
+    "Version": "45.0",
+    "Description": "Add company bank account",
+    "FileName": "45_0__Add_company_bank_account.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 46,
+    "Version": "46.0",
+    "Description": "Add PosPrinterSelectionSettings table",
+    "FileName": "46_0__Add_PosPrinterSelectionSettings_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 47,
+    "Version": "47.0",
+    "Description": "Add StartingCash table",
+    "FileName": "47_0__Add_StartingCash_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 48,
+    "Version": "48.0",
+    "Description": "Add printer margins columns",
+    "FileName": "48_0__Add_printer_margins_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 49,
+    "Version": "49.0",
+    "Description": "Add PosOrderItem Bundle column",
+    "FileName": "49_0__Add_PosOrderItem_Bundle_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 50,
+    "Version": "50.0",
+    "Description": "Add ProductComment table",
+    "FileName": "50_0__Add_ProductComment_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 51,
+    "Version": "51.0",
+    "Description": "Add Loss and Damage document type",
+    "FileName": "51_0__Add_Loss_and_Damage_document_type.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 52,
+    "Version": "52.0",
+    "Description": "Add Tax table",
+    "FileName": "52_0__Add_Tax_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 53,
+    "Version": "53.0",
+    "Description": "Add PrintBarcode column to printer settings",
+    "FileName": "53_0__Add_PrintBarcode_column_to_printer_settings.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 54,
+    "Version": "54.0",
+    "Description": "Add ProductGroup Image column",
+    "FileName": "54_0__Add_ProductGroup_Image_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 55,
+    "Version": "55.0",
+    "Description": "Add DiscountApplyRule columns",
+    "FileName": "55_0__Add_DiscountApplyRule_columns.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 56,
+    "Version": "56.0",
+    "Description": "Add Proforma document type",
+    "FileName": "56_0__Add_Proforma_document_type.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 57,
+    "Version": "57.0",
+    "Description": "Add font size column to printer settings",
+    "FileName": "57_0__Add_font_size_column_to_printer_settings.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 58,
+    "Version": "58.0",
+    "Description": "Add product age restriction column",
+    "FileName": "58_0__Add_product_age_restriction_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 59,
+    "Version": "59.0",
+    "Description": "Add language key to document type",
+    "FileName": "59_0__Add_language_key_to_document_type.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 60,
+    "Version": "60.0",
+    "Description": "Add Product LastPurchasePrice column",
+    "FileName": "60_0__Add_Product_LastPurchasePrice_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 61,
+    "Version": "61.0",
+    "Description": "Use cost as default last purchase price",
+    "FileName": "61_0__Use_cost_as_default_last_purchase_price.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:33"
+  },
+  {
+    "ID": 62,
+    "Version": "62.0",
+    "Description": "Add Rank column",
+    "FileName": "62_0__Add_Rank_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 63,
+    "Version": "63.0",
+    "Description": "Add floor plan color column",
+    "FileName": "63_0__Add_floor_plan_color_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 64,
+    "Version": "64.0",
+    "Description": "Customer and company address fields",
+    "FileName": "64_0__Customer_and_company_address_fields.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 65,
+    "Version": "65.0",
+    "Description": "Customer tax exempt",
+    "FileName": "65_0__Customer_tax_exempt.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 66,
+    "Version": "66.0",
+    "Description": "Add PosVoid table",
+    "FileName": "66_0__Add_PosVoid_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 67,
+    "Version": "67.0",
+    "Description": "Add Template table",
+    "FileName": "67_0__Add_Template_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 68,
+    "Version": "68.0",
+    "Description": "Add Order CustomerId column",
+    "FileName": "68_0__Add_Order_CustomerId_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 69,
+    "Version": "69.0",
+    "Description": "Add OrderItem DiscountAppliedType",
+    "FileName": "69_0__Add_OrderItem_DiscountAppliedType.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 70,
+    "Version": "70.0",
+    "Description": "Rename Product Markup column",
+    "FileName": "70_0__Rename_Product_Markup_column.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 71,
+    "Version": "71.0",
+    "Description": "Add Z report and user to payment table",
+    "FileName": "71_0__Add_Z_report_and_user_to_payment_table.sql",
+    "Module": null,
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 72,
+    "Version": "1.0",
+    "Description": "Add DocumentItemExpirationDate table",
+    "FileName": "1_0__Add_DocumentItemExpirationDate_table.sql",
+    "Module": "Aronium.Pos.ExpirationDate",
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 73,
+    "Version": "1.0",
+    "Description": "Add PriceLists tables",
+    "FileName": "1_0__Add_PriceLists_tables.sql",
+    "Module": "Aronium.Pos.PriceLists",
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 74,
+    "Version": "1.0",
+    "Description": "Add PrintStations tables",
+    "FileName": "1_0__Add_PrintStations_tables.sql",
+    "Module": "Aronium.Pos.Print.Stations",
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 75,
+    "Version": "1.0",
+    "Description": "Add StockControl table",
+    "FileName": "1_0__Add_StockControl_table.sql",
+    "Module": "Aronium.Pos.StockControl",
+    "Date": "2025-05-11 07:05:34"
+  },
+  {
+    "ID": 76,
+    "Version": "72.0",
+    "Description": "Add PrintLogoFullWidth column to printer settings",
+    "FileName": "72_0__Add_PrintLogoFullWidth_column_to_printer_settings.sql",
+    "Module": null,
+    "Date": "2025-08-13 06:16:01"
+  },
+  {
+    "ID": 77,
+    "Version": "73.0",
+    "Description": "Add Order ServiceType",
+    "FileName": "73_0__Add_Order_ServiceType.sql",
+    "Module": null,
+    "Date": "2025-12-04 17:30:28"
+  }
+]

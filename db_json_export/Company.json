@@ -1,0 +1,22 @@
+[
+  {
+    "Id": 1,
+    "Name": "ARJOV CONSUMER GOODS TRADING",
+    "Address": null,
+    "PostalCode": "9500",
+    "City": "GENERAL SANTOS CITY",
+    "CountryId": 172,
+    "TaxNumber": null,
+    "Email": null,
+    "PhoneNumber": "CP NO.  0932-7339-365",
+    "Logo": null,
+    "BankAccountNumber": null,
+    "BankDetails": null,
+    "StreetName": "APARENTE STREET EXT.,PUROK MALAKAS, BRGY. SAN ISIDRO",
+    "AdditionalStreetName": null,
+    "BuildingNumber": null,
+    "PlotIdentification": null,
+    "CitySubdivisionName": null,
+    "CountrySubentity": null
+  }
+]

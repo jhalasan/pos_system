@@ -1,0 +1,62 @@
+[
+  {
+    "Id": 1,
+    "FirstName": "arlie",
+    "LastName": "velasco",
+    "Username": null,
+    "Password": "AF4FB91241FC88F704167178DB1468A2614F52F56D3351AD4FE297FF79472DF7",
+    "AccessLevel": 9,
+    "IsEnabled": 1,
+    "Email": "mystoregen123@gmail.com"
+  },
+  {
+    "Id": 2,
+    "FirstName": "RICO ",
+    "LastName": "CAMPANER",
+    "Username": null,
+    "Password": "0FFE1ABD1A08215353C233D6E009613E95EEC4253832A761AF28FF37AC5A150C",
+    "AccessLevel": 2,
+    "IsEnabled": 1,
+    "Email": "ricoc@gmail.com"
+  },
+  {
+    "Id": 3,
+    "FirstName": "MARIAN",
+    "LastName": "CAMPUGAN",
+    "Username": null,
+    "Password": "EDEE29F882543B956620B26D0EE0E7E950399B1C4222F5DE05E06425B4C995E9",
+    "AccessLevel": 1,
+    "IsEnabled": 0,
+    "Email": "marianc@gmail.com"
+  },
+  {
+    "Id": 4,
+    "FirstName": "ARJOV HIGHWAY",
+    "LastName": null,
+    "Username": null,
+    "Password": "15B9E0DB83CA5103D0D81F272584932103478A4850CB788EE4FFF20B7AB5C5BA",
+    "AccessLevel": 2,
+    "IsEnabled": 1,
+    "Email": null
+  },
+  {
+    "Id": 5,
+    "FirstName": "ARJOV",
+    "LastName": null,
+    "Username": null,
+    "Password": "888DF25AE35772424A560C7152A1DE794440E0EA5CFEE62828333A456A506E05",
+    "AccessLevel": 1,
+    "IsEnabled": 1,
+    "Email": null
+  },
+  {
+    "Id": 6,
+    "FirstName": "SYRA MAE ",
+    "LastName": "ENARIO",
+    "Username": null,
+    "Password": "318AEE3FED8C9D040D35A7FC1FA776FB31303833AA2DE885354DDF3D44D8FB69",
+    "AccessLevel": 1,
+    "IsEnabled": 1,
+    "Email": "SYRA.INARIO@YAHOO.COM"
+  }
+]

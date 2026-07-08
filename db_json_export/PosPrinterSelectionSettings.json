@@ -1,0 +1,30 @@
+[
+  {
+    "Id": 1,
+    "PosPrinterSelectionId": 1,
+    "PaperWidth": 58,
+    "Header": "",
+    "Footer": "THANK YOU COME AGAIN . . .",
+    "FeedLines": 3,
+    "CutPaper": 1,
+    "PrintBitmap": 0,
+    "OpenCashDrawer": 1,
+    "CashDrawerCommand": "27,112,0,148,49",
+    "HeaderAlignment": 0,
+    "FooterAlignment": 1,
+    "IsFormattingEnabled": 1,
+    "PrinterType": 2,
+    "NumberOfCopies": 1,
+    "CodePage": -1,
+    "CharacterSet": -1,
+    "Margin": 0,
+    "LeftMargin": -1,
+    "TopMargin": 0,
+    "RightMargin": 10,
+    "BottomMargin": 8,
+    "PrintBarcode": 0,
+    "FontName": null,
+    "FontSizePercent": 85,
+    "PrintLogoFullWidth": 0
+  }
+]

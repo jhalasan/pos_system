@@ -1,0 +1,146 @@
+[
+  {
+    "Name": "Management",
+    "Level": 9
+  },
+  {
+    "Name": "Settings",
+    "Level": 9
+  },
+  {
+    "Name": "BusinessDay.Close",
+    "Level": 1
+  },
+  {
+    "Name": "UserProfile",
+    "Level": 9
+  },
+  {
+    "Name": "FloorPlans.Design",
+    "Level": 9
+  },
+  {
+    "Name": "Order.All",
+    "Level": 9
+  },
+  {
+    "Name": "Order.Void",
+    "Level": 9
+  },
+  {
+    "Name": "Order.Item.Void",
+    "Level": 9
+  },
+  {
+    "Name": "Order.Estimate",
+    "Level": 9
+  },
+  {
+    "Name": "Order.Estimate.Clear",
+    "Level": 9
+  },
+  {
+    "Name": "Order.Transfer",
+    "Level": 9
+  },
+  {
+    "Name": "Payment.Discount",
+    "Level": 2
+  },
+  {
+    "Name": "Invoices.Delete",
+    "Level": 9
+  },
+  {
+    "Name": "Refund",
+    "Level": 9
+  },
+  {
+    "Name": "Payment.TaxOverride",
+    "Level": 9
+  },
+  {
+    "Name": "SalesHistory",
+    "Level": 1
+  },
+  {
+    "Name": "SalesHistory.Receipt",
+    "Level": 1
+  },
+  {
+    "Name": "CreditPayments",
+    "Level": 0
+  },
+  {
+    "Name": "StartingCash",
+    "Level": 0
+  },
+  {
+    "Name": "CashDrawer.Open",
+    "Level": 0
+  },
+  {
+    "Name": "Stock.Control.NegativeQuantity",
+    "Level": 8
+  },
+  {
+    "Name": "Management.Dashboard",
+    "Level": 0
+  },
+  {
+    "Name": "Management.Documents",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Products",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Stock",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Reporting",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Customers",
+    "Level": 1
+  },
+  {
+    "Name": "Management.Promotions",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Security",
+    "Level": 9
+  },
+  {
+    "Name": "Management.PaymentTypes",
+    "Level": 0
+  },
+  {
+    "Name": "Management.Countries",
+    "Level": 0
+  },
+  {
+    "Name": "Management.TaxRates",
+    "Level": 9
+  },
+  {
+    "Name": "Management.PriceLists",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Company",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Stock.QuickInventory",
+    "Level": 9
+  },
+  {
+    "Name": "Management.Stock.ShowCostPrices",
+    "Level": 9
+  }
+]

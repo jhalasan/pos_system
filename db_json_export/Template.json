@@ -1,0 +1,12 @@
+[
+  {
+    "Id": 1,
+    "Name": "Address.Pattern",
+    "Value": "%STREET_NAME% %BUILDING_NUMBER%\r\n%POSTAL_CODE% %CITY%"
+  },
+  {
+    "Id": 2,
+    "Name": "Document.Number.Pattern",
+    "Value": "%YEAR%-%TYPE%-%COUNTER%"
+  }
+]

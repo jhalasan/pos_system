@@ -1,0 +1,32 @@
+[
+  {
+    "Id": 1,
+    "Key": "ReceiptPrinter",
+    "PrinterName": "POS58 Printer(4)",
+    "IsEnabled": 1
+  },
+  {
+    "Id": 2,
+    "Key": "CreditPaymentNote",
+    "PrinterName": null,
+    "IsEnabled": 0
+  },
+  {
+    "Id": 3,
+    "Key": "Estimate",
+    "PrinterName": null,
+    "IsEnabled": 0
+  },
+  {
+    "Id": 4,
+    "Key": "KitchenTicket",
+    "PrinterName": null,
+    "IsEnabled": 0
+  },
+  {
+    "Id": 5,
+    "Key": "Service",
+    "PrinterName": null,
+    "IsEnabled": 0
+  }
+]

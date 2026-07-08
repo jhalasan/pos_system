@@ -1,0 +1,146 @@
+[
+  {
+    "Id": 1,
+    "Name": "WHOLESALE",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 2,
+    "Name": "REDHORSE",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 3,
+    "Name": "RICE",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 4,
+    "Name": "WATER",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 5,
+    "Name": "PRYCEGAS",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 7,
+    "Name": "COBRA PRODUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 9,
+    "Name": "MEDICINE ",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 10,
+    "Name": "ICE",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 11,
+    "Name": "RC PRODUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 12,
+    "Name": "C2 PRUDUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 13,
+    "Name": "PEPSI PRODUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 14,
+    "Name": "COKE",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 15,
+    "Name": "SUKA TUBA",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 16,
+    "Name": "PC PRODUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 17,
+    "Name": "PALM OIL",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 18,
+    "Name": "JOYDAY ICE CREAM",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 19,
+    "Name": "FEEDS",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  },
+  {
+    "Id": 20,
+    "Name": "TANDUAY PRODUCT",
+    "ParentGroupId": null,
+    "Color": "Transparent",
+    "Image": null,
+    "Rank": 0
+  }
+]

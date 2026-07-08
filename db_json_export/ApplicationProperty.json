@@ -1,0 +1,46 @@
+[
+  {
+    "Name": "Application.Api.BaseUrl",
+    "Value": "https://api.aronium.com/api"
+  },
+  {
+    "Name": "Application.Id",
+    "Value": "2b83c2d7-5719-4b42-bb11-9788be8b31a6"
+  },
+  {
+    "Name": "GuidedTour.Management.Products",
+    "Value": "1"
+  },
+  {
+    "Name": "GuidedTour.Management.Products.Add",
+    "Value": "1"
+  },
+  {
+    "Name": "GuidedTour.Layout.SearchBox",
+    "Value": "1"
+  },
+  {
+    "Name": "GuidedTour.Management.Customers.Add",
+    "Value": "1"
+  },
+  {
+    "Name": "Database.Backup.Version",
+    "Value": "1.49.1.0"
+  },
+  {
+    "Name": "MovingAveragePrice.Enabled",
+    "Value": "False"
+  },
+  {
+    "Name": "Application.OnboardingStatus",
+    "Value": "2"
+  },
+  {
+    "Name": "Monitoring.Token.Number",
+    "Value": "2"
+  },
+  {
+    "Name": "Monitoring.Refill.Date",
+    "Value": "2026-06-28T06:54:42.7985900Z"
+  }
+]

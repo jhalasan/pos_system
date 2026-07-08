@@ -1,0 +1,389 @@
+[
+  {
+    "Id": 1,
+    "ProductId": 742,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 2,
+    "ProductId": 743,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 3,
+    "ProductId": 744,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 4,
+    "ProductId": 745,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 5,
+    "ProductId": 746,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 6,
+    "ProductId": 750,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 7,
+    "ProductId": 751,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 8,
+    "ProductId": 752,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 9,
+    "ProductId": 753,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 10,
+    "ProductId": 754,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 11,
+    "ProductId": 755,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 12,
+    "ProductId": 756,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 13,
+    "ProductId": 757,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 14,
+    "ProductId": 758,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 15,
+    "ProductId": 759,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 16,
+    "ProductId": 760,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 17,
+    "ProductId": 761,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 18,
+    "ProductId": 762,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 19,
+    "ProductId": 764,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 20,
+    "ProductId": 768,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 21,
+    "ProductId": 790,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 22,
+    "ProductId": 789,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 23,
+    "ProductId": 788,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 24,
+    "ProductId": 787,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 25,
+    "ProductId": 786,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 26,
+    "ProductId": 784,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 27,
+    "ProductId": 783,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 29,
+    "ProductId": 805,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 31,
+    "ProductId": 808,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 32,
+    "ProductId": 811,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 33,
+    "ProductId": 812,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 34,
+    "ProductId": 813,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 35,
+    "ProductId": 814,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 36,
+    "ProductId": 815,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 37,
+    "ProductId": 816,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 38,
+    "ProductId": 817,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 39,
+    "ProductId": 818,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 40,
+    "ProductId": 819,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 41,
+    "ProductId": 832,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 1000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 42,
+    "ProductId": 831,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 43,
+    "ProductId": 833,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 44,
+    "ProductId": 834,
+    "CustomerId": null,
+    "ReorderPoint": 0,
+    "PreferredQuantity": 10000,
+    "IsLowStockWarningEnabled": 1,
+    "LowStockWarningQuantity": 1000
+  },
+  {
+    "Id": 45,
+    "ProductId": 794,
+    "CustomerId": null,
+    "ReorderPoint": 1,
+    "PreferredQuantity": 1,
+    "IsLowStockWarningEnabled": 0,
+    "LowStockWarningQuantity": 0
+  }
+]

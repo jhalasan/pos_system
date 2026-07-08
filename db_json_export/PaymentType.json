@@ -1,0 +1,47 @@
+[
+  {
+    "Id": 1,
+    "Name": "Cash",
+    "Code": "",
+    "IsCustomerRequired": 0,
+    "IsFiscal": 1,
+    "IsSlipRequired": 0,
+    "IsChangeAllowed": 1,
+    "Ordinal": 1,
+    "IsEnabled": 1,
+    "IsQuickPayment": 1,
+    "OpenCashDrawer": 1,
+    "ShortcutKey": null,
+    "MarkAsPaid": 1
+  },
+  {
+    "Id": 3,
+    "Name": "GCASH/PAYMAYA",
+    "Code": null,
+    "IsCustomerRequired": 0,
+    "IsFiscal": 1,
+    "IsSlipRequired": 0,
+    "IsChangeAllowed": 0,
+    "Ordinal": 1,
+    "IsEnabled": 1,
+    "IsQuickPayment": 1,
+    "OpenCashDrawer": 1,
+    "ShortcutKey": null,
+    "MarkAsPaid": 1
+  },
+  {
+    "Id": 7,
+    "Name": "CREDIT",
+    "Code": null,
+    "IsCustomerRequired": 1,
+    "IsFiscal": 1,
+    "IsSlipRequired": 0,
+    "IsChangeAllowed": 0,
+    "Ordinal": 1,
+    "IsEnabled": 1,
+    "IsQuickPayment": 1,
+    "OpenCashDrawer": 0,
+    "ShortcutKey": null,
+    "MarkAsPaid": 0
+  }
+]

@@ -1,0 +1,32 @@
+[
+  {
+    "Id": 1,
+    "Name": "A1",
+    "FloorPlanId": 1,
+    "PositionX": 10.0,
+    "PositionY": 10.0,
+    "Width": 120.0,
+    "Height": 120.0,
+    "IsRound": 0
+  },
+  {
+    "Id": 2,
+    "Name": "A2",
+    "FloorPlanId": 1,
+    "PositionX": 160.0,
+    "PositionY": 10.0,
+    "Width": 120.0,
+    "Height": 120.0,
+    "IsRound": 0
+  },
+  {
+    "Id": 3,
+    "Name": "A3",
+    "FloorPlanId": 1,
+    "PositionX": 320.0,
+    "PositionY": 10.0,
+    "Width": 120.0,
+    "Height": 120.0,
+    "IsRound": 0
+  }
+]

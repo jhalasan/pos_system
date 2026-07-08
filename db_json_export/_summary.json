@@ -1,0 +1,774 @@
+{
+  "tables": [
+    {
+      "name": "ApplicationProperty",
+      "row_count": 11,
+      "columns": [
+        "Name",
+        "Value"
+      ],
+      "schema": "CREATE TABLE ApplicationProperty \n(\n\tName TEXT PRIMARY KEY NOT NULL, \n\tValue TEXT\n)",
+      "file": "ApplicationProperty.json"
+    },
+    {
+      "name": "Barcode",
+      "row_count": 2119,
+      "columns": [
+        "Id",
+        "ProductId",
+        "Value"
+      ],
+      "schema": "CREATE TABLE Barcode (Id INTEGER PRIMARY KEY AUTOINCREMENT, ProductId INTEGER NOT NULL REFERENCES Product (Id) ON DELETE CASCADE, Value TEXT NOT NULL)",
+      "file": "Barcode.json"
+    },
+    {
+      "name": "Company",
+      "row_count": 1,
+      "columns": [
+        "Id",
+        "Name",
+        "Address",
+        "PostalCode",
+        "City",
+        "CountryId",
+        "TaxNumber",
+        "Email",
+        "PhoneNumber",
+        "Logo",
+        "BankAccountNumber",
+        "BankDetails",
+        "StreetName",
+        "AdditionalStreetName",
+        "BuildingNumber",
+        "PlotIdentification",
+        "CitySubdivisionName",
+        "CountrySubentity"
+      ],
+      "schema": "CREATE TABLE Company (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, Address TEXT, PostalCode TEXT, City TEXT, CountryId INTEGER REFERENCES Country (Id) NOT NULL, TaxNumber TEXT, Email TEXT, PhoneNumber TEXT, Logo BLOB, BankAccountNumber TEXT, BankDetails TEXT, StreetName TEXT, AdditionalStreetName TEXT, BuildingNumber TEXT, PlotIdentification TEXT, CitySubdivisionName TEXT, CountrySubentity TEXT)",
+      "file": "Company.json"
+    },
+    {
+      "name": "Counter",
+      "row_count": 6,
+      "columns": [
+        "Name",
+        "Value"
+      ],
+      "schema": "CREATE TABLE Counter (Name TEXT PRIMARY KEY NOT NULL, Value INTEGER NOT NULL)",
+      "file": "Counter.json"
+    },
+    {
+      "name": "Country",
+      "row_count": 241,
+      "columns": [
+        "Id",
+        "Name",
+        "Code"
+      ],
+      "schema": "CREATE TABLE Country (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, Code TEXT)",
+      "file": "Country.json"
+    },
+    {
+      "name": "Currency",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name",
+        "Code"
+      ],
+      "schema": "CREATE TABLE Currency (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, Code TEXT)",
+      "file": "Currency.json"
+    },
+    {
+      "name": "Customer",
+      "row_count": 26,
+      "columns": [
+        "Id",
+        "Code",
+        "Name",
+        "TaxNumber",
+        "Address",
+        "PostalCode",
+        "City",
+        "CountryId",
+        "DateCreated",
+        "DateUpdated",
+        "Email",
+        "PhoneNumber",
+        "IsEnabled",
+        "IsCustomer",
+        "IsSupplier",
+        "DueDatePeriod",
+        "StreetName",
+        "AdditionalStreetName",
+        "BuildingNumber",
+        "PlotIdentification",
+        "CitySubdivisionName",
+        "CountrySubentity",
+        "IsTaxExempt",
+        "PriceListId"
+      ],
+      "schema": "CREATE TABLE Customer (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Code TEXT, Name TEXT NOT NULL, TaxNumber TEXT, Address TEXT, PostalCode TEXT, City TEXT, CountryId INTEGER REFERENCES Country (Id), DateCreated DATETIME NOT NULL DEFAULT (DATETIME('now')), DateUpdated DATETIME NOT NULL DEFAULT (DATETIME('now')), Email TEXT, PhoneNumber TEXT, IsEnabled INTEGER (1) NOT NULL DEFAULT 1, IsCustomer INTEGER (1) NOT NULL DEFAULT 1, IsSupplier INTEGER (1) NOT NULL DEFAULT 1, DueDatePeriod INT NOT NULL DEFAULT (0), StreetName TEXT, AdditionalStreetName TEXT, BuildingNumber TEXT, PlotIdentification TEXT, CitySubdivisionName TEXT, CountrySubentity TEXT, IsTaxExempt INTEGER (1) NOT NULL DEFAULT 0, PriceListId INTEGER REFERENCES PriceList (Id) ON DELETE SET NULL)",
+      "file": "Customer.json"
+    },
+    {
+      "name": "CustomerDiscount",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "CustomerId",
+        "Type",
+        "Uid",
+        "Value"
+      ],
+      "schema": "CREATE TABLE CustomerDiscount \n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tCustomerId INTEGER REFERENCES Customer (Id) ON DELETE CASCADE NOT NULL, \n\tType INTEGER (1) NOT NULL DEFAULT (0), \n\tUid INTEGER, \n\tValue REAL NOT NULL DEFAULT (0), \n\tCONSTRAINT UK_CustomerDiscount UNIQUE (CustomerId, Type, Uid)\n)",
+      "file": "CustomerDiscount.json"
+    },
+    {
+      "name": "Document",
+      "row_count": 104522,
+      "columns": [
+        "Id",
+        "Number",
+        "UserId",
+        "CustomerId",
+        "OrderNumber",
+        "Date",
+        "StockDate",
+        "Total",
+        "IsClockedOut",
+        "DocumentTypeId",
+        "WarehouseId",
+        "ReferenceDocumentNumber",
+        "DateCreated",
+        "DateUpdated",
+        "InternalNote",
+        "Note",
+        "DueDate",
+        "Discount",
+        "DiscountType",
+        "PaidStatus",
+        "DiscountApplyRule",
+        "ServiceType"
+      ],
+      "schema": "CREATE TABLE Document (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Number TEXT NOT NULL, UserId INTEGER REFERENCES User (Id) NOT NULL, CustomerId INTEGER REFERENCES Customer (Id), OrderNumber TEXT, Date DATE NOT NULL, StockDate DATETIME NOT NULL, Total NUMERIC NOT NULL, IsClockedOut INTEGER (1) NOT NULL DEFAULT (0), DocumentTypeId INTEGER REFERENCES DocumentType (Id) NOT NULL, WarehouseId INTEGER REFERENCES Warehouse (Id) NOT NULL, ReferenceDocumentNumber TEXT, DateCreated DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')), DateUpdated DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')), InternalNote TEXT, Note TEXT, DueDate DATE, Discount NUMERIC NOT NULL DEFAULT (0), DiscountType INT NOT NULL DEFAULT (0), PaidStatus INTEGER NOT NULL DEFAULT 0, DiscountApplyRule INTEGER(1) NOT NULL DEFAULT (0), ServiceType INTEGER NOT NULL DEFAULT (0))",
+      "file": "Document.json"
+    },
+    {
+      "name": "DocumentCategory",
+      "row_count": 4,
+      "columns": [
+        "Id",
+        "Name",
+        "LanguageKey"
+      ],
+      "schema": "CREATE TABLE DocumentCategory (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, LanguageKey TEXT)",
+      "file": "DocumentCategory.json"
+    },
+    {
+      "name": "DocumentItem",
+      "row_count": 227599,
+      "columns": [
+        "Id",
+        "DocumentId",
+        "ProductId",
+        "Quantity",
+        "ExpectedQuantity",
+        "PriceBeforeTax",
+        "Price",
+        "Discount",
+        "DiscountType",
+        "ProductCost",
+        "PriceBeforeTaxAfterDiscount",
+        "PriceAfterDiscount",
+        "Total",
+        "TotalAfterDocumentDiscount",
+        "DiscountApplyRule"
+      ],
+      "schema": "CREATE TABLE DocumentItem (\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL\n\t,DocumentId INTEGER REFERENCES Document(Id) ON DELETE CASCADE NOT NULL\n\t,ProductId INTEGER REFERENCES Product(Id) NOT NULL\n\t,Quantity NUMERIC NOT NULL DEFAULT(0)\n\t,ExpectedQuantity NUMERIC NOT NULL DEFAULT(0)\n\t,PriceBeforeTax NUMERIC NOT NULL DEFAULT(0)\n\t,Price NUMERIC NOT NULL\n\t,Discount NUMERIC NOT NULL DEFAULT(0)\n\t,DiscountType INTEGER NOT NULL DEFAULT(0)\n\t,ProductCost NUMERIC NOT NULL DEFAULT 0\n \t,PriceBeforeTaxAfterDiscount NUMERIC NOT NULL DEFAULT(0)\n\t,PriceAfterDiscount NUMERIC NOT NULL DEFAULT(0)\n\t,Total NUMERIC NOT NULL DEFAULT(0)\n             ,TotalAfterDocumentDiscount NUMERIC NOT NULL DEFAULT(0)\n\t, DiscountApplyRule INTEGER(1) NOT NULL DEFAULT (0))",
+      "file": "DocumentItem.json"
+    },
+    {
+      "name": "DocumentItemExpirationDate",
+      "row_count": 0,
+      "columns": [
+        "DocumentItemId",
+        "ExpirationDate"
+      ],
+      "schema": "CREATE TABLE DocumentItemExpirationDate (\r\n    DocumentItemId INTEGER PRIMARY KEY\r\n                           CONSTRAINT FK_DocumentItemExpirationDate_DocumentItem REFERENCES DocumentItem (Id) ON DELETE CASCADE,\r\n    ExpirationDate DATE    NOT NULL\r\n)",
+      "file": "DocumentItemExpirationDate.json"
+    },
+    {
+      "name": "DocumentItemTax",
+      "row_count": 0,
+      "columns": [
+        "DocumentItemId",
+        "TaxId",
+        "Amount"
+      ],
+      "schema": "CREATE TABLE DocumentItemTax (DocumentItemId INTEGER REFERENCES  DocumentItem (Id) ON DELETE CASCADE NOT NULL, TaxId INTEGER NOT NULL REFERENCES Tax (Id), Amount REAL NOT NULL DEFAULT 0, PRIMARY KEY (DocumentItemId, TaxId))",
+      "file": "DocumentItemTax.json"
+    },
+    {
+      "name": "DocumentType",
+      "row_count": 7,
+      "columns": [
+        "Id",
+        "Name",
+        "Code",
+        "DocumentCategoryId",
+        "WarehouseId",
+        "StockDirection",
+        "EditorType",
+        "PrintTemplate",
+        "PriceType",
+        "LanguageKey"
+      ],
+      "schema": "CREATE TABLE DocumentType \n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT, \n\tName TEXT NOT NULL, \n\tCode TEXT NOT NULL, \n\tDocumentCategoryId INTEGER REFERENCES DocumentCategory (Id) NOT NULL,\n\tWarehouseId INTEGER REFERENCES Warehouse (Id) NOT NULL, \n\tStockDirection INTEGER (1) NOT NULL DEFAULT (0),\n\tEditorType INTEGER NOT NULL DEFAULT (0),\n\tPrintTemplate TEXT\n, PriceType INT NOT NULL DEFAULT (0), LanguageKey TEXT)",
+      "file": "DocumentType.json"
+    },
+    {
+      "name": "FiscalItem",
+      "row_count": 0,
+      "columns": [
+        "PLU",
+        "Name",
+        "VAT"
+      ],
+      "schema": "CREATE TABLE `FiscalItem` (\n\t`PLU`\tINTEGER NOT NULL,\n\t`Name`\tTEXT NOT NULL,\n\t`VAT`\tTEXT NOT NULL,\n\tPRIMARY KEY(PLU)\n)",
+      "file": "FiscalItem.json"
+    },
+    {
+      "name": "FloorPlan",
+      "row_count": 1,
+      "columns": [
+        "Id",
+        "Name",
+        "Color"
+      ],
+      "schema": "CREATE TABLE FloorPlan (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, Color TEXT NOT NULL DEFAULT 'Transparent')",
+      "file": "FloorPlan.json"
+    },
+    {
+      "name": "FloorPlanTable",
+      "row_count": 3,
+      "columns": [
+        "Id",
+        "Name",
+        "FloorPlanId",
+        "PositionX",
+        "PositionY",
+        "Width",
+        "Height",
+        "IsRound"
+      ],
+      "schema": "CREATE TABLE FloorPlanTable (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, FloorPlanId INTEGER REFERENCES FloorPlan (Id) ON DELETE CASCADE NOT NULL, PositionX REAL NOT NULL DEFAULT (0), PositionY REAL NOT NULL DEFAULT (0), Width REAL NOT NULL, Height REAL NOT NULL, IsRound INTEGER (1) NOT NULL DEFAULT (0))",
+      "file": "FloorPlanTable.json"
+    },
+    {
+      "name": "LoyaltyCard",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "CustomerId",
+        "CardNumber"
+      ],
+      "schema": "CREATE TABLE LoyaltyCard \n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tCustomerId INTEGER REFERENCES Customer (Id) ON DELETE CASCADE NOT NULL, \n\tCardNumber TEXT \n)",
+      "file": "LoyaltyCard.json"
+    },
+    {
+      "name": "Migration",
+      "row_count": 77,
+      "columns": [
+        "ID",
+        "Version",
+        "Description",
+        "FileName",
+        "Module",
+        "Date"
+      ],
+      "schema": "CREATE TABLE Migration (ID INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Version TEXT NOT NULL, Description TEXT, FileName TEXT NOT NULL, Module TEXT, Date DATETIME)",
+      "file": "Migration.json"
+    },
+    {
+      "name": "Payment",
+      "row_count": 102913,
+      "columns": [
+        "Id",
+        "DocumentId",
+        "PaymentTypeId",
+        "Amount",
+        "Date",
+        "UserId",
+        "ZReportId",
+        "DateCreated"
+      ],
+      "schema": "CREATE TABLE Payment (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, DocumentId INTEGER REFERENCES Document (Id) ON DELETE CASCADE NOT NULL, PaymentTypeId INTEGER REFERENCES PaymentType (Id) NOT NULL, Amount NUMERIC NOT NULL DEFAULT (0), Date DATE, UserId INTEGER NOT NULL REFERENCES User (Id) DEFAULT 0, ZReportId INTEGER REFERENCES ZReport (Id), DateCreated DATETIME NOT NULL DEFAULT 0)",
+      "file": "Payment.json"
+    },
+    {
+      "name": "PaymentType",
+      "row_count": 3,
+      "columns": [
+        "Id",
+        "Name",
+        "Code",
+        "IsCustomerRequired",
+        "IsFiscal",
+        "IsSlipRequired",
+        "IsChangeAllowed",
+        "Ordinal",
+        "IsEnabled",
+        "IsQuickPayment",
+        "OpenCashDrawer",
+        "ShortcutKey",
+        "MarkAsPaid"
+      ],
+      "schema": "CREATE TABLE PaymentType (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL, Code TEXT, IsCustomerRequired INTEGER (1) NOT NULL DEFAULT (0), IsFiscal INTEGER (1) NOT NULL DEFAULT (1), IsSlipRequired INTEGER (1) NOT NULL DEFAULT (0), IsChangeAllowed INTEGER (1) NOT NULL DEFAULT (1), Ordinal INTEGER DEFAULT (0) NOT NULL, IsEnabled INTEGER (1) NOT NULL DEFAULT (1), IsQuickPayment INTEGER (1) NOT NULL DEFAULT (1), OpenCashDrawer INT (1) NOT NULL DEFAULT 1, ShortcutKey TEXT, MarkAsPaid INT(1) NOT NULL DEFAULT 1)",
+      "file": "PaymentType.json"
+    },
+    {
+      "name": "PosOrder",
+      "row_count": 3,
+      "columns": [
+        "Id",
+        "UserId",
+        "Number",
+        "Discount",
+        "DiscountType",
+        "Total",
+        "CustomerId",
+        "ServiceType"
+      ],
+      "schema": "CREATE TABLE PosOrder \n(\n    Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n    UserId INTEGER REFERENCES User (Id) NOT NULL, \n    Number TEXT NOT NULL, \n    Discount NUMERIC NOT NULL DEFAULT (0), \n    DiscountType INTEGER NOT NULL DEFAULT (0),\n    Total NUMERIC\n, CustomerId INTEGER REFERENCES Customer (Id) ON DELETE SET NULL, ServiceType INTEGER NOT NULL DEFAULT (0))",
+      "file": "PosOrder.json"
+    },
+    {
+      "name": "PosOrderItem",
+      "row_count": 3,
+      "columns": [
+        "Id",
+        "PosOrderId",
+        "ProductId",
+        "RoundNumber",
+        "Quantity",
+        "Price",
+        "IsLocked",
+        "Discount",
+        "DiscountType",
+        "IsFeatured",
+        "VoidedBy",
+        "Comment",
+        "DateCreated",
+        "Bundle",
+        "DiscountAppliedType"
+      ],
+      "schema": "CREATE TABLE PosOrderItem (\n    Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,\n    PosOrderId INTEGER REFERENCES PosOrder (Id) ON DELETE CASCADE NOT NULL,  \n    ProductId INTEGER REFERENCES Product (Id) NOT NULL, \n    RoundNumber INTEGER NOT NULL DEFAULT (0), \n    Quantity NUMERIC NOT NULL, \n    Price NUMERIC NOT NULL, \n    IsLocked INTEGER (1) NOT NULL DEFAULT (0),\n    Discount NUMERIC NOT NULL DEFAULT (0), \n    DiscountType INT NOT NULL DEFAULT (0), \n    IsFeatured INT (1) NOT NULL DEFAULT 0,  \n    VoidedBy INTEGER REFERENCES User (Id), \n    Comment TEXT, \n    DateCreated DATE NOT NULL\n, Bundle TEXT, DiscountAppliedType INTEGER NOT NULL DEFAULT (0))",
+      "file": "PosOrderItem.json"
+    },
+    {
+      "name": "PosPrinterSelection",
+      "row_count": 5,
+      "columns": [
+        "Id",
+        "Key",
+        "PrinterName",
+        "IsEnabled"
+      ],
+      "schema": "CREATE TABLE PosPrinterSelection\n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tKey TEXT NOT NULL CONSTRAINT UK_PrinterKey UNIQUE, \n\tPrinterName TEXT, \n\tIsEnabled INTEGER (1) NOT NULL DEFAULT (0)\n)",
+      "file": "PosPrinterSelection.json"
+    },
+    {
+      "name": "PosPrinterSelectionSettings",
+      "row_count": 1,
+      "columns": [
+        "Id",
+        "PosPrinterSelectionId",
+        "PaperWidth",
+        "Header",
+        "Footer",
+        "FeedLines",
+        "CutPaper",
+        "PrintBitmap",
+        "OpenCashDrawer",
+        "CashDrawerCommand",
+        "HeaderAlignment",
+        "FooterAlignment",
+        "IsFormattingEnabled",
+        "PrinterType",
+        "NumberOfCopies",
+        "CodePage",
+        "CharacterSet",
+        "Margin",
+        "LeftMargin",
+        "TopMargin",
+        "RightMargin",
+        "BottomMargin",
+        "PrintBarcode",
+        "FontName",
+        "FontSizePercent",
+        "PrintLogoFullWidth"
+      ],
+      "schema": "CREATE TABLE PosPrinterSelectionSettings (\n  Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n  PosPrinterSelectionId INTEGER REFERENCES PosPrinterSelection (Id) ON DELETE CASCADE NOT NULL, \n  PaperWidth INTEGER (5) NOT NULL DEFAULT (32), \n  Header TEXT, \n  Footer TEXT, \n  FeedLines INTEGER (3) NOT NULL DEFAULT (0), \n  CutPaper INTEGER (1) NOT NULL DEFAULT (1), \n  PrintBitmap INTEGER (1) NOT NULL DEFAULT (0), \n  OpenCashDrawer INT (1) NOT NULL DEFAULT 1, \n  CashDrawerCommand TEXT, \n  HeaderAlignment INT (1) NOT NULL DEFAULT 0, \n  FooterAlignment INT (1) NOT NULL DEFAULT 0, \n  IsFormattingEnabled INT (1) NOT NULL DEFAULT 1, \n  PrinterType INT (1) NOT NULL DEFAULT 0, \n  NumberOfCopies INT (1) NOT NULL DEFAULT 1, \n  CodePage INTEGER NOT NULL DEFAULT -1, \n  CharacterSet INTEGER NOT NULL DEFAULT -1,\n  Margin INTEGER NOT NULL DEFAULT 0\n, LeftMargin NUMERIC NOT NULL DEFAULT 0, TopMargin NUMERIC NOT NULL DEFAULT 0, RightMargin NUMERIC NOT NULL DEFAULT 0, BottomMargin NUMERIC NOT NULL DEFAULT 0, PrintBarcode INTEGER (1) NOT NULL DEFAULT 1, FontName TEXT, FontSizePercent NUMERIC NOT NULL DEFAULT 100.0, PrintLogoFullWidth INTEGER (1) NOT NULL DEFAULT 0)",
+      "file": "PosPrinterSelectionSettings.json"
+    },
+    {
+      "name": "PosPrinterSettings",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "PrinterName",
+        "PaperWidth",
+        "Header",
+        "Footer",
+        "FeedLines",
+        "CutPaper",
+        "PrintBitmap",
+        "OpenCashDrawer",
+        "CashDrawerCommand",
+        "HeaderAlignment",
+        "FooterAlignment",
+        "IsFormattingEnabled",
+        "PrinterType",
+        "NumberOfCopies",
+        "CodePage",
+        "CharacterSet"
+      ],
+      "schema": "CREATE TABLE PosPrinterSettings \n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tPrinterName TEXT NOT NULL CONSTRAINT UK_PrinterName UNIQUE, \n\tPaperWidth INTEGER (5) NOT NULL DEFAULT (32), \n\tHeader TEXT, \n\tFooter TEXT,\n\tFeedLines INTEGER (3) NOT NULL DEFAULT (0), \n\tCutPaper INTEGER(1) NOT NULL DEFAULT (1),\n\tPrintBitmap INTEGER(1) NOT NULL DEFAULT (0)\n, OpenCashDrawer INT (1) NOT NULL DEFAULT 1, CashDrawerCommand TEXT, HeaderAlignment INT(1) NOT NULL DEFAULT 0, FooterAlignment INT(1) NOT NULL DEFAULT 0, IsFormattingEnabled INT(1) NOT NULL DEFAULT 1, PrinterType INT(1) NOT NULL DEFAULT 0, NumberOfCopies INT(1) NOT NULL DEFAULT 1, CodePage INTEGER NOT NULL DEFAULT -1, CharacterSet INTEGER NOT NULL DEFAULT -1)",
+      "file": "PosPrinterSettings.json"
+    },
+    {
+      "name": "PosVoid",
+      "row_count": 94,
+      "columns": [
+        "Id",
+        "OrderNumber",
+        "UserId",
+        "UserName",
+        "ProductId",
+        "ProductName",
+        "RoundNumber",
+        "Quantity",
+        "Price",
+        "Discount",
+        "DiscountType",
+        "Total",
+        "IsConfirmed",
+        "Reason",
+        "VoidedBy",
+        "VoidedByName",
+        "Bundle",
+        "DateCreated",
+        "DateVoided"
+      ],
+      "schema": "CREATE TABLE PosVoid (\r\n    Id           INTEGER  PRIMARY KEY AUTOINCREMENT\r\n                          NOT NULL,\r\n    OrderNumber  TEXT     NOT NULL,\r\n    UserId       INTEGER  REFERENCES User (Id) ON DELETE SET NULL,\r\n    UserName     TEXT     NOT NULL,\r\n    ProductId    INTEGER  REFERENCES Product (Id) ON DELETE SET NULL,\r\n    ProductName  TEXT     NOT NULL,\r\n    RoundNumber  INTEGER  NOT NULL,\r\n    Quantity     NUMERIC  NOT NULL,\r\n    Price        NUMERIC  NOT NULL,\r\n    Discount     NUMERIC  NOT NULL,\r\n    DiscountType INTEGER  NOT NULL,\r\n    Total        NUMERIC  NOT NULL,\r\n    IsConfirmed  INTEGER  NOT NULL,\r\n    Reason       TEXT,\r\n    VoidedBy     INTEGER  REFERENCES User (Id) ON DELETE SET NULL,\r\n    VoidedByName TEXT,\r\n    Bundle       TEXT,\r\n    DateCreated  DATETIME NOT NULL,\r\n    DateVoided   DATETIME NOT NULL\r\n)",
+      "file": "PosVoid.json"
+    },
+    {
+      "name": "PriceList",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name",
+        "ArePromotionsAllowed",
+        "IsActive",
+        "DateCreated",
+        "DateUpdated"
+      ],
+      "schema": "CREATE TABLE PriceList \r\n(\r\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \r\n\tName TEXT NOT NULL, \r\n    ArePromotionsAllowed INTEGER(1) NOT NULL DEFAULT (1),\r\n    IsActive INTEGER(1) NOT NULL DEFAULT (0),\r\n\tDateCreated DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),\r\n\tDateUpdated DATETIME NOT NULL DEFAULT (datetime('now', 'localtime'))\r\n)",
+      "file": "PriceList.json"
+    },
+    {
+      "name": "PriceListItem",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "PriceListId",
+        "ProductId",
+        "Price",
+        "Markup"
+      ],
+      "schema": "CREATE TABLE PriceListItem\r\n(\r\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \r\n\tPriceListId INTEGER REFERENCES PriceList (Id) ON DELETE CASCADE NOT NULL,\r\n\tProductId INTEGER REFERENCES Product (Id) ON DELETE CASCADE NOT NULL,\r\n\tPrice NUMERIC NOT NULL DEFAULT(0),\r\n\tMarkup NUMERIC NOT NULL DEFAULT (0)\r\n)",
+      "file": "PriceListItem.json"
+    },
+    {
+      "name": "PrintStation",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name"
+      ],
+      "schema": "CREATE TABLE PrintStation (Id INTEGER PRIMARY KEY AUTOINCREMENT, Name TEXT NOT NULL)",
+      "file": "PrintStation.json"
+    },
+    {
+      "name": "PrintStationPosPrinterSelection",
+      "row_count": 0,
+      "columns": [
+        "PrintStationId",
+        "PosPrinterSelectionId"
+      ],
+      "schema": "CREATE TABLE PrintStationPosPrinterSelection (\n    PrintStationId INTEGER REFERENCES PrintStation (Id) ON DELETE CASCADE,\n    PosPrinterSelectionId INTEGER REFERENCES PosPrinterSelection (Id) ON DELETE CASCADE,\n    PRIMARY KEY (PrintStationId, PosPrinterSelectionId)\n)",
+      "file": "PrintStationPosPrinterSelection.json"
+    },
+    {
+      "name": "Product",
+      "row_count": 2845,
+      "columns": [
+        "Id",
+        "ProductGroupId",
+        "Name",
+        "Code",
+        "PLU",
+        "MeasurementUnit",
+        "Price",
+        "IsTaxInclusivePrice",
+        "CurrencyId",
+        "IsPriceChangeAllowed",
+        "IsService",
+        "IsUsingDefaultQuantity",
+        "IsEnabled",
+        "Description",
+        "DateCreated",
+        "DateUpdated",
+        "Cost",
+        "Markup",
+        "Image",
+        "Color",
+        "AgeRestriction",
+        "LastPurchasePrice",
+        "Rank"
+      ],
+      "schema": "CREATE TABLE Product (\n\tId INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT\n\t,ProductGroupId INTEGER REFERENCES ProductGroup(Id) ON DELETE CASCADE\n\t,Name TEXT NOT NULL\n\t,Code TEXT\n\t,PLU INTEGER\n\t,MeasurementUnit TEXT\n\t,Price REAL NOT NULL DEFAULT 0\n\t,IsTaxInclusivePrice INTEGER (1) DEFAULT(1)\n\t,CurrencyId INTEGER REFERENCES Currency(Id)\n\t,IsPriceChangeAllowed INTEGER (1) NOT NULL DEFAULT 0\n\t,IsService INTEGER (1) NOT NULL DEFAULT 0\n\t,IsUsingDefaultQuantity INTEGER (1) NOT NULL DEFAULT 1\n\t,IsEnabled INTEGER (1) NOT NULL DEFAULT(1)\n\t,Description TEXT\n\t,DateCreated DATETIME NOT NULL DEFAULT(DATETIME ('now','localtime'))\n\t,DateUpdated DATETIME NOT NULL DEFAULT(DATETIME ('now','localtime'))\n\t,Cost NUMERIC NOT NULL DEFAULT 0\n\t,Markup NUMERIC NOT NULL DEFAULT 0\n\t,Image BLOB\n\t,Color TEXT NOT NULL DEFAULT 'Transparent'\n\t, AgeRestriction NUMERIC, LastPurchasePrice NUMERIC NOT NULL DEFAULT (0), Rank NUMERIC NOT NULL DEFAULT (0),FOREIGN KEY (ProductGroupId) REFERENCES ProductGroup(Id) ON DELETE CASCADE\n\t)",
+      "file": "Product.json"
+    },
+    {
+      "name": "ProductComment",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "ProductId",
+        "Comment"
+      ],
+      "schema": "CREATE TABLE ProductComment (Id INTEGER PRIMARY KEY AUTOINCREMENT, ProductId INTEGER REFERENCES Product (Id) ON DELETE CASCADE NOT NULL, Comment TEXT NOT NULL)",
+      "file": "ProductComment.json"
+    },
+    {
+      "name": "ProductGroup",
+      "row_count": 18,
+      "columns": [
+        "Id",
+        "Name",
+        "ParentGroupId",
+        "Color",
+        "Image",
+        "Rank"
+      ],
+      "schema": "CREATE TABLE `ProductGroup` (\n\t`Id`\tINTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,\n\t`Name`\tTEXT NOT NULL,\n\t`ParentGroupId`\tINTEGER\n, Color TEXT NOT NULL DEFAULT 'Transparent', Image BLOB, Rank INT NOT NULL DEFAULT 0)",
+      "file": "ProductGroup.json"
+    },
+    {
+      "name": "ProductGroupPrintStation",
+      "row_count": 0,
+      "columns": [
+        "ProductGroupId",
+        "PrintStationId"
+      ],
+      "schema": "CREATE TABLE ProductGroupPrintStation (\n    ProductGroupId INTEGER REFERENCES ProductGroup (Id) ON DELETE CASCADE,\n    PrintStationId INTEGER REFERENCES PrintStation (Id) ON DELETE CASCADE,\n    PRIMARY KEY (ProductGroupId, PrintStationId)\n)",
+      "file": "ProductGroupPrintStation.json"
+    },
+    {
+      "name": "ProductPrintStation",
+      "row_count": 0,
+      "columns": [
+        "ProductId",
+        "PrintStationId"
+      ],
+      "schema": "CREATE TABLE ProductPrintStation (\n    ProductId INTEGER REFERENCES Product (Id) ON DELETE CASCADE,\n    PrintStationId INTEGER REFERENCES PrintStation (Id) ON DELETE CASCADE,\n    PRIMARY KEY (ProductId, PrintStationId)\n)",
+      "file": "ProductPrintStation.json"
+    },
+    {
+      "name": "ProductTax",
+      "row_count": 0,
+      "columns": [
+        "ProductId",
+        "TaxId"
+      ],
+      "schema": "CREATE TABLE ProductTax (ProductId INTEGER REFERENCES Product (Id) ON DELETE CASCADE NOT NULL, TaxId INTEGER NOT NULL REFERENCES Tax (Id), PRIMARY KEY (ProductId, TaxId))",
+      "file": "ProductTax.json"
+    },
+    {
+      "name": "Promotion",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name",
+        "StartDate",
+        "StartTime",
+        "EndDate",
+        "EndTime",
+        "DaysOfWeek",
+        "IsEnabled"
+      ],
+      "schema": "CREATE TABLE Promotion \n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tName TEXT NOT NULL, \n\tStartDate DATETIME,\n\tStartTime DATETIME,\n\tEndDate DATETIME,\n\tEndTime DATETIME,\n\tDaysOfWeek INTEGER NOT NULL,\n\tIsEnabled INTEGER(1) NOT NULL DEFAULT (1)\n)",
+      "file": "Promotion.json"
+    },
+    {
+      "name": "PromotionItem",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "PromotionId",
+        "Uid",
+        "DiscountType",
+        "PriceType",
+        "Value",
+        "IsConditional",
+        "Quantity",
+        "ConditionType",
+        "QuantityLimit"
+      ],
+      "schema": "CREATE TABLE PromotionItem\n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, \n\tPromotionId INTEGER REFERENCES Promotion (Id) ON DELETE CASCADE NOT NULL,\n\tUid INTEGER NOT NULL,\n\tDiscountType INTEGER NOT NULL DEFAULT(0),\n\tPriceType INTEGER NOT NULL DEFAULT(0),\n\tValue NUMERIC NOT NULL DEFAULT(0),\n\tIsConditional INTEGER(1) NOT NULL DEFAULT (1),\n\tQuantity NUMERIC NOT NULL DEFAULT(0),\n\tConditionType INTEGER NOT NULL DEFAULT(0),\n\tQuantityLimit NUMERIC NOT NULL DEFAULT(0)\n)",
+      "file": "PromotionItem.json"
+    },
+    {
+      "name": "SecurityKey",
+      "row_count": 36,
+      "columns": [
+        "Name",
+        "Level"
+      ],
+      "schema": "CREATE TABLE SecurityKey (Name TEXT PRIMARY KEY, Level INTEGER)",
+      "file": "SecurityKey.json"
+    },
+    {
+      "name": "StartingCash",
+      "row_count": 1283,
+      "columns": [
+        "Id",
+        "UserId",
+        "Amount",
+        "Description",
+        "StartingCashType",
+        "ZReportNumber",
+        "DateCreated"
+      ],
+      "schema": "CREATE TABLE StartingCash (\n  Id INTEGER PRIMARY KEY AUTOINCREMENT UNIQUE, \n  UserId INTEGER REFERENCES User (Id) NOT NULL, \n  Amount NUMERIC NOT NULL, \n  Description TEXT, \n  StartingCashType INTEGER NOT NULL DEFAULT (0), \n  ZReportNumber INTEGER, \n  DateCreated DATETIME NOT NULL\n)",
+      "file": "StartingCash.json"
+    },
+    {
+      "name": "Stock",
+      "row_count": 2653,
+      "columns": [
+        "Id",
+        "ProductId",
+        "WarehouseId",
+        "Quantity"
+      ],
+      "schema": "CREATE TABLE Stock\n(\n\tId INTEGER PRIMARY KEY AUTOINCREMENT, \n\tProductId INTEGER REFERENCES Product (Id) ON DELETE CASCADE NOT NULL,\n\tWarehouseId INTEGER REFERENCES Warehouse (Id) ON DELETE CASCADE NOT NULL, \n\tQuantity NUMERIC NOT NULL\n)",
+      "file": "Stock.json"
+    },
+    {
+      "name": "StockControl",
+      "row_count": 43,
+      "columns": [
+        "Id",
+        "ProductId",
+        "CustomerId",
+        "ReorderPoint",
+        "PreferredQuantity",
+        "IsLowStockWarningEnabled",
+        "LowStockWarningQuantity"
+      ],
+      "schema": "CREATE TABLE StockControl (\n    Id INTEGER PRIMARY KEY AUTOINCREMENT,\n    ProductId INTEGER CONSTRAINT FK_StockControl_Product REFERENCES Product (Id) ON DELETE CASCADE NOT NULL,\n    CustomerId INTEGER REFERENCES Customer (Id) ON DELETE SET NULL,\n    ReorderPoint NUMERIC NOT NULL DEFAULT (0),\n    PreferredQuantity NUMERIC NOT NULL DEFAULT (0),\n    IsLowStockWarningEnabled INTEGER (1) NOT NULL DEFAULT (1),\n    LowStockWarningQuantity NUMERIC NOT NULL DEFAULT (0)\n)",
+      "file": "StockControl.json"
+    },
+    {
+      "name": "Tax",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name",
+        "Rate",
+        "Code",
+        "IsFixed",
+        "IsTaxOnTotal",
+        "IsEnabled"
+      ],
+      "schema": "CREATE TABLE Tax (Id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, Name TEXT NOT NULL, Rate NUMERIC NOT NULL, Code TEXT, IsFixed INTEGER (1) NOT NULL DEFAULT 0, IsTaxOnTotal INTEGER (1) NOT NULL DEFAULT 0, IsEnabled INTEGER (1) NOT NULL DEFAULT 1)",
+      "file": "Tax.json"
+    },
+    {
+      "name": "Template",
+      "row_count": 2,
+      "columns": [
+        "Id",
+        "Name",
+        "Value"
+      ],
+      "schema": "CREATE TABLE Template (\r\n    Id           INTEGER  PRIMARY KEY AUTOINCREMENT\r\n                          NOT NULL,\r\n    Name         TEXT     NOT NULL,\r\n    Value        TEXT     NOT NULL\r\n)",
+      "file": "Template.json"
+    },
+    {
+      "name": "User",
+      "row_count": 6,
+      "columns": [
+        "Id",
+        "FirstName",
+        "LastName",
+        "Username",
+        "Password",
+        "AccessLevel",
+        "IsEnabled",
+        "Email"
+      ],
+      "schema": "CREATE TABLE User (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, FirstName TEXT, LastName TEXT, Username TEXT, Password TEXT NOT NULL, AccessLevel INTEGER NOT NULL DEFAULT (0), IsEnabled INT (1) NOT NULL DEFAULT 1, Email TEXT)",
+      "file": "User.json"
+    },
+    {
+      "name": "VoidReason",
+      "row_count": 0,
+      "columns": [
+        "Id",
+        "Name",
+        "Rank",
+        "DateCreated"
+      ],
+      "schema": "CREATE TABLE VoidReason (\r\n    Id           INTEGER  PRIMARY KEY AUTOINCREMENT\r\n                          NOT NULL,\r\n    Name         TEXT     NOT NULL,\r\n    Rank         INTEGER  NOT NULL,\r\n    DateCreated  DATETIME NOT NULL\r\n)",
+      "file": "VoidReason.json"
+    },
+    {
+      "name": "Warehouse",
+      "row_count": 1,
+      "columns": [
+        "Id",
+        "Name"
+      ],
+      "schema": "CREATE TABLE Warehouse (Id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, Name TEXT NOT NULL)",
+      "file": "Warehouse.json"
+    },
+    {
+      "name": "ZReport",
+      "row_count": 3,
+      "columns": [
+        "Id",
+        "Number",
+        "FromDocumentId",
+        "ToDocumentId",
+        "DateCreated"
+      ],
+      "schema": "CREATE TABLE ZReport (Id INTEGER PRIMARY KEY AUTOINCREMENT, Number INTEGER NOT NULL, FromDocumentId INTEGER NOT NULL, ToDocumentId INTEGER NOT NULL, DateCreated DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')))",
+      "file": "ZReport.json"
+    },
+    {
+      "name": "sqlite_sequence",
+      "row_count": 28,
+      "columns": [
+        "name",
+        "seq"
+      ],
+      "schema": "CREATE TABLE sqlite_sequence(name,seq)",
+      "file": "sqlite_sequence.json"
+    }
+  ]
+}
