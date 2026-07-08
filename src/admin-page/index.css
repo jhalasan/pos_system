@@ -796,6 +796,51 @@ table.data tbody tr.product-row-out .stock-zero {
 }
 
 .prod-cell { display: flex; align-items: center; gap: 11px; }
+.product-group-row td {
+  background: var(--surface);
+}
+.product-unit-row td {
+  background: var(--surface-2);
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+table.data tbody tr.product-unit-row:hover {
+  background: var(--surface-2);
+}
+.product-unit-row .prod-name {
+  font-weight: 700;
+}
+.product-unit-cell {
+  padding-left: 14px;
+}
+.unit-branch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  color: var(--text-faint);
+  font-size: 16px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.group-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
 .prod-thumb {
   width: 40px; height: 40px; border-radius: 8px;
   background: var(--surface-2); border: 1px solid var(--border);
@@ -807,6 +852,65 @@ table.data tbody tr.product-row-out .stock-zero {
 .prod-name { font-weight: 600; }
 .prod-id { font-size: 11px; color: var(--text-faint); }
 .mono { font-family: 'Consolas', monospace; font-size: 12px; }
+.barcode-stack,
+.stock-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.barcode-stack small,
+.stock-stack small {
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 11px;
+  line-height: 1.25;
+}
+.stock-stack strong {
+  font-size: 13px;
+  line-height: 1.25;
+}
+.stock-see-more {
+  justify-self: center;
+  font-size: 11px;
+}
+.unit-breakdown-row td {
+  background: var(--surface-2);
+  padding: 12px 16px;
+}
+table.data tbody tr.unit-breakdown-row:hover {
+  background: var(--surface-2);
+}
+.unit-breakdown {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+.unit-breakdown-item {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.unit-breakdown-item strong,
+.unit-breakdown-item span,
+.unit-breakdown-item b {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.unit-breakdown-item strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.unit-breakdown-item span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.unit-breakdown-item b {
+  color: var(--text);
+  font-size: 12px;
+}
 
 .icon-btn {
   width: 30px; height: 30px; border-radius: 7px;

@@ -53,13 +53,6 @@ export function normalizeProduct(record, pb) {
   }
 }
 
-function stockDeltaForOp(op) {
-  const qty = Math.max(0, Number(op?.payload?.qty) || 0)
-  if (op?.type === 'scanInventory') return qty
-  if (op?.type === 'stockOutInventory') return -qty
-  return 0
-}
-
 function matchesStockOp(op, cloudProduct, localProduct) {
   if (!['scanInventory', 'stockOutInventory'].includes(op?.type)) return false
   return op.productId === cloudProduct.id
@@ -140,7 +133,11 @@ export async function getProductByBarcode(barcode) {
   const normalizedBarcode = String(barcode || '').trim()
   if (!normalizedBarcode) return undefined
   const product = await adminDb.products
-    .filter((product) => String(product.barcode || '').trim() === normalizedBarcode)
+    .filter((product) => {
+      if (String(product.barcode || '').trim() === normalizedBarcode) return true
+      return Array.isArray(product.sellingUnits)
+        && product.sellingUnits.some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
+    })
     .first()
   return product?.deleted ? undefined : product
 }

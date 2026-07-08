@@ -3,8 +3,68 @@ import Modal from './Modal'
 import { IconImage, IconPlus, IconTrash } from './Icons'
 import { defaultCategories } from '../services/api'
 
-const baseUnitOptions = ['Piece', 'Bottle', 'Sachet', 'Kilogram', 'Liter', 'Pack', 'Box', 'Case', 'Sack', 'Tray']
-const purchaseUnitOptions = ['Box', 'Case', 'Pack', 'Sack', 'Tray', 'Carton', 'Pouch']
+const baseUnitOptions = ['Piece', 'Stick', 'Bottle', 'Sachet', 'Kilogram', 'Liter', 'Pack', 'Box', 'Case', 'Sack', 'Tray', 'Ream', 'Bag', 'Can', 'Jar', 'Roll']
+const purchaseUnitOptions = ['Ream', 'Box', 'Case', 'Pack', 'Sack', 'Tray', 'Carton', 'Pouch', 'Bag', 'Bundle', 'Crate']
+const unitTemplates = [
+  {
+    id: 'custom',
+    name: 'Custom units',
+    description: 'Start blank and enter this product\'s own units.',
+    unit: 'Piece',
+    purchaseUnit: 'Box',
+    conversionQuantity: 1,
+    units: [{ unit: 'Piece', conversion: 1 }],
+  },
+  {
+    id: 'cigarette',
+    name: 'Cigarette: Ream > Pack > Stick',
+    description: '1 ream = 10 packs = 200 sticks.',
+    unit: 'Stick',
+    purchaseUnit: 'Ream',
+    conversionQuantity: 200,
+    units: [
+      { unit: 'Stick', conversion: 1 },
+      { unit: 'Pack', conversion: 20 },
+      { unit: 'Ream', conversion: 200 },
+    ],
+  },
+  {
+    id: 'case-bottle',
+    name: 'Drinks: Case > Bottle',
+    description: 'Common bottle setup, editable per supplier.',
+    unit: 'Bottle',
+    purchaseUnit: 'Case',
+    conversionQuantity: 24,
+    units: [
+      { unit: 'Bottle', conversion: 1 },
+      { unit: 'Case', conversion: 24 },
+    ],
+  },
+  {
+    id: 'box-piece',
+    name: 'Boxed goods: Box > Piece',
+    description: 'For items sold by piece but bought by box.',
+    unit: 'Piece',
+    purchaseUnit: 'Box',
+    conversionQuantity: 12,
+    units: [
+      { unit: 'Piece', conversion: 1 },
+      { unit: 'Box', conversion: 12 },
+    ],
+  },
+  {
+    id: 'sack-kilo',
+    name: 'Rice/Grain: Sack > Kilogram',
+    description: 'For sacks divided into kilos.',
+    unit: 'Kilogram',
+    purchaseUnit: 'Sack',
+    conversionQuantity: 25,
+    units: [
+      { unit: 'Kilogram', conversion: 1 },
+      { unit: 'Sack', conversion: 25 },
+    ],
+  },
+]
 
 const blank = {
   name: '',
@@ -20,6 +80,7 @@ const blank = {
   price: 0,
   isPriceManual: false,
   hasMultipleUnits: false,
+  unitTemplate: 'custom',
 }
 
 function normalizeSellingUnits(rawUnits = [], fallback = {}) {
@@ -45,16 +106,167 @@ function normalizeSellingUnits(rawUnits = [], fallback = {}) {
   }]
 }
 
+function normalizeUnitKey(value) {
+  return String(value || '').trim().toLowerCase()
+}
+
+function unitLabel(value, quantity = 2) {
+  const label = String(value || 'unit').trim() || 'unit'
+  const irregular = {
+    box: 'Boxes',
+    piece: 'Pieces',
+    kilo: 'Kilos',
+    kilogram: 'Kilograms',
+    tray: 'Trays',
+  }
+  if (Number(quantity) === 1 || /s$/i.test(label)) return label
+  const mapped = irregular[normalizeUnitKey(label)]
+  if (mapped) return mapped
+  return `${label}s`
+}
+
+function stockInputLabel(form) {
+  if (!form.hasMultipleUnits) return 'Starting Stock'
+  return `Starting Stock (${unitLabel(form.purchaseUnit)})`
+}
+
+function stockInputHelp(form, baseInventoryPreview) {
+  if (!form.hasMultipleUnits) return ''
+  const stockCount = Number(form.initialStock) || 0
+  const purchaseUnits = unitLabel(form.purchaseUnit, stockCount)
+  const baseUnits = unitLabel(form.unit, baseInventoryPreview)
+  return `${stockCount} ${purchaseUnits} received = ${baseInventoryPreview} ${baseUnits} in inventory`
+}
+
+function defaultPurchaseConversion(unit, purchaseUnit, currentConversion) {
+  const baseUnit = normalizeUnitKey(unit)
+  const buyingUnit = normalizeUnitKey(purchaseUnit)
+  const conversion = Number(currentConversion)
+  if (baseUnit === 'stick' && buyingUnit === 'ream' && (!Number.isFinite(conversion) || conversion <= 1)) return 200
+  return currentConversion
+}
+
+function ensurePurchaseUnitRow(nextForm, currentRows = []) {
+  if (!nextForm.hasMultipleUnits) return currentRows
+
+  const purchaseUnit = String(nextForm.purchaseUnit || '').trim()
+  const baseUnit = String(nextForm.unit || 'Piece').trim() || 'Piece'
+  const conversionQuantity = Number(nextForm.conversionQuantity)
+  if (!purchaseUnit || normalizeUnitKey(purchaseUnit) === normalizeUnitKey(baseUnit) || !Number.isFinite(conversionQuantity) || conversionQuantity <= 1) {
+    return currentRows
+  }
+
+  const purchasePrice = deriveSellingPrice(Number(nextForm.cost), Number(nextForm.profitMargin), conversionQuantity, conversionQuantity)
+  const existingIndex = currentRows.findIndex((row, index) => (
+    index > 0
+    && (
+      normalizeUnitKey(row.unit) === normalizeUnitKey(purchaseUnit)
+      || Number(row.conversion) === conversionQuantity
+    )
+  ))
+
+  if (existingIndex >= 0) {
+    return currentRows.map((row, index) => {
+      if (index !== existingIndex) return row
+      return {
+        ...row,
+        unit: purchaseUnit,
+        conversion: conversionQuantity,
+        price: row.isPriceManual ? row.price : purchasePrice,
+      }
+    })
+  }
+
+  return [
+    ...currentRows,
+    {
+      barcode: '',
+      unit: purchaseUnit,
+      conversion: conversionQuantity,
+      price: purchasePrice,
+      isPriceManual: false,
+    },
+  ]
+}
+
+function ensureSellingRows(nextForm, currentRows = []) {
+  return ensurePurchaseUnitRow(nextForm, currentRows)
+}
+
+function detectUnitTemplate({ unit, purchaseUnit, conversionQuantity, sellingUnits = [] }) {
+  const baseKey = normalizeUnitKey(unit)
+  const purchaseKey = normalizeUnitKey(purchaseUnit)
+  const conversion = Number(conversionQuantity)
+  const rowKeys = sellingUnits
+    .map((row) => `${normalizeUnitKey(row.unit)}:${Number(row.conversion) || 1}`)
+    .sort()
+    .join('|')
+
+  const match = unitTemplates.find((template) => {
+    if (template.id === 'custom') return false
+    const templateRows = template.units
+      .map((row) => `${normalizeUnitKey(row.unit)}:${Number(row.conversion) || 1}`)
+      .sort()
+      .join('|')
+
+    return (
+      normalizeUnitKey(template.unit) === baseKey
+      && normalizeUnitKey(template.purchaseUnit) === purchaseKey
+      && Number(template.conversionQuantity) === conversion
+      && templateRows === rowKeys
+    )
+  })
+
+  return match?.id || 'custom'
+}
+
+function inferUnitStructure(product, rawSellingUnits = []) {
+  const savedBaseUnit = String(product?.unit || '').trim()
+  const savedPurchaseUnit = String(product?.purchaseUnit || product?.purchase_unit || '').trim()
+  const savedConversion = Number(product?.conversionQuantity ?? product?.conversion_quantity)
+  const parsedUnits = Array.isArray(rawSellingUnits)
+    ? rawSellingUnits
+      .map((row) => ({
+        unit: String(row?.unit || '').trim(),
+        conversion: Number(row?.conversion) > 0 ? Number(row.conversion) : 1,
+      }))
+      .filter((row) => row.unit)
+    : []
+
+  const baseRow = parsedUnits.find((row) => row.conversion === 1)
+  const largestRow = parsedUnits.reduce((largest, row) => (
+    row.conversion > (largest?.conversion || 0) ? row : largest
+  ), null)
+  const hasMultipleRows = parsedUnits.length > 1
+
+  const baseUnit = baseRow?.unit || savedBaseUnit || 'Piece'
+  const purchaseUnit = savedPurchaseUnit || (hasMultipleRows && largestRow?.conversion > 1 ? largestRow.unit : '') || 'Box'
+  const conversionQuantity = Number.isFinite(savedConversion) && savedConversion > 1
+    ? savedConversion
+    : (hasMultipleRows && largestRow?.conversion > 1 ? largestRow.conversion : 1)
+
+  return { baseUnit, purchaseUnit, conversionQuantity }
+}
+
 function buildInitialForm(product, categories) {
-  const baseUnit = String(product?.unit || 'Piece').trim() || 'Piece'
-  const purchaseUnit = String(product?.purchaseUnit || product?.purchase_unit || 'Box').trim() || 'Box'
-  const conversionQuantity = Number(product?.conversionQuantity ?? product?.conversion_quantity ?? 1)
+  const rawSellingUnits = product?.sellingUnits || product?.selling_units || []
+  const { baseUnit, purchaseUnit, conversionQuantity } = inferUnitStructure(product, rawSellingUnits)
   const costValue = Number(product?.cost) || Number(product?.price) || 0
   const marginValue = Number(product?.profitMargin) || 0
-  const isMultipleUnits = Boolean(product?.hasMultipleUnits ?? product?.has_multiple_units ?? false)
+  const hasSellingUnitRows = Array.isArray(rawSellingUnits) && rawSellingUnits.length > 1
+  const isMultipleUnits = Boolean((product?.hasMultipleUnits ?? product?.has_multiple_units) || hasSellingUnitRows || conversionQuantity > 1)
   const defaultPrice = deriveSellingPrice(costValue, marginValue, 1, Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1)
-  const initialSellingUnits = normalizeSellingUnits(product?.sellingUnits || product?.selling_units || [], { barcode: product?.barcode || '', unit: baseUnit })
+  const initialSellingUnits = normalizeSellingUnits(rawSellingUnits, { barcode: product?.barcode || '', unit: baseUnit })
     .map((unit, index) => (index === 0 ? { ...unit, price: defaultPrice, isPriceManual: false } : unit))
+
+  const preparedSellingUnits = ensureSellingRows({
+    hasMultipleUnits: isMultipleUnits,
+    purchaseUnit,
+    unit: baseUnit,
+    conversionQuantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
+    cost: costValue,
+    profitMargin: marginValue,
+  }, initialSellingUnits)
 
   return {
     ...blank,
@@ -72,7 +284,13 @@ function buildInitialForm(product, categories) {
     price: defaultPrice,
     isPriceManual: false,
     hasMultipleUnits: isMultipleUnits,
-    sellingUnits: initialSellingUnits,
+    unitTemplate: isMultipleUnits ? detectUnitTemplate({
+      unit: baseUnit,
+      purchaseUnit,
+      conversionQuantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
+      sellingUnits: preparedSellingUnits,
+    }) : 'custom',
+    sellingUnits: preparedSellingUnits,
   }
 }
 
@@ -144,19 +362,25 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       return row
     })
 
-    return { normalizedRows, baseUnitPrice }
+    return { normalizedRows: ensureSellingRows(nextForm, normalizedRows), baseUnitPrice }
   }
 
   function setFormValue(key, value) {
     setForm((prev) => {
       const next = { ...prev, [key]: value }
+      if (['unit', 'purchaseUnit', 'conversionQuantity'].includes(key)) {
+        next.unitTemplate = 'custom'
+      }
+      if (key === 'unit' || key === 'purchaseUnit' || key === 'hasMultipleUnits') {
+        next.conversionQuantity = defaultPurchaseConversion(next.unit, next.purchaseUnit, next.conversionQuantity)
+      }
 
       if (key === 'barcode') {
         setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, barcode: String(value || '').trim() } : row)))
       }
 
       if (key === 'unit') {
-        setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row)))
+        setSellingUnits((current) => ensureSellingRows(next, current.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row))))
       }
 
       if (key === 'cost' || key === 'profitMargin' || key === 'conversionQuantity') {
@@ -175,6 +399,10 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           price: deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
           isPriceManual: false,
         } : row)))
+      }
+
+      if ((key === 'hasMultipleUnits' && value) || key === 'purchaseUnit') {
+        setSellingUnits((current) => ensureSellingRows(next, current))
       }
 
       return next
@@ -217,6 +445,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
   function addSellingUnit() {
     const basePrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
+    setFormValue('unitTemplate', 'custom')
 
     setSellingUnits((current) => [
       ...current,
@@ -232,10 +461,12 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
   function removeSellingUnit(index) {
     if (sellingUnits.length === 1) return
+    setFormValue('unitTemplate', 'custom')
     setSellingUnits((current) => current.filter((_, idx) => idx !== index))
   }
 
   function updateSellingUnit(index, key, value) {
+    setFormValue('unitTemplate', 'custom')
     setSellingUnits((current) => current.map((row, idx) => {
       if (idx !== index) return row
       if (key === 'price') {
@@ -260,6 +491,44 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     }))
   }
 
+  function applyUnitTemplate(templateId) {
+    const template = unitTemplates.find((item) => item.id === templateId)
+    if (!template) return
+
+    if (template.id === 'custom') {
+      setFormValue('unitTemplate', 'custom')
+      return
+    }
+
+    const nextForm = {
+      ...form,
+      hasMultipleUnits: true,
+      unitTemplate: template.id,
+      unit: template.unit,
+      purchaseUnit: template.purchaseUnit,
+      conversionQuantity: template.conversionQuantity,
+    }
+
+    const rowsByUnit = new Map(sellingUnits.map((row) => [normalizeUnitKey(row.unit), row]))
+    const rowsByConversion = new Map(sellingUnits.map((row) => [Number(row.conversion) || 1, row]))
+    const templateRows = template.units.map((templateUnit, index) => {
+      const existing = rowsByUnit.get(normalizeUnitKey(templateUnit.unit)) || rowsByConversion.get(Number(templateUnit.conversion) || 1)
+      return {
+        barcode: index === 0 ? String(form.barcode || existing?.barcode || '').trim() : String(existing?.barcode || '').trim(),
+        unit: templateUnit.unit,
+        conversion: templateUnit.conversion,
+        price: existing?.isPriceManual
+          ? existing.price
+          : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), Number(templateUnit.conversion), Number(template.conversionQuantity)),
+        isPriceManual: Boolean(existing?.isPriceManual),
+      }
+    })
+
+    const { normalizedRows, baseUnitPrice } = updateSellingRows(nextForm, templateRows)
+    setForm({ ...nextForm, price: nextForm.isPriceManual ? nextForm.price : baseUnitPrice })
+    setSellingUnits(normalizedRows)
+  }
+
   function submit() {
     const costValue = Number(form.cost)
     const marginValue = Number(form.profitMargin)
@@ -279,11 +548,13 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       if (!String(form.barcode || '').trim()) { alert('Barcode is required for single-unit products.'); return }
     } else {
       if (!String(form.purchaseUnit || '').trim()) { alert('Purchase unit is required.'); return }
-      if (!Number.isFinite(conversionQuantity) || conversionQuantity <= 0) { alert('Units per purchase unit must be greater than zero.'); return }
+      if (!Number.isFinite(conversionQuantity) || conversionQuantity <= 1) { alert('Units per purchase unit must be greater than 1 for multi-unit products.'); return }
+      if (normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)) { alert('Purchase unit must be larger than the smallest inventory unit.'); return }
     }
 
+    const submitSellingUnits = ensureSellingRows(form, sellingUnits)
     const unitRows = form.hasMultipleUnits
-      ? sellingUnits.map((row) => ({
+      ? submitSellingUnits.map((row) => ({
         barcode: String(row.barcode || '').trim(),
         unit: String(row.unit || '').trim(),
         conversion: Number(row.conversion) > 0 ? Number(row.conversion) : 1,
@@ -337,9 +608,18 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
   const baseUnitCost = Number(form.conversionQuantity) > 0 ? Number(form.cost) / Number(form.conversionQuantity) : Number(form.cost)
   const retailPrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
+  const hasSamePurchaseAndBaseUnit = form.hasMultipleUnits && normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)
   const conversionText = form.hasMultipleUnits && form.purchaseUnit && form.unit && Number(form.conversionQuantity) > 0
-    ? `1 ${form.purchaseUnit || 'Purchase Unit'} = ${Number(form.conversionQuantity) || 0} ${form.unit || 'Base Unit'}`
+    ? `1 ${form.purchaseUnit || 'Purchase Unit'} = ${Number(form.conversionQuantity) || 0} ${unitLabel(form.unit, Number(form.conversionQuantity))}`
     : ''
+  const baseInventoryPreview = resolveInventoryBaseQty(Number(form.initialStock), Number(form.conversionQuantity))
+  const selectableBaseUnits = Array.from(new Set([...baseUnitOptions, form.unit].filter(Boolean)))
+  const selectablePurchaseUnits = Array.from(new Set([
+    ...purchaseUnitOptions,
+    ...baseUnitOptions,
+    ...sellingUnits.map((row) => row.unit),
+    form.purchaseUnit,
+  ].filter(Boolean)))
 
   return (
     <Modal
@@ -396,16 +676,23 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             {categories.map((c) => <option key={c}>{c}</option>)}
           </select>
         </div>
-        <div className="field">
-          <label>Base Unit</label>
-          <select className="select" value={form.unit} onChange={set('unit')}>
-            {baseUnitOptions.map((u) => <option key={u}>{u}</option>)}
-          </select>
-        </div>
+        {!form.hasMultipleUnits ? (
+          <div className="field">
+            <label>Base Unit</label>
+            <select className="select" value={form.unit} onChange={set('unit')}>
+              {selectableBaseUnits.map((u) => <option key={u}>{u}</option>)}
+            </select>
+          </div>
+        ) : null}
 
         <div className="field">
-          <label>Initial Stock</label>
+          <label>{stockInputLabel(form)}</label>
           <input className="input" type="number" min="0" value={form.initialStock} onChange={(e) => setFormValue('initialStock', e.target.value)} />
+          {form.hasMultipleUnits ? (
+            <small style={{ marginTop: 2 }}>
+              {stockInputHelp(form, baseInventoryPreview)}
+            </small>
+          ) : null}
         </div>
 
         {!form.hasMultipleUnits ? (
@@ -416,7 +703,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         ) : null}
 
         <div className="field">
-          <label>Cost of Goods Sold</label>
+          <label>{form.hasMultipleUnits ? `Purchase Cost per ${form.purchaseUnit || 'Purchase Unit'}` : `Cost per ${form.unit || 'Unit'}`}</label>
           <input
             className="input"
             type="number"
@@ -453,10 +740,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             <table className="data" style={{ width: '100%' }}>
               <tbody>
                 {form.hasMultipleUnits ? (
-                  <tr><td><strong>Conversion</strong></td><td>{conversionText || '—'}</td></tr>
+                  <tr><td><strong>Purchase Conversion</strong></td><td>{conversionText || '-'}</td></tr>
                 ) : null}
-                <tr><td><strong>Cost per {form.unit || 'Base Unit'}</strong></td><td>{baseUnitCost > 0 ? `₱${baseUnitCost.toFixed(2)}` : '—'}</td></tr>
-                <tr><td><strong>Retail Price per {form.unit || 'Base Unit'}</strong></td><td>{retailPrice > 0 ? `₱${retailPrice.toFixed(2)}` : '—'}</td></tr>
+                <tr><td><strong>Total Base Stock</strong></td><td>{baseInventoryPreview} {unitLabel(form.unit, baseInventoryPreview)}</td></tr>
+                <tr><td><strong>Cost per {form.unit || 'Base Unit'}</strong></td><td>{baseUnitCost > 0 ? `PHP ${baseUnitCost.toFixed(2)}` : '-'}</td></tr>
+                <tr><td><strong>Retail Price per {form.unit || 'Base Unit'}</strong></td><td>{retailPrice > 0 ? `PHP ${retailPrice.toFixed(2)}` : '-'}</td></tr>
               </tbody>
             </table>
           </div>
@@ -471,27 +759,52 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
         {form.hasMultipleUnits ? (
           <>
+            <div className="field span-2">
+              <label>Unit Template</label>
+              <select className="select" value={form.unitTemplate || 'custom'} onChange={(e) => applyUnitTemplate(e.target.value)}>
+                {unitTemplates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+              </select>
+              <small>{unitTemplates.find((template) => template.id === (form.unitTemplate || 'custom'))?.description}</small>
+            </div>
+
+            <div className="field span-2">
+              <label>Largest Stock Unit</label>
+              <input
+                className="input"
+                list="largest-unit-options"
+                placeholder="e.g. Ream"
+                value={form.purchaseUnit}
+                onChange={set('purchaseUnit')}
+              />
+              <datalist id="largest-unit-options">
+                {selectablePurchaseUnits.map((u) => <option key={u} value={u} />)}
+              </datalist>
+              {hasSamePurchaseAndBaseUnit ? (
+                <small>Pick a template or set a larger purchase unit so stock can convert correctly.</small>
+              ) : null}
+            </div>
+
             <div className="field">
-              <label>Purchase Unit</label>
-              <select className="select" value={form.purchaseUnit} onChange={set('purchaseUnit')}>
-                {purchaseUnitOptions.map((u) => <option key={u}>{u}</option>)}
+              <label>Smallest Inventory Unit</label>
+              <select className="select" value={form.unit} onChange={set('unit')}>
+                {selectableBaseUnits.map((u) => <option key={u}>{u}</option>)}
               </select>
             </div>
             <div className="field">
-              <label>Units per Purchase Unit</label>
+              <label>{form.unit ? `${unitLabel(form.unit)} inside 1 ${form.purchaseUnit || 'Purchase Unit'}` : 'Units per Purchase Unit'}</label>
               <input className="input" type="number" min="1" value={form.conversionQuantity} onChange={(e) => setFormNumberValue('conversionQuantity', e.target.value)} />
               {conversionText ? <small style={{ display: 'block', marginTop: 6 }}>{conversionText}</small> : null}
             </div>
 
             <div className="field span-2">
-              <label>Additional Selling Units</label>
+              <label>Selling Units & Barcodes</label>
               <div className="table-wrap" style={{ border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
                 <table className="data" style={{ width: '100%' }}>
                   <thead>
                     <tr>
                       <th>Barcode</th>
                       <th>Unit</th>
-                      <th>Quantity</th>
+                      <th>{unitLabel(form.unit)} per Unit</th>
                       <th>Selling Price</th>
                       <th style={{ width: 48 }}></th>
                     </tr>

@@ -15,6 +15,148 @@ const stockOutReasons = {
   other: 'Other stock-out',
 }
 
+function normalizeSellingUnits(product = {}) {
+  const rawUnits = Array.isArray(product.sellingUnits)
+    ? product.sellingUnits
+    : (Array.isArray(product.selling_units) ? product.selling_units : [])
+  const fallbackUnit = String(product.unit || 'Piece').trim() || 'Piece'
+  const fallbackBarcode = String(product.barcode || '').trim()
+  const fallbackPrice = Number(product.price) || 0
+
+  const units = rawUnits.length > 0
+    ? rawUnits.map((unit) => ({
+      barcode: String(unit?.barcode || '').trim(),
+      unit: String(unit?.unit || '').trim() || fallbackUnit,
+      conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
+      price: Number(unit?.price) || fallbackPrice,
+    }))
+    : []
+
+  const purchaseUnit = String(product.purchaseUnit || product.purchase_unit || '').trim()
+  const purchaseConversion = Number(product.conversionQuantity ?? product.conversion_quantity)
+  if (purchaseUnit && purchaseConversion > 1 && purchaseUnit.toLowerCase() !== fallbackUnit.toLowerCase()) {
+    const hasPurchaseUnit = units.some((unit) => (
+      unit.unit.toLowerCase() === purchaseUnit.toLowerCase()
+      || Number(unit.conversion) === purchaseConversion
+    ))
+    if (!hasPurchaseUnit) {
+      units.push({
+        barcode: '',
+        unit: purchaseUnit,
+        conversion: purchaseConversion,
+        price: fallbackPrice * purchaseConversion,
+      })
+    }
+  }
+
+  if (units.length > 0) return units
+
+  return [{
+    barcode: fallbackBarcode,
+    unit: fallbackUnit,
+    conversion: 1,
+    price: fallbackPrice,
+  }]
+}
+
+function matchSellingUnit(product, barcode) {
+  const code = String(barcode || '').trim()
+  if (!code) return null
+  return normalizeSellingUnits(product).find((unit) => String(unit.barcode || '').trim() === code) || null
+}
+
+function productMatchesBarcode(product, barcode) {
+  return Boolean(matchSellingUnit(product, barcode) || String(product.barcode || '').trim() === String(barcode || '').trim())
+}
+
+function findProductByBarcode(products, barcode) {
+  const code = String(barcode || '').trim()
+  if (!code) return null
+  return products.find((product) => productMatchesBarcode(product, code)) || null
+}
+
+function productMatchesQuery(product, query) {
+  const q = String(query || '').trim().toLowerCase()
+  if (!q) return false
+  return product.name.toLowerCase().includes(q)
+    || String(product.barcode || '').toLowerCase().includes(q)
+    || normalizeSellingUnits(product).some((unit) => (
+      String(unit.barcode || '').toLowerCase().includes(q)
+      || String(unit.unit || '').toLowerCase().includes(q)
+    ))
+}
+
+function scannedUnitLabel(product, barcode) {
+  const unit = matchSellingUnit(product, barcode)
+  return unit?.unit || product?.unit || 'unit(s)'
+}
+
+function scannedUnitConversion(product, barcode) {
+  const unit = matchSellingUnit(product, barcode)
+  return Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1
+}
+
+function unitOptionValue(unit, index = 0) {
+  const barcode = String(unit?.barcode || '').trim()
+  if (barcode) return `barcode:${barcode}`
+  return `unit:${String(unit?.unit || 'Unit').trim()}:${Number(unit?.conversion) || 1}:${index}`
+}
+
+function unitFromOption(product, optionValue, fallbackBarcode = '') {
+  const units = normalizeSellingUnits(product)
+  if (!product || units.length === 0) return null
+  if (optionValue?.startsWith('barcode:')) {
+    const barcode = optionValue.slice('barcode:'.length)
+    return units.find((unit) => String(unit.barcode || '').trim() === barcode) || units[0]
+  }
+  if (optionValue?.startsWith('unit:')) {
+    const [, unitName, conversion] = optionValue.split(':')
+    const normalizedConversion = Number(conversion)
+    return units.find((unit) => (
+      String(unit.unit || '').trim() === unitName
+      && Number(unit.conversion) === normalizedConversion
+    )) || units[0]
+  }
+  return matchSellingUnit(product, fallbackBarcode) || units[0]
+}
+
+function scanPayloadForUnit(product, unit, qty) {
+  return {
+    productId: product?.id || '',
+    barcode: String(unit?.barcode || '').trim(),
+    unitConversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
+    unitLabel: String(unit?.unit || product?.unit || 'unit(s)').trim(),
+    qty,
+  }
+}
+
+function formatQty(value) {
+  return Number(value || 0).toLocaleString('en-PH')
+}
+
+function pluralizeUnit(unit, quantity) {
+  const cleanUnit = String(unit || 'unit').trim() || 'unit'
+  if (Number(quantity) === 1 || /s$/i.test(cleanUnit)) return cleanUnit
+  return `${cleanUnit}s`
+}
+
+function unitEquivalentText(product, unit, qty = 1) {
+  if (!product || !unit) return ''
+  const baseQty = Math.max(1, Number(qty) || 1) * (Number(unit.conversion) > 0 ? Number(unit.conversion) : 1)
+  const units = normalizeSellingUnits(product)
+    .filter((candidate) => Number(candidate.conversion) > 0 && baseQty >= Number(candidate.conversion))
+    .sort((a, b) => Number(b.conversion) - Number(a.conversion))
+
+  const parts = units.map((candidate) => {
+    const count = baseQty / Number(candidate.conversion)
+    if (!Number.isInteger(count)) return null
+    return `${formatQty(count)} ${pluralizeUnit(candidate.unit, count)}`
+  }).filter(Boolean)
+
+  if (parts.length === 0) return `${formatQty(baseQty)} ${pluralizeUnit(product.unit, baseQty)}`
+  return parts.join(' = ')
+}
+
 function pdfEscape(value) {
   return String(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
 }
@@ -69,6 +211,7 @@ export default function Inventory() {
   const stockOutRef = useRef(null)
   const [inventoryTab, setInventoryTab] = useState('stock-in')
   const [barcode, setBarcode] = useState('')
+  const [stockInUnit, setStockInUnit] = useState('')
   const [qty, setQty] = useState(1)
   const [feed, setFeed] = useState([])
   const [scanMode, setScanMode] = useState('instant')
@@ -78,6 +221,7 @@ export default function Inventory() {
   const [newProductBarcode, setNewProductBarcode] = useState('')
   const [toast, setToast] = useState('')
   const [stockOutBarcode, setStockOutBarcode] = useState('')
+  const [stockOutUnit, setStockOutUnit] = useState('')
   const [stockOutQty, setStockOutQty] = useState(1)
   const [stockOutMode, setStockOutMode] = useState('batch')
   const [stockOutReason, setStockOutReason] = useState('expired')
@@ -97,47 +241,53 @@ export default function Inventory() {
       ...products.map((p) => p.category).filter(Boolean),
     ])]
   }, [categoryRecords, products])
-  const scannedUnits = feed.reduce((s, f) => s + f.qty, 0)
-  const batchUnits = batchItems.reduce((s, item) => s + item.qty, 0)
+  const scannedUnits = feed.reduce((s, f) => s + (Number(f.baseQty) || Number(f.qty) || 0), 0)
+  const batchUnits = batchItems.reduce((s, item) => s + (Number(item.baseQty) || Number(item.qty) || 0), 0)
   const sessionUnits = scannedUnits + batchUnits
-  const stockOutBatchUnits = stockOutBatch.reduce((s, item) => s + item.qty, 0)
-  const stockOutSessionUnits = stockOutFeed.reduce((s, item) => s + item.qty, 0) + stockOutBatchUnits
+  const stockOutBatchUnits = stockOutBatch.reduce((s, item) => s + (Number(item.baseQty) || Number(item.qty) || 0), 0)
+  const stockOutSessionUnits = stockOutFeed.reduce((s, item) => s + (Number(item.baseQty) || Number(item.qty) || 0), 0) + stockOutBatchUnits
   const pendingById = useMemo(() => {
-    return batchItems.reduce((map, item) => ({ ...map, [item.id]: item.qty }), {})
+    return batchItems.reduce((map, item) => ({ ...map, [item.id]: (map[item.id] || 0) + (Number(item.baseQty) || Number(item.qty) || 0) }), {})
   }, [batchItems])
   const scannedProduct = useMemo(() => {
     const code = barcode.trim()
     if (!code) return null
-    return products.find((p) => String(p.barcode || '') === code) || null
+    return findProductByBarcode(products, code)
   }, [barcode, products])
+  const stockInUnitOptions = useMemo(() => (
+    scannedProduct ? normalizeSellingUnits(scannedProduct) : []
+  ), [scannedProduct])
+  const selectedStockInUnit = useMemo(() => (
+    scannedProduct ? unitFromOption(scannedProduct, stockInUnit, barcode.trim()) : null
+  ), [scannedProduct, stockInUnit, barcode])
   const barcodeMatches = useMemo(() => {
     const query = barcode.trim().toLowerCase()
     if (!query || scannedProduct) return []
     return products
-      .filter((p) => (
-        String(p.barcode || '').toLowerCase().includes(query) ||
-        p.name.toLowerCase().includes(query)
-      ))
+      .filter((p) => productMatchesQuery(p, query))
       .slice(0, 6)
   }, [barcode, products, scannedProduct])
   const hasUnknownBarcode = barcode.trim() && !scannedProduct
   const stockOutProduct = useMemo(() => {
     const code = stockOutBarcode.trim()
     if (!code) return null
-    return products.find((p) => String(p.barcode || '') === code) || null
+    return findProductByBarcode(products, code)
   }, [stockOutBarcode, products])
+  const stockOutUnitOptions = useMemo(() => (
+    stockOutProduct ? normalizeSellingUnits(stockOutProduct) : []
+  ), [stockOutProduct])
+  const selectedStockOutUnit = useMemo(() => (
+    stockOutProduct ? unitFromOption(stockOutProduct, stockOutUnit, stockOutBarcode.trim()) : null
+  ), [stockOutProduct, stockOutUnit, stockOutBarcode])
   const stockOutMatches = useMemo(() => {
     const query = stockOutBarcode.trim().toLowerCase()
     if (!query || stockOutProduct) return []
     return products
-      .filter((p) => (
-        String(p.barcode || '').toLowerCase().includes(query) ||
-        p.name.toLowerCase().includes(query)
-      ))
+      .filter((p) => productMatchesQuery(p, query))
       .slice(0, 6)
   }, [products, stockOutBarcode, stockOutProduct])
   const pendingStockOutById = useMemo(() => {
-    return stockOutBatch.reduce((map, item) => ({ ...map, [item.id]: item.qty }), {})
+    return stockOutBatch.reduce((map, item) => ({ ...map, [item.id]: (map[item.id] || 0) + (Number(item.baseQty) || Number(item.qty) || 0) }), {})
   }, [stockOutBatch])
 
   function focusBarcode() {
@@ -165,13 +315,26 @@ export default function Inventory() {
     return matched ? next : [updated, ...next]
   }
 
-  function addToBatch(product, count) {
+  function addToBatch(product, unit, count) {
+    const selectedUnit = unit || matchSellingUnit(product, barcode.trim()) || normalizeSellingUnits(product)[0]
+    const scannedBarcode = String(selectedUnit?.barcode || '').trim()
+    const unitKey = unitOptionValue(selectedUnit)
+    const conversion = Number(selectedUnit?.conversion) > 0 ? Number(selectedUnit.conversion) : scannedUnitConversion(product, scannedBarcode)
+    const baseQty = count * conversion
+    const unitLabel = selectedUnit?.unit || scannedUnitLabel(product, scannedBarcode)
+    const equivalentText = unitEquivalentText(product, selectedUnit, count)
     setBatchItems((items) => {
-      const existing = items.find((item) => item.id === product.id)
+      const existing = items.find((item) => item.id === product.id && item.unitKey === unitKey)
       if (existing) {
         return items.map((item) => (
-          item.id === product.id
-            ? { ...item, qty: item.qty + count, lastScannedAt: new Date() }
+          item.id === product.id && item.unitKey === unitKey
+            ? {
+              ...item,
+              qty: item.qty + count,
+              baseQty: item.baseQty + baseQty,
+              equivalentText: unitEquivalentText(product, selectedUnit, item.qty + count),
+              lastScannedAt: new Date(),
+            }
             : item
         ))
       }
@@ -181,11 +344,17 @@ export default function Inventory() {
           id: product.id,
           sku: product.sku || product.id,
           name: product.name,
-          barcode: product.barcode,
+          barcode: scannedBarcode,
+          unitKey,
           category: product.category,
           currentQty: Number(product.qty) || 0,
-          unit: product.unit || 'unit(s)',
+          unit: unitLabel,
+          baseUnit: product.unit || 'unit(s)',
+          sellingUnits: normalizeSellingUnits(product),
+          conversion,
           qty: count,
+          baseQty,
+          equivalentText,
           lastScannedAt: new Date(),
         },
         ...items,
@@ -193,10 +362,17 @@ export default function Inventory() {
     })
   }
 
-  function updateBatchItemQty(productId, value) {
+  function updateBatchItemQty(productId, itemUnitKey, value) {
     const nextQty = Math.max(1, Math.floor(Number(value) || 1))
     setBatchItems((items) => items.map((item) => (
-      item.id === productId ? { ...item, qty: nextQty } : item
+      item.id === productId && item.unitKey === itemUnitKey
+        ? {
+          ...item,
+          qty: nextQty,
+          baseQty: nextQty * (Number(item.conversion) || 1),
+          equivalentText: unitEquivalentText({ ...item, unit: item.baseUnit }, item, nextQty),
+        }
+        : item
     )))
   }
 
@@ -212,24 +388,35 @@ export default function Inventory() {
         focusBarcode()
         return
       }
-      addToBatch(scannedProduct, stockInQty)
+      addToBatch(scannedProduct, selectedStockInUnit, stockInQty)
       setBarcode('')
       setScanError('')
-      flash(`Counted ${stockInQty} unit(s) for ${scannedProduct.name}.`)
+      flash(`Counted ${stockInQty} ${selectedStockInUnit?.unit || scannedProduct.unit || 'unit(s)'} for ${scannedProduct.name}.`)
+      focusBarcode()
+      return
+    }
+
+    if (!scannedProduct) {
+      setScanError(`No product found for barcode "${code}".`)
       focusBarcode()
       return
     }
 
     try {
-      const updated = await api.scanInventory({ barcode: code, qty: stockInQty })
+      const payload = scanPayloadForUnit(scannedProduct, selectedStockInUnit, stockInQty)
+      const equivalentText = unitEquivalentText(scannedProduct, selectedStockInUnit, stockInQty)
+      const updated = await api.scanInventory(payload)
       setProducts((current) => mergeUpdatedProduct(current, updated))
       setFeed((f) => [
         {
           key: `${Date.now()}-${updated.id}`,
           name: updated.name,
           id: updated.sku || updated.id,
-          barcode: updated.barcode,
+          barcode: payload.barcode || code,
           qty: stockInQty,
+          unit: payload.unitLabel,
+          baseQty: stockInQty * payload.unitConversion,
+          equivalentText,
           newQty: updated.qty,
           time: new Date(),
         },
@@ -237,7 +424,7 @@ export default function Inventory() {
       ])
       setBarcode('')
       setScanError('')
-      flash(`Added ${stockInQty} unit(s) to ${updated.name}.`)
+      flash(`Added ${stockInQty} ${payload.unitLabel} to ${updated.name}.`)
       focusBarcode()
     } catch (err) {
       setScanError(err.message || `No product found for barcode "${code}".`)
@@ -256,14 +443,23 @@ export default function Inventory() {
       const confirmedFeed = []
 
       for (const item of batchItems) {
-        const updated = await api.scanInventory({ barcode: item.barcode, qty: item.qty })
+        const updated = await api.scanInventory({
+          barcode: item.barcode,
+          productId: item.id,
+          unitConversion: item.conversion,
+          unitLabel: item.unit,
+          qty: item.qty,
+        })
         nextProducts = mergeUpdatedProduct(nextProducts, updated)
         confirmedFeed.push({
           key: `${Date.now()}-${updated.id}`,
           name: updated.name,
           id: updated.sku || updated.id,
-          barcode: updated.barcode,
+          barcode: item.barcode || updated.barcode,
           qty: item.qty,
+          unit: item.unit,
+          baseQty: item.baseQty,
+          equivalentText: item.equivalentText,
           newQty: updated.qty,
           time: new Date(),
         })
@@ -272,7 +468,7 @@ export default function Inventory() {
       setProducts(nextProducts)
       setFeed((f) => [...confirmedFeed, ...f].slice(0, 15))
       setBatchItems([])
-      flash(`Confirmed ${batchUnits} unit(s) across ${batchItems.length} product(s).`)
+      flash(`Confirmed ${batchUnits} ${batchItems[0]?.baseUnit || 'base unit(s)'} across ${batchItems.length} line(s).`)
       focusBarcode()
     } catch (err) {
       setScanError(err.message || 'Unable to confirm stock-in batch.')
@@ -291,19 +487,35 @@ export default function Inventory() {
     return Math.max(0, (Number(product.qty) || 0) - (pendingStockOutById[product.id] || 0))
   }
 
-  function addToStockOutBatch(product, count) {
+  function addToStockOutBatch(product, unit, count) {
+    const selectedUnit = unit || matchSellingUnit(product, stockOutBarcode.trim()) || normalizeSellingUnits(product)[0]
+    const scannedBarcode = String(selectedUnit?.barcode || '').trim()
+    const unitKey = unitOptionValue(selectedUnit)
+    const conversion = Number(selectedUnit?.conversion) > 0 ? Number(selectedUnit.conversion) : scannedUnitConversion(product, scannedBarcode)
+    const baseQty = count * conversion
+    const unitLabel = selectedUnit?.unit || scannedUnitLabel(product, scannedBarcode)
+    const equivalentText = unitEquivalentText(product, selectedUnit, count)
     const available = stockOutAvailable(product)
-    if (available < count) {
+    if (available < baseQty) {
       setStockOutError(`"${product.name}" has only ${available} available item(s) after pending stock-out.`)
       return false
     }
 
     setStockOutBatch((items) => {
-      const existing = items.find((item) => item.id === product.id)
+      const existing = items.find((item) => item.id === product.id && item.unitKey === unitKey)
       if (existing) {
         return items.map((item) => (
-          item.id === product.id
-            ? { ...item, qty: item.qty + count, reason: stockOutReason, reasonLabel: stockOutReasonLabel(), note: stockOutNote, lastScannedAt: new Date() }
+          item.id === product.id && item.unitKey === unitKey
+            ? {
+              ...item,
+              qty: item.qty + count,
+              baseQty: item.baseQty + baseQty,
+              equivalentText: unitEquivalentText(product, selectedUnit, item.qty + count),
+              reason: stockOutReason,
+              reasonLabel: stockOutReasonLabel(),
+              note: stockOutNote,
+              lastScannedAt: new Date(),
+            }
             : item
         ))
       }
@@ -313,11 +525,17 @@ export default function Inventory() {
           id: product.id,
           sku: product.sku || product.id,
           name: product.name,
-          barcode: product.barcode,
+          barcode: scannedBarcode,
+          unitKey,
           category: product.category,
           currentQty: Number(product.qty) || 0,
-          unit: product.unit || 'unit(s)',
+          unit: unitLabel,
+          baseUnit: product.unit || 'unit(s)',
+          sellingUnits: normalizeSellingUnits(product),
+          conversion,
           qty: count,
+          baseQty,
+          equivalentText,
           reason: stockOutReason,
           reasonLabel: stockOutReasonLabel(),
           note: stockOutNote,
@@ -329,28 +547,40 @@ export default function Inventory() {
     return true
   }
 
-  function updateStockOutBatchItemQty(productId, value) {
+  function updateStockOutBatchItemQty(productId, itemUnitKey, value) {
     const requestedQty = Math.max(1, Math.floor(Number(value) || 1))
     setStockOutBatch((items) => items.map((item) => {
-      if (item.id !== productId) return item
-      const maxQty = Math.max(1, Number(item.currentQty) || 0)
+      if (item.id !== productId || item.unitKey !== itemUnitKey) return item
+      const conversion = Number(item.conversion) || 1
+      const maxQty = Math.max(1, Math.floor((Number(item.currentQty) || 0) / conversion))
       const nextQty = Math.min(requestedQty, maxQty)
       if (requestedQty > maxQty) {
-        setStockOutError(`"${item.name}" has only ${maxQty} available item(s).`)
+        setStockOutError(`"${item.name}" has only ${maxQty} ${item.unit || 'unit(s)'} available.`)
       } else {
         setStockOutError('')
       }
-      return { ...item, qty: nextQty }
+      return {
+        ...item,
+        qty: nextQty,
+        baseQty: nextQty * conversion,
+        equivalentText: unitEquivalentText({ ...item, unit: item.baseUnit }, item, nextQty),
+      }
     }))
   }
 
-  function stockOutFeedRecord(product, qtyOut, updated, reason = stockOutReason, note = stockOutNote) {
+  function stockOutFeedRecord(product, qtyOut, updated, reason = stockOutReason, note = stockOutNote, scannedBarcode = product.barcode, unit = null) {
+    const conversion = Number(unit?.conversion) > 0 ? Number(unit.conversion) : scannedUnitConversion(product, scannedBarcode)
+    const unitLabel = unit?.unit || scannedUnitLabel(product, scannedBarcode)
+    const equivalentText = unitEquivalentText(product, unit || matchSellingUnit(product, scannedBarcode), qtyOut)
     return {
       key: `${Date.now()}-${updated.id}-${Math.random().toString(36).slice(2)}`,
       id: updated.sku || updated.id,
       name: updated.name,
-      barcode: updated.barcode,
+      barcode: scannedBarcode || updated.barcode,
       qty: qtyOut,
+      unit: unitLabel,
+      baseQty: qtyOut * conversion,
+      equivalentText,
       previousQty: Number(product.qty) || 0,
       newQty: updated.qty,
       reason,
@@ -373,33 +603,34 @@ export default function Inventory() {
     }
 
     if (stockOutMode === 'batch') {
-      if (!addToStockOutBatch(stockOutProduct, removeQty)) {
+      if (!addToStockOutBatch(stockOutProduct, selectedStockOutUnit, removeQty)) {
         focusStockOutBarcode()
         return
       }
       setStockOutBarcode('')
       setStockOutError('')
-      flash(`Queued ${removeQty} unit(s) out for ${stockOutProduct.name}.`)
+      flash(`Queued ${removeQty} ${selectedStockOutUnit?.unit || stockOutProduct.unit || 'unit(s)'} out for ${stockOutProduct.name}.`)
       focusStockOutBarcode()
       return
     }
 
     try {
       const original = stockOutProduct
+      const payload = scanPayloadForUnit(stockOutProduct, selectedStockOutUnit, removeQty)
       const updated = await api.stockOutInventory({
-        barcode: code,
+        ...payload,
         qty: removeQty,
         reason: stockOutReason,
         note: stockOutNote,
       })
       setProducts((current) => mergeUpdatedProduct(current, updated))
       setStockOutFeed((items) => [
-        stockOutFeedRecord(original, removeQty, updated),
+        stockOutFeedRecord(original, removeQty, updated, stockOutReason, stockOutNote, payload.barcode || code, selectedStockOutUnit),
         ...items.slice(0, 24),
       ])
       setStockOutBarcode('')
       setStockOutError('')
-      flash(`Removed ${removeQty} unit(s) from ${updated.name}.`)
+      flash(`Removed ${removeQty} ${payload.unitLabel} from ${updated.name}.`)
       focusStockOutBarcode()
     } catch (err) {
       setStockOutError(err.message || `Unable to stock-out barcode "${code}".`)
@@ -410,9 +641,10 @@ export default function Inventory() {
   async function confirmStockOutBatch() {
     if (stockOutBatch.length === 0 || confirmingStockOut) return
 
-    const invalidItem = stockOutBatch.find((item) => (Number(item.qty) || 0) < 1 || (Number(item.qty) || 0) > (Number(item.currentQty) || 0))
+    const invalidItem = stockOutBatch.find((item) => (Number(item.qty) || 0) < 1 || (Number(item.baseQty) || 0) > (Number(item.currentQty) || 0))
     if (invalidItem) {
-      setStockOutError(`Check quantity for "${invalidItem.name}". It must be between 1 and ${Number(invalidItem.currentQty) || 0}.`)
+      const maxQty = Math.floor((Number(invalidItem.currentQty) || 0) / (Number(invalidItem.conversion) || 1))
+      setStockOutError(`Check quantity for "${invalidItem.name}". It must be between 1 and ${maxQty} ${invalidItem.unit || 'unit(s)'}.`)
       focusStockOutBarcode()
       return
     }
@@ -428,18 +660,21 @@ export default function Inventory() {
         const original = nextProducts.find((product) => product.id === item.id) || item
         const updated = await api.stockOutInventory({
           barcode: item.barcode,
+          productId: item.id,
+          unitConversion: item.conversion,
+          unitLabel: item.unit,
           qty: item.qty,
           reason: item.reason,
           note: item.note,
         })
         nextProducts = mergeUpdatedProduct(nextProducts, updated)
-        confirmedFeed.push(stockOutFeedRecord(original, item.qty, updated, item.reason, item.note))
+        confirmedFeed.push(stockOutFeedRecord(original, item.qty, updated, item.reason, item.note, item.barcode, item))
       }
 
       setProducts(nextProducts)
       setStockOutFeed((items) => [...confirmedFeed, ...items].slice(0, 25))
       setStockOutBatch([])
-      flash(`Confirmed ${stockOutBatchUnits} unit(s) out across ${stockOutBatch.length} product(s).`)
+      flash(`Confirmed ${stockOutBatchUnits} ${stockOutBatch[0]?.baseUnit || 'base unit(s)'} out across ${stockOutBatch.length} line(s).`)
       focusStockOutBarcode()
     } catch (err) {
       setStockOutError(err.message || 'Unable to confirm stock-out batch.')
@@ -514,7 +749,7 @@ export default function Inventory() {
       <div className="panel-head">
         <div>
           <h3>Stock-In Scanner</h3>
-          <span className="sub">{sessionUnits} unit(s) counted or added this session</span>
+          <span className="sub">{sessionUnits} base unit(s) counted or added this session</span>
         </div>
       </div>
       <div className="panel-body">
@@ -552,7 +787,7 @@ export default function Inventory() {
               className="input"
               placeholder="Scan barcode or search product"
               value={barcode}
-              onChange={(e) => { setBarcode(e.target.value); setScanError('') }}
+              onChange={(e) => { setBarcode(e.target.value); setStockInUnit(''); setScanError('') }}
               autoFocus
             />
             {barcodeMatches.length > 0 && (
@@ -564,6 +799,7 @@ export default function Inventory() {
                     className="scan-suggestion"
                     onClick={() => {
                       setBarcode(product.barcode || '')
+                      setStockInUnit('')
                       setScanError('')
                       focusBarcode()
                     }}
@@ -582,8 +818,24 @@ export default function Inventory() {
             <label><span className="scan-step-no">2</span>Qty per Scan</label>
             <input className="input" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
           </div>
+          <div className="field">
+            <label><span className="scan-step-no">3</span>Unit per Scan</label>
+            <select
+              className="select"
+              value={selectedStockInUnit ? unitOptionValue(selectedStockInUnit, stockInUnitOptions.indexOf(selectedStockInUnit)) : ''}
+              onChange={(e) => setStockInUnit(e.target.value)}
+              disabled={!scannedProduct}
+            >
+              {!scannedProduct ? <option value="">Select product first</option> : null}
+              {stockInUnitOptions.map((unit, index) => (
+                <option key={unitOptionValue(unit, index)} value={unitOptionValue(unit, index)}>
+                  {unit.unit} ({unit.conversion} {scannedProduct?.unit || 'unit'}{Number(unit.conversion) === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          </div>
           <button type="submit" className="btn btn-primary" style={{ height: 38 }}>
-            <span className="scan-step-no" style={{ background: 'rgba(255,255,255,.3)' }}>3</span>
+            <span className="scan-step-no" style={{ background: 'rgba(255,255,255,.3)' }}>4</span>
             Add to Stock
           </button>
         </form>
@@ -595,9 +847,11 @@ export default function Inventory() {
                 <div>
                   <strong>{scannedProduct.name}</strong>
                   <span>
-                    {scannedProduct.barcode} | {scannedProduct.category} | current stock: {scannedProduct.qty}
+                    {(selectedStockInUnit?.barcode || barcode.trim() || scannedProduct.barcode) || 'No barcode'} | {selectedStockInUnit?.unit || scannedProduct.unit} | current stock: {scannedProduct.qty} {scannedProduct.unit}
+                    {selectedStockInUnit ? ` | +${Number(qty || 1) * Number(selectedStockInUnit.conversion || 1)} ${scannedProduct.unit}` : ''}
                     {pendingById[scannedProduct.id] ? ` | pending: +${pendingById[scannedProduct.id]}` : ''}
                   </span>
+                  {selectedStockInUnit ? <small>{unitEquivalentText(scannedProduct, selectedStockInUnit, qty)}</small> : null}
                 </div>
                 <span className={`badge ${(statusLabel[scannedProduct.status] || statusLabel['in-stock']).badge}`}>
                   {(statusLabel[scannedProduct.status] || statusLabel['in-stock']).text}
@@ -637,7 +891,7 @@ export default function Inventory() {
             <div className="stock-batch-head">
               <div>
                 <strong>Pending Stock-In Batch</strong>
-                <span>{batchUnits} unit(s) counted across {batchItems.length} product(s)</span>
+                <span>{batchUnits} base unit(s) counted across {batchItems.length} line(s)</span>
               </div>
               <div className="stock-batch-actions">
                 <button
@@ -667,10 +921,11 @@ export default function Inventory() {
             ) : (
               <div className="stock-batch-list">
                 {batchItems.map((item) => (
-                  <div className="stock-batch-row" key={item.id}>
+                  <div className="stock-batch-row" key={`${item.id}-${item.unitKey}`}>
                     <div>
                       <strong>{item.name}</strong>
-                      <span>{item.barcode || item.sku} | current {item.currentQty} | after confirm {item.currentQty + item.qty}</span>
+                      <span>{item.barcode || item.sku} | {item.unit} x {item.qty} | after confirm {item.currentQty + item.baseQty} {item.baseUnit}</span>
+                      {item.equivalentText ? <small>{item.equivalentText}</small> : null}
                     </div>
                     <label className="stock-batch-qty">
                       <span className="qty-sign positive">+</span>
@@ -680,14 +935,14 @@ export default function Inventory() {
                         type="number"
                         min="1"
                         value={item.qty}
-                        onChange={(e) => updateBatchItemQty(item.id, e.target.value)}
+                        onChange={(e) => updateBatchItemQty(item.id, item.unitKey, e.target.value)}
                       />
                     </label>
                     <button
                       type="button"
                       className="icon-btn del"
                       title="Remove from batch"
-                      onClick={() => setBatchItems((items) => items.filter((row) => row.id !== item.id))}
+                      onClick={() => setBatchItems((items) => items.filter((row) => !(row.id === item.id && row.unitKey === item.unitKey)))}
                     >
                       <IconTrash size={15} />
                     </button>
@@ -715,8 +970,9 @@ export default function Inventory() {
                 <div style={{ flex: 1 }}>
                   <div className="prod-name">{f.name}</div>
                   <div className="prod-id">{f.barcode || f.id} | stock now {f.newQty}</div>
+                  {f.equivalentText ? <div className="prod-id">{f.equivalentText}</div> : null}
                 </div>
-                <span className="badge badge-info">+{f.qty} units</span>
+                <span className="badge badge-info">+{f.qty} {f.unit || 'unit(s)'}</span>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {f.time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>
@@ -733,7 +989,7 @@ export default function Inventory() {
       <div className="panel-head">
         <div>
           <h3>Stock-Out Scanner</h3>
-          <span className="sub">{stockOutSessionUnits} unit(s) removed or queued this session</span>
+          <span className="sub">{stockOutSessionUnits} base unit(s) removed or queued this session</span>
         </div>
         <div className="panel-actions">
           <button type="button" className="btn btn-outline" disabled={!stockOutFeed.length} onClick={handleExportStockOut}>
@@ -782,7 +1038,7 @@ export default function Inventory() {
               className="input"
               placeholder="Scan barcode or search product"
               value={stockOutBarcode}
-              onChange={(e) => { setStockOutBarcode(e.target.value); setStockOutError('') }}
+              onChange={(e) => { setStockOutBarcode(e.target.value); setStockOutUnit(''); setStockOutError('') }}
             />
             {stockOutMatches.length > 0 && (
               <div className="scan-suggestions">
@@ -793,6 +1049,7 @@ export default function Inventory() {
                     className="scan-suggestion"
                     onClick={() => {
                       setStockOutBarcode(product.barcode || '')
+                      setStockOutUnit('')
                       setStockOutError('')
                       focusStockOutBarcode()
                     }}
@@ -812,7 +1069,23 @@ export default function Inventory() {
             <input className="input" type="number" min="1" value={stockOutQty} onChange={(e) => setStockOutQty(e.target.value)} />
           </div>
           <div className="field">
-            <label><span className="scan-step-no">3</span>Reason</label>
+            <label><span className="scan-step-no">3</span>Unit Out</label>
+            <select
+              className="select"
+              value={selectedStockOutUnit ? unitOptionValue(selectedStockOutUnit, stockOutUnitOptions.indexOf(selectedStockOutUnit)) : ''}
+              onChange={(e) => setStockOutUnit(e.target.value)}
+              disabled={!stockOutProduct}
+            >
+              {!stockOutProduct ? <option value="">Select product first</option> : null}
+              {stockOutUnitOptions.map((unit, index) => (
+                <option key={unitOptionValue(unit, index)} value={unitOptionValue(unit, index)}>
+                  {unit.unit} ({unit.conversion} {stockOutProduct?.unit || 'unit'}{Number(unit.conversion) === 1 ? '' : 's'})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label><span className="scan-step-no">4</span>Reason</label>
             <select
               className="input"
               value={stockOutReason}
@@ -827,7 +1100,7 @@ export default function Inventory() {
             </select>
           </div>
           <button type="submit" className="btn btn-primary" style={{ height: 38 }}>
-            <span className="scan-step-no" style={{ background: 'rgba(255,255,255,.3)' }}>4</span>
+            <span className="scan-step-no" style={{ background: 'rgba(255,255,255,.3)' }}>5</span>
             {stockOutMode === 'batch' ? 'Queue Stock-Out' : 'Remove Stock'}
           </button>
         </form>
@@ -851,9 +1124,11 @@ export default function Inventory() {
                 <div>
                   <strong>{stockOutProduct.name}</strong>
                   <span>
-                    {stockOutProduct.barcode} | {stockOutProduct.category} | current stock: {stockOutProduct.qty}
+                    {(selectedStockOutUnit?.barcode || stockOutBarcode.trim() || stockOutProduct.barcode) || 'No barcode'} | {selectedStockOutUnit?.unit || stockOutProduct.unit} | current stock: {stockOutProduct.qty} {stockOutProduct.unit}
+                    {selectedStockOutUnit ? ` | -${Number(stockOutQty || 1) * Number(selectedStockOutUnit.conversion || 1)} ${stockOutProduct.unit}` : ''}
                     {pendingStockOutById[stockOutProduct.id] ? ` | pending: -${pendingStockOutById[stockOutProduct.id]}` : ''}
                   </span>
+                  {selectedStockOutUnit ? <small>{unitEquivalentText(stockOutProduct, selectedStockOutUnit, stockOutQty)}</small> : null}
                 </div>
                 <span className="badge badge-info">available {stockOutAvailable(stockOutProduct)}</span>
               </>
@@ -873,7 +1148,7 @@ export default function Inventory() {
             <div className="stock-batch-head">
               <div>
                 <strong>Pending Stock-Out Batch</strong>
-                <span>{stockOutBatchUnits} unit(s) queued across {stockOutBatch.length} product(s)</span>
+                <span>{stockOutBatchUnits} base unit(s) queued across {stockOutBatch.length} line(s)</span>
               </div>
               <div className="stock-batch-actions">
                 <button
@@ -903,10 +1178,11 @@ export default function Inventory() {
             ) : (
               <div className="stock-batch-list">
                 {stockOutBatch.map((item) => (
-                  <div className="stock-batch-row" key={item.id}>
+                  <div className="stock-batch-row" key={`${item.id}-${item.unitKey}`}>
                     <div>
                       <strong>{item.name}</strong>
-                      <span>{item.barcode || item.sku} | {item.reasonLabel} | after confirm {Math.max(0, item.currentQty - item.qty)}</span>
+                  <span>{item.barcode || item.sku} | {item.unit} x {item.qty} | {item.reasonLabel} | after confirm {Math.max(0, item.currentQty - item.baseQty)} {item.baseUnit}</span>
+                  {item.equivalentText ? <small>{item.equivalentText}</small> : null}
                     </div>
                     <label className="stock-batch-qty">
                       <span className="qty-sign negative">-</span>
@@ -915,16 +1191,16 @@ export default function Inventory() {
                         className="input"
                         type="number"
                         min="1"
-                        max={Math.max(1, Number(item.currentQty) || 0)}
+                        max={Math.max(1, Math.floor((Number(item.currentQty) || 0) / (Number(item.conversion) || 1)))}
                         value={item.qty}
-                        onChange={(e) => updateStockOutBatchItemQty(item.id, e.target.value)}
+                        onChange={(e) => updateStockOutBatchItemQty(item.id, item.unitKey, e.target.value)}
                       />
                     </label>
                     <button
                       type="button"
                       className="icon-btn del"
                       title="Remove from batch"
-                      onClick={() => setStockOutBatch((items) => items.filter((row) => row.id !== item.id))}
+                      onClick={() => setStockOutBatch((items) => items.filter((row) => !(row.id === item.id && row.unitKey === item.unitKey)))}
                     >
                       <IconTrash size={15} />
                     </button>
@@ -952,8 +1228,9 @@ export default function Inventory() {
                 <div style={{ flex: 1 }}>
                   <div className="prod-name">{item.name}</div>
                   <div className="prod-id">{item.barcode || item.id} | {item.reasonLabel} | stock now {item.newQty}</div>
+                  {item.equivalentText ? <div className="prod-id">{item.equivalentText}</div> : null}
                 </div>
-                <span className="badge badge-danger">-{item.qty} units</span>
+                <span className="badge badge-danger">-{item.qty} {item.unit || 'unit(s)'}</span>
                 <span className="muted" style={{ fontSize: 12 }}>
                   {item.time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </span>

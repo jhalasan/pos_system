@@ -76,6 +76,12 @@ export function searchProducts(query, limit = 50) {
     .filter((product) => (
       product.name.toLocaleLowerCase().includes(normalizedQuery)
       || product.barcode.includes(normalizedQuery)
+      || (Array.isArray(product.sellingUnits)
+        ? product.sellingUnits.some((unit) => (
+          String(unit?.barcode || '').toLocaleLowerCase().includes(normalizedQuery)
+          || String(unit?.unit || '').toLocaleLowerCase().includes(normalizedQuery)
+        ))
+        : false)
     ))
     .limit(limit)
     .toArray()

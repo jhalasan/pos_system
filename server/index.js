@@ -951,7 +951,9 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
     if (quantity <= 0) return res.status(400).json({ error: `Invalid quantity for "${product.name}".` })
 
     const matchingUnit = parseSellingUnits(product.selling_units).find((unit) => String(unit?.barcode || '').trim() === String(item.barcode || '').trim())
-    const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+    const conversion = Number(item.conversion) > 0
+      ? Number(item.conversion)
+      : (Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1)
     const baseQuantity = quantity * conversion
 
     if ((Number(product.quantity) || 0) < baseQuantity) {
@@ -1147,18 +1149,25 @@ app.delete('/api/products/:id', asyncRoute(async (req, res) => {
 
 app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   const barcode = String(req.body.barcode || '').trim()
+  const productId = String(req.body.productId || '').trim()
   const qty = Number(req.body.qty) || 1
-  if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
+  if (!barcode && !productId) return res.status(400).json({ error: 'Barcode or product is required.' })
 
-  const record = await findProductByScanBarcode(barcode)
-  if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
+  const products = await pbCollection('products')
+  const record = productId
+    ? await products.getOne(productId, { expand: 'category' }).catch(() => null)
+    : await findProductByScanBarcode(barcode)
+  if (!record) return res.status(404).json({ error: barcode ? `No product found for barcode "${barcode}".` : 'No product found.' })
 
   const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
-  const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+  const requestConversion = Number(req.body.unitConversion)
+  const conversion = Number(matchingUnit?.conversion) > 0
+    ? Number(matchingUnit.conversion)
+    : (Number.isFinite(requestConversion) && requestConversion > 0 ? requestConversion : 1)
   const previousQty = Number(record.quantity) || 0
   const movementQty = qty * conversion
   const nextQty = previousQty + movementQty
-  const updated = await (await pbCollection('products')).update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
+  const updated = await products.update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
   await createStockMovement({
     productId: record.id,
     movementType: 'stock_in',
@@ -1166,7 +1175,7 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
     previousQuantity: previousQty,
     newQuantity: nextQty,
     referenceType: 'inventory_scan',
-    notes: `Stock in by barcode ${barcode}`,
+    notes: `Stock in by ${barcode ? `barcode ${barcode}` : `${qty} ${req.body.unitLabel || 'unit(s)'}`}`,
   })
   await createLog({ action: 'Stock Update', detail: `Added ${qty * conversion} base unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
@@ -1174,22 +1183,29 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
 
 app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
   const barcode = String(req.body.barcode || '').trim()
+  const productId = String(req.body.productId || '').trim()
   const qty = Math.max(1, Math.floor(Number(req.body.qty) || 1))
   const reason = String(req.body.reason || 'other').trim()
   const note = String(req.body.note || '').trim()
-  if (!barcode) return res.status(400).json({ error: 'Barcode is required.' })
+  if (!barcode && !productId) return res.status(400).json({ error: 'Barcode or product is required.' })
 
-  const record = await findProductByScanBarcode(barcode)
-  if (!record) return res.status(404).json({ error: `No product found for barcode "${barcode}".` })
+  const products = await pbCollection('products')
+  const record = productId
+    ? await products.getOne(productId, { expand: 'category' }).catch(() => null)
+    : await findProductByScanBarcode(barcode)
+  if (!record) return res.status(404).json({ error: barcode ? `No product found for barcode "${barcode}".` : 'No product found.' })
 
   const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
-  const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+  const requestConversion = Number(req.body.unitConversion)
+  const conversion = Number(matchingUnit?.conversion) > 0
+    ? Number(matchingUnit.conversion)
+    : (Number.isFinite(requestConversion) && requestConversion > 0 ? requestConversion : 1)
   const currentQty = Number(record.quantity) || 0
   const baseUnitsToRemove = qty * conversion
   if (currentQty < baseUnitsToRemove) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} base unit(s) in stock.` })
 
   const nextQty = currentQty - baseUnitsToRemove
-  const updated = await (await pbCollection('products')).update(record.id, {
+  const updated = await products.update(record.id, {
     quantity: numberFieldValue(nextQty),
   }, { expand: 'category' })
   await createStockMovement({

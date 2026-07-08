@@ -1291,22 +1291,25 @@ export const desktopAdminApi = {
     return null
   },
 
-  async scanInventory({ barcode, qty = 1 }) {
+  async scanInventory({ barcode, productId = '', unitConversion = 1, unitLabel = '', qty = 1 }) {
     return enqueueInventoryScan(async () => {
       assertAdmin()
       await startAdminRuntime()
       const stockInQty = Math.max(1, Number(qty) || 1)
-      let product = await getProductByBarcode(barcode)
+      let product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       if (!product && (await isCloudReachable())) {
         await refreshAdminLocalCache({ pb })
-        product = await getProductByBarcode(barcode)
+        product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       }
-      if (!product) throw new Error(`No product found for barcode "${barcode}".`)
+      if (!product) throw new Error(barcode ? `No product found for barcode "${barcode}".` : 'No product found.')
 
       const matchingUnit = Array.isArray(product?.sellingUnits)
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
-      const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+      const requestedConversion = Number(unitConversion)
+      const conversion = Number(matchingUnit?.conversion) > 0
+        ? Number(matchingUnit.conversion)
+        : (Number.isFinite(requestedConversion) && requestedConversion > 0 ? requestedConversion : 1)
 
       let updated
       await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
@@ -1325,31 +1328,34 @@ export const desktopAdminApi = {
         await adminDb.products.put(updated)
         await queueOperation('scanInventory', updated.id, {
           id: updated.id,
-          barcode: updated.barcode,
-          qty: stockInQty,
+          barcode,
+          qty: stockInQty * conversion,
         })
       })
-      await recordActivity('Stock Update', `Added ${stockInQty} ${updated.unit || 'unit(s)'} to "${updated.name}".`)
+      await recordActivity('Stock Update', `Added ${stockInQty} ${unitLabel || updated.unit || 'unit(s)'} to "${updated.name}".`)
       return updated
     })
   },
 
-  async stockOutInventory({ barcode, qty = 1, reason = 'other', note = '' }) {
+  async stockOutInventory({ barcode, productId = '', unitConversion = 1, unitLabel = '', qty = 1, reason = 'other', note = '' }) {
     return enqueueInventoryScan(async () => {
       assertAdmin()
       await startAdminRuntime()
       const stockOutQty = Math.max(1, Number(qty) || 1)
-      let product = await getProductByBarcode(barcode)
+      let product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       if (!product && (await isCloudReachable())) {
         await refreshAdminLocalCache({ pb })
-        product = await getProductByBarcode(barcode)
+        product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       }
-      if (!product) throw new Error(`No product found for barcode "${barcode}".`)
+      if (!product) throw new Error(barcode ? `No product found for barcode "${barcode}".` : 'No product found.')
 
       const matchingUnit = Array.isArray(product?.sellingUnits)
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
-      const conversion = Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1
+      const requestedConversion = Number(unitConversion)
+      const conversion = Number(matchingUnit?.conversion) > 0
+        ? Number(matchingUnit.conversion)
+        : (Number.isFinite(requestedConversion) && requestedConversion > 0 ? requestedConversion : 1)
       const baseUnitsToRemove = stockOutQty * conversion
 
       let updated
@@ -1372,13 +1378,13 @@ export const desktopAdminApi = {
         await adminDb.products.put(updated)
         await queueOperation('stockOutInventory', updated.id, {
           id: updated.id,
-          barcode: updated.barcode,
-          qty: stockOutQty,
+          barcode,
+          qty: baseUnitsToRemove,
           reason,
           note,
         })
       })
-      await recordActivity('Stock Out', `Removed ${stockOutQty} ${updated.unit || 'unit(s)'} from "${updated.name}" - ${reason}${note ? ` (${note})` : ''}.`)
+      await recordActivity('Stock Out', `Removed ${stockOutQty} ${unitLabel || updated.unit || 'unit(s)'} from "${updated.name}" - ${reason}${note ? ` (${note})` : ''}.`)
       return updated
     })
   },

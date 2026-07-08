@@ -1,8 +1,9 @@
-import { lazy, Suspense, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
-import { isAuthed } from './admin-page/auth'
+import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
 import AdminLayout from './admin-page/components/AdminLayout'
+import { cashierApi } from './cashier-pos/services/api'
 import './admin-page/index.css'
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth'
@@ -25,13 +26,13 @@ function RequireAdminAuth({ children }) {
 }
 
 export default function DesktopApp() {
-  const [cashierUser, setCashierUser] = useState(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem(CASHIER_AUTH_KEY) || 'null')
-    } catch {
-      return null
-    }
-  })
+  const [cashierUser, setCashierUser] = useState(null)
+
+  useEffect(() => {
+    logoutAdminSession()
+    sessionStorage.removeItem(CASHIER_AUTH_KEY)
+    cashierApi.logout?.()
+  }, [])
 
   const handleLogin = (user) => {
     sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(user))
@@ -40,6 +41,7 @@ export default function DesktopApp() {
 
   const handleLogout = () => {
     sessionStorage.removeItem(CASHIER_AUTH_KEY)
+    cashierApi.logout?.()
     setCashierUser(null)
   }
 
@@ -86,7 +88,7 @@ export default function DesktopApp() {
             ? <Cashier onLogout={handleLogout} user={cashierUser} />
             : <Navigate to="/login" replace />}
         />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to={isAuthed() ? '/admin/dashboard' : (cashierUser ? '/cashier' : '/login')} replace />} />
       </Routes>
       </Suspense>
     </Router>

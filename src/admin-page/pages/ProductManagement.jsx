@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
@@ -8,6 +8,129 @@ import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
+
+function normalizeSellingUnits(product = {}) {
+  const rawUnits = Array.isArray(product.sellingUnits)
+    ? product.sellingUnits
+    : (Array.isArray(product.selling_units) ? product.selling_units : [])
+  const fallbackUnit = String(product.unit || 'Piece').trim() || 'Piece'
+  const fallbackBarcode = String(product.barcode || '').trim()
+  const fallbackPrice = Number(product.price) || 0
+
+  const units = rawUnits.map((unit) => ({
+    barcode: String(unit?.barcode || '').trim(),
+    unit: String(unit?.unit || '').trim() || fallbackUnit,
+    conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
+    price: Number(unit?.price) || fallbackPrice,
+  }))
+
+  const purchaseUnit = String(product.purchaseUnit || product.purchase_unit || '').trim()
+  const purchaseConversion = Number(product.conversionQuantity ?? product.conversion_quantity)
+  if (purchaseUnit && purchaseConversion > 1 && purchaseUnit.toLowerCase() !== fallbackUnit.toLowerCase()) {
+    const hasPurchaseUnit = units.some((unit) => (
+      unit.unit.toLowerCase() === purchaseUnit.toLowerCase()
+      || Number(unit.conversion) === purchaseConversion
+    ))
+    if (!hasPurchaseUnit) {
+      units.push({
+        barcode: '',
+        unit: purchaseUnit,
+        conversion: purchaseConversion,
+        price: fallbackPrice * purchaseConversion,
+      })
+    }
+  }
+
+  if (units.length > 0) return units
+
+  return [{
+    barcode: fallbackBarcode,
+    unit: fallbackUnit,
+    conversion: 1,
+    price: fallbackPrice,
+  }]
+}
+
+function getProductBarcodes(product) {
+  return [...new Set(normalizeSellingUnits(product).map((unit) => unit.barcode).filter(Boolean))]
+}
+
+function getInventoryBreakdown(product) {
+  const baseQty = Number(product.qty) || 0
+  const units = normalizeSellingUnits(product)
+    .filter((unit) => Number(unit.conversion) > 0)
+    .sort((a, b) => Number(b.conversion) - Number(a.conversion))
+
+  return units.map((unit) => ({
+    ...unit,
+    total: Math.floor(baseQty / Number(unit.conversion)),
+  }))
+}
+
+function getInventoryRemainderBreakdown(product) {
+  let remainingQty = Number(product.qty) || 0
+  const units = normalizeSellingUnits(product)
+    .filter((unit) => Number(unit.conversion) > 0)
+    .sort((a, b) => Number(b.conversion) - Number(a.conversion))
+
+  return units.map((unit, index) => {
+    const conversion = Number(unit.conversion)
+    const count = index === units.length - 1
+      ? remainingQty
+      : Math.floor(remainingQty / conversion)
+    remainingQty -= count * conversion
+    return {
+      ...unit,
+      count,
+      total: Math.floor((Number(product.qty) || 0) / conversion),
+    }
+  })
+}
+
+function formatQty(value) {
+  return Number(value || 0).toLocaleString('en-PH')
+}
+
+function pluralizeUnit(unit, quantity) {
+  const cleanUnit = String(unit || 'unit').trim() || 'unit'
+  if (Number(quantity) === 1) return cleanUnit
+  if (/s$/i.test(cleanUnit)) return cleanUnit
+  return `${cleanUnit}s`
+}
+
+function primaryInventoryLabel(product) {
+  const hasMultipleUnits = Boolean((product.hasMultipleUnits ?? product.has_multiple_units) || getInventoryBreakdown(product).length > 1)
+  if (!hasMultipleUnits) {
+    return {
+      main: formatQty(product.qty),
+      detail: '',
+    }
+  }
+
+  const breakdown = getInventoryRemainderBreakdown(product)
+  const visibleBreakdown = breakdown.filter((unit) => Number(unit.count) > 0)
+  if (breakdown.length === 0) {
+    return {
+      main: formatQty(product.qty),
+      detail: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total`,
+    }
+  }
+
+  const summary = (visibleBreakdown.length ? visibleBreakdown : [breakdown[breakdown.length - 1]])
+    .map((unit) => `${formatQty(unit.count)} ${pluralizeUnit(unit.unit, unit.count)}`)
+    .join(', ')
+
+  return {
+    main: summary,
+    detail: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total`,
+  }
+}
+
+function unitRowLabel(product, unit) {
+  const conversion = Number(unit.conversion) || 1
+  if (conversion === 1) return `1 ${unit.unit} = 1 ${product.unit}`
+  return `1 ${unit.unit} = ${formatQty(conversion)} ${pluralizeUnit(product.unit, conversion)}`
+}
 
 export default function ProductManagement() {
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
@@ -23,6 +146,7 @@ export default function ProductManagement() {
   const [exporting, setExporting] = useState(false)
   const [printing, setPrinting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
+  const [expandedProducts, setExpandedProducts] = useState(() => new Set())
 
   const categories = useMemo(() => {
     return [...new Set([
@@ -35,9 +159,11 @@ export default function ProductManagement() {
   const filtered = useMemo(() => {
     return list.filter((p) => {
       const q = query.trim().toLowerCase()
+      const barcodes = getProductBarcodes(p)
       const matchQ = !q || p.name.toLowerCase().includes(q) ||
         p.id.toLowerCase().includes(q) || (p.sku || '').toLowerCase().includes(q) ||
-        (p.barcode || '').includes(q)
+        barcodes.some((barcode) => barcode.toLowerCase().includes(q)) ||
+        normalizeSellingUnits(p).some((unit) => String(unit.unit || '').toLowerCase().includes(q))
       const matchC = cat === 'All' || p.category === cat
       return matchQ && matchC
     })
@@ -102,20 +228,35 @@ export default function ProductManagement() {
     }
   }
 
+  function toggleProductBreakdown(productId) {
+    setExpandedProducts((current) => {
+      const next = new Set(current)
+      if (next.has(productId)) {
+        next.delete(productId)
+      } else {
+        next.add(productId)
+      }
+      return next
+    })
+  }
+
   async function exportProducts() {
     setExporting(true)
     setExportStatus('Exporting...')
     try {
       const result = await exportCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, [
-        ['Name', 'Barcode', 'Category', 'Quantity', 'Unit', 'Price', 'Status'],
+        ['Name', 'Barcodes', 'Category', 'Quantity', 'Unit', 'Price', 'Status', 'Unit Breakdown'],
         ...filtered.map((product) => [
           product.name,
-          product.barcode,
+          getProductBarcodes(product).join(' | '),
           product.category,
           product.qty,
           product.unit,
           product.price,
           product.status,
+          getInventoryBreakdown(product)
+            .map((unit) => `${unit.total} ${unit.unit} available (${unit.conversion} ${product.unit}; ${peso(unit.price)})`)
+            .join(' | '),
         ]),
       ], { directory: getExportLocation(exportLocationKeys.products) })
       setExportStatus(`Exported in - "${result.path}"`)
@@ -230,48 +371,120 @@ export default function ProductManagement() {
                 const st = isOutOfStock
                   ? statusLabel['out-of-stock']
                   : statusLabel[p.status] || statusLabel['in-stock']
+                const barcodes = getProductBarcodes(p)
+                const breakdown = getInventoryBreakdown(p)
+                const remainderBreakdown = getInventoryRemainderBreakdown(p)
+                const hasMultipleUnits = Boolean((p.hasMultipleUnits ?? p.has_multiple_units) || breakdown.length > 1)
+                const inventoryLabel = primaryInventoryLabel(p)
+                const isExpanded = expandedProducts.has(p.id)
                 return (
-                  <tr key={p.id} className={isOutOfStock ? 'product-row-out' : ''}>
-                    <td>
-                      <div className="prod-cell">
-                        <div className="prod-thumb">
-                          {p.imageUrl ? (
-                            <img src={p.imageUrl} alt={p.name} />
-                          ) : (
-                            <IconImage size={18} />
-                          )}
+                  <Fragment key={p.id}>
+                    <tr className={`product-group-row ${isOutOfStock ? 'product-row-out' : ''}`}>
+                      <td>
+                        <div className="prod-cell">
+                          {hasMultipleUnits ? (
+                            <button
+                              type="button"
+                              className="group-toggle"
+                              title={isExpanded ? 'Hide unit rows' : 'Show unit rows'}
+                              onClick={() => toggleProductBreakdown(p.id)}
+                              aria-expanded={isExpanded}
+                            >
+                              {isExpanded ? '▾' : '▸'}
+                            </button>
+                          ) : null}
+                          <div className="prod-thumb">
+                            {p.imageUrl ? (
+                              <img src={p.imageUrl} alt={p.name} />
+                            ) : (
+                              <IconImage size={18} />
+                            )}
+                          </div>
+                          <div>
+                            <div className="prod-name">{p.name}</div>
+                            <div className="prod-id">{p.sku || p.id} {hasMultipleUnits ? '| Product group' : ''}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="prod-name">{p.name}</div>
-                          <div className="prod-id">{p.sku || p.id}</div>
+                      </td>
+                      <td className="mono">
+                        <div className="barcode-stack">
+                          <span>{barcodes[0] || 'No barcode'}</span>
+                          {barcodes.length > 1 ? <small>{barcodes.length} barcodes</small> : null}
                         </div>
-                      </div>
-                    </td>
-                    <td className="mono">{p.barcode}</td>
-                    <td>{p.category}</td>
-                    <td className={`t-center ${isOutOfStock ? 'stock-zero' : ''}`}>{p.qty}</td>
-                    <td>{p.unit}</td>
-                    <td>{peso(p.price)}</td>
-                    <td><span className={`badge ${st.badge}`}>{st.text}</span></td>
-                    <td className="t-center">
-                      <div className="row-actions row-actions-center">
-                        <button
-                          className="icon-btn"
-                          title="Edit"
-                          onClick={() => setModal({ mode: 'edit', product: p })}
-                        >
-                          <IconEdit size={15} />
-                        </button>
-                        <button
-                          className="icon-btn del"
-                          title="Delete"
-                          onClick={() => handleDelete(p)}
-                        >
-                          <IconTrash size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td>{p.category}</td>
+                      <td className={`t-center ${isOutOfStock ? 'stock-zero' : ''}`}>
+                        <div className="stock-stack">
+                          <strong>{inventoryLabel.main}</strong>
+                          {inventoryLabel.detail ? <small>{inventoryLabel.detail}</small> : null}
+                          {hasMultipleUnits ? (
+                            <button
+                              type="button"
+                              className="link-btn stock-see-more"
+                              onClick={() => toggleProductBreakdown(p.id)}
+                              aria-expanded={isExpanded}
+                            >
+                              {isExpanded ? 'Hide breakdown' : 'See more'}
+                            </button>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td>{p.unit}</td>
+                      <td>{hasMultipleUnits ? 'Grouped' : peso(p.price)}</td>
+                      <td><span className={`badge ${st.badge}`}>{st.text}</span></td>
+                      <td className="t-center">
+                        <div className="row-actions row-actions-center">
+                          <button
+                            className="icon-btn"
+                            title="Edit"
+                            onClick={() => setModal({ mode: 'edit', product: p })}
+                          >
+                            <IconEdit size={15} />
+                          </button>
+                          <button
+                            className="icon-btn del"
+                            title="Delete"
+                            onClick={() => handleDelete(p)}
+                          >
+                            <IconTrash size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {isExpanded ? remainderBreakdown.map((unit) => (
+                      <tr className="product-unit-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
+                        <td>
+                          <div className="prod-cell product-unit-cell">
+                            <span className="unit-branch">↳</span>
+                            <div>
+                              <div className="prod-name">{p.name} - {unit.unit}</div>
+                              <div className="prod-id">{unitRowLabel(p, unit)}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="mono">{unit.barcode || 'No barcode'}</td>
+                        <td>{p.category}</td>
+                        <td className="t-center">
+                          <div className="stock-stack">
+                            <strong>{formatQty(unit.total)} {pluralizeUnit(unit.unit, unit.total)} available</strong>
+                            <small>{formatQty(unit.count)} {pluralizeUnit(unit.unit, unit.count)} in breakdown</small>
+                          </div>
+                        </td>
+                        <td>{unit.unit}</td>
+                        <td>{peso(unit.price)}</td>
+                        <td><span className="badge badge-neutral">Sub Unit</span></td>
+                        <td className="t-center">
+                          <button
+                            className="icon-btn"
+                            title="Edit product units"
+                            onClick={() => setModal({ mode: 'edit', product: p })}
+                          >
+                            <IconEdit size={15} />
+                          </button>
+                        </td>
+                      </tr>
+                    )) : null}
+                  </Fragment>
                 )
               })}
             </tbody>
