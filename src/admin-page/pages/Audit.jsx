@@ -61,10 +61,11 @@ function categoryFromDetail(detail = '') {
   return String(detail).match(/category\s+([^;.)]+)/i)?.[1]?.trim() || ''
 }
 
-function varianceStatus(value, hasAudit) {
+function varianceStatus(actualValue, expectedValue, hasAudit) {
   if (!hasAudit) return { text: 'Missing Closing Count', badge: 'badge-warning' }
-  if (Math.abs(value) < 0.01) return { text: 'Balanced', badge: 'badge-success' }
-  if (value < 0) return { text: 'Short', badge: 'badge-danger' }
+  const variance = (Number(actualValue) || 0) - (Number(expectedValue) || 0)
+  if (Math.abs(variance) < 0.01) return { text: 'Balanced', badge: 'badge-success' }
+  if (variance < 0) return { text: 'Short', badge: 'badge-danger' }
   return { text: 'Over', badge: 'badge-info' }
 }
 
@@ -98,11 +99,25 @@ function textAfter(label, detail = '') {
 }
 
 function countModeFromDetail(detail = '') {
-  return String(detail).match(/count mode\s+([a-z]+)/i)?.[1]?.trim() || ''
+  const detail_str = String(detail || '')
+  const match = detail_str.match(/count\s+mode:\s*([a-z\-]+)/i)
+  return match ? match[1].trim().toLowerCase() : ''
+}
+
+function hasAdminOverrideMarker(detail = '') {
+  return /admin\s+override:\s*(admin|true|approved)/i.test(String(detail || ''))
+}
+
+function isAdminOverride(detail = '') {
+  return hasAdminOverrideMarker(detail) || countModeFromDetail(detail) === 'admin-override'
+}
+
+function isDenominationCount(detail = '') {
+  return countModeFromDetail(detail) === 'denomination'
 }
 
 function breakdownFromDetail(detail = '') {
-  return String(detail).match(/breakdown\s+(.+?),\s+variance PHP/i)?.[1]?.trim() || textAfter('breakdown', detail)
+  return String(detail).match(/denominations:\s*(.+?)(?=;|$)/i)?.[1]?.trim() || textAfter('breakdown', detail)
 }
 
 function loadReviewedAudits() {
@@ -167,6 +182,7 @@ export default function Audit() {
           automaticCashCount: 0,
           countMode: '',
           breakdown: '',
+          isAdminOverride: false,
           registerOpens: 0,
           cashFlowEntries: 0,
           securityAlerts: 0,
@@ -200,24 +216,32 @@ export default function Audit() {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
         const logTime = new Date(log.time).getTime() || 0
         const isLatestShiftAudit = logTime >= row.latestShiftAuditTime
+        const countMode = countModeFromDetail(log.detail)
+        const isAdmin = isAdminOverride(log.detail)
+        const breakdown = breakdownFromDetail(log.detail)
+        
         if (isLatestShiftAudit) {
           row.latestShiftAuditTime = logTime
           row.cashBeginning = amountAfter('beginning', log.detail) || row.cashBeginning
           row.expectedCashEnding = amountAfter('expected', log.detail) || row.expectedCashEnding
           row.actualCashEnding = amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || row.actualCashEnding
           row.automaticCashCount = amountAfter('automatic cash count', log.detail) || row.automaticCashCount
-          row.countMode = countModeFromDetail(log.detail) || row.countMode
-          row.breakdown = breakdownFromDetail(log.detail) || row.breakdown
+          // Always set countMode from the log detail, never fallback to old value
+          row.countMode = countMode
+          row.breakdown = breakdown
           row.variance = amountAfter('variance', log.detail)
           row.hasManualAudit = true
+          // Always set isAdminOverride from current log
+          row.isAdminOverride = isAdmin
         }
         row.entries.push({
           ...log,
           amount: amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || 0,
-          category: countModeFromDetail(log.detail) ? `Count: ${countModeFromDetail(log.detail)}` : '',
+          category: countMode ? `Count: ${countMode}` : '',
           device: deviceFromDetail(log.detail),
           automaticCashCount: amountAfter('automatic cash count', log.detail),
-          breakdown: breakdownFromDetail(log.detail),
+          breakdown,
+          isAdminOverride: isAdmin,
         })
       }
       if (log.action === 'Shift Open') {
@@ -255,8 +279,11 @@ export default function Audit() {
     return [...rows.values()].map((row) => {
       const expected = row.expectedCashEnding || (row.cashBeginning + row.cashSales + row.cashIn - row.cashOut)
       const actual = row.hasManualAudit ? row.actualCashEnding : expected
-      const variance = row.hasManualAudit ? (row.variance || actual - expected) : 0
+      const variance = row.hasManualAudit
+        ? (Number.isFinite(row.variance) && Math.abs(row.variance) > 0.000001 ? row.variance : (actual - expected))
+        : 0
       const flags = []
+      if (row.isAdminOverride) flags.push('⚠️ Admin Override')
       if (!row.hasManualAudit) flags.push('Missing closing count')
       if (Math.abs(variance) >= 1) flags.push(variance < 0 ? 'Cash shortage' : 'Cash overage')
       if (row.registerOpens >= 5) flags.push('Many drawer opens')
@@ -270,7 +297,7 @@ export default function Audit() {
         expectedCashEnding: expected,
         actualCashEnding: actual,
         variance,
-        status: varianceStatus(variance, row.hasManualAudit),
+        status: varianceStatus(actual, expected, row.hasManualAudit),
         flags,
       }
     }).sort((a, b) => a.cashierName.localeCompare(b.cashierName))
@@ -290,18 +317,24 @@ export default function Audit() {
     ])
     return (logs || [])
       .filter((log) => auditActions.has(log.action) && inLogRange(log.time))
-      .map((log) => ({
-        ...log,
-        cashierName: cashierNameFromDetail(log.detail, log.user || 'Cashier'),
-        device: deviceFromDetail(log.detail),
-        amount: log.action === 'Cash In' || log.action === 'Cash Out'
-          ? Math.abs(cashFlowAmount(log))
-          : amountAfter('actual', log.detail)
-            || amountAfter('beginning', log.detail)
-            || amountAfter('cash out', log.detail)
-            || amountAfter('cash in', log.detail)
-            || 0,
-      }))
+      .map((log) => {
+        const countMode = countModeFromDetail(log.detail)
+        return {
+          ...log,
+          cashierName: cashierNameFromDetail(log.detail, log.user || 'Cashier'),
+          device: deviceFromDetail(log.detail),
+          amount: log.action === 'Cash In' || log.action === 'Cash Out'
+            ? Math.abs(cashFlowAmount(log))
+            : amountAfter('actual', log.detail)
+              || amountAfter('beginning', log.detail)
+              || amountAfter('cash out', log.detail)
+              || amountAfter('cash in', log.detail)
+              || 0,
+          isAdminOverride: isAdminOverride(log.detail),
+          countMode,
+          breakdown: breakdownFromDetail(log.detail),
+        }
+      })
       .sort((a, b) => new Date(b.time) - new Date(a.time))
   }, [logs, inLogRange])
 
@@ -505,7 +538,7 @@ export default function Audit() {
                 <th>Cash Sales</th>
                 <th>Expected</th>
                 <th>Actual</th>
-                <th>Auto Count</th>
+                <th>Count Method</th>
                 <th>Variance</th>
                 <th>Status</th>
                 <th>Flags</th>
@@ -519,7 +552,15 @@ export default function Audit() {
                   <td>{peso(row.cashSales)}</td>
                   <td>{peso(row.expectedCashEnding)}</td>
                   <td><strong>{peso(row.actualCashEnding)}</strong></td>
-                  <td>{row.countMode === 'denomination' ? peso(row.automaticCashCount) : <span className="muted">Manual</span>}</td>
+                  <td>
+                    {row.isAdminOverride ? (
+                      <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e' }}>Admin Override</span>
+                    ) : row.countMode === 'denomination' ? (
+                      <span className="badge badge-success" title={row.breakdown}>{row.breakdown || 'Denomination'}</span>
+                    ) : (
+                      <span className="muted">Manual</span>
+                    )}
+                  </td>
                   <td>{peso(row.variance)}</td>
                   <td><span className={`badge ${row.status.badge}`}>{row.status.text}</span></td>
                   <td>{row.flags.length ? row.flags.join(', ') : <span className="muted">None</span>}</td>
@@ -656,7 +697,11 @@ export default function Audit() {
                 <tr key={log.id}>
                   <td>{formatDate(log.time)}</td>
                   <td>{log.cashierName}</td>
-                  <td><span className="badge badge-info">{log.action}</span></td>
+                  <td>
+                    <span className="badge badge-info">{log.action}</span>
+                    {log.isAdminOverride && <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e', marginLeft: 6 }}>🔐 Admin</span>}
+                    {log.countMode === 'denomination' && <span className="badge badge-success" style={{ marginLeft: 6 }} title={log.breakdown}>📊 {log.breakdown}</span>}
+                  </td>
                   <td>{log.device || '-'}</td>
                   <td>{log.amount ? peso(log.amount) : '-'}</td>
                   <td className="muted">{log.detail}</td>

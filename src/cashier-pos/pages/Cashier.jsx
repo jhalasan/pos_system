@@ -7,7 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
-import { getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf } from '../services/receiptPrinter';
+import { getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { toBaseStockQuantity } from '../offline/stockUtils';
 import styles from '../styles/Cashier.module.css';
@@ -365,9 +365,19 @@ const Cashier = ({ onLogout, user }) => {
   const [showShiftClose, setShowShiftClose] = useState(false);
   const [shiftOpeningAmount, setShiftOpeningAmount] = useState('');
   const [shiftClosingAmount, setShiftClosingAmount] = useState('');
+  const [shiftCloseCountMode, setShiftCloseCountMode] = useState('denomination');
+  const [shiftCloseDenominations, setShiftCloseDenominations] = useState({});
   const [shiftNote, setShiftNote] = useState('');
   const [shiftError, setShiftError] = useState('');
   const [shiftSaving, setShiftSaving] = useState(false);
+  const [showAdminLogout, setShowAdminLogout] = useState(false);
+  const [adminLogoutApprovalMethod, setAdminLogoutApprovalMethod] = useState('barcode');
+  const [adminLogoutApprovalCode, setAdminLogoutApprovalCode] = useState('');
+  const [adminLogoutApprovalEmail, setAdminLogoutApprovalEmail] = useState('');
+  const [adminLogoutApprovalPassword, setAdminLogoutApprovalPassword] = useState('');
+  const [adminLogoutError, setAdminLogoutError] = useState('');
+  const [adminLogoutApproved, setAdminLogoutApproved] = useState(false);
+  const [adminLogoutBusy, setAdminLogoutBusy] = useState(false);
   const [deviceId] = useState(cashierDeviceId);
   const [idleLocked, setIdleLocked] = useState(false);
   const [idleUnlockMode, setIdleUnlockMode] = useState('barcode');
@@ -463,6 +473,20 @@ const Cashier = ({ onLogout, user }) => {
     ? auditDenominationTotal
     : Number(cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand || 0);
   const auditVariance = auditActualCashEnding - expectedShiftCash;
+  const shiftCloseDenominationTotal = useMemo(() => (
+    DENOMINATIONS.reduce((sum, denomination) => (
+      sum + ((Number(shiftCloseDenominations[denomination]) || 0) * denomination)
+    ), 0)
+  ), [shiftCloseDenominations]);
+  const shiftCloseBreakdown = useMemo(() => (
+    DENOMINATIONS.map((denomination) => ({
+      denomination,
+      count: Number(shiftCloseDenominations[denomination]) || 0,
+    })).filter((item) => item.count > 0)
+  ), [shiftCloseDenominations]);
+  const shiftCloseActualCashEnding = shiftCloseCountMode === 'denomination'
+    ? shiftCloseDenominationTotal
+    : Number(shiftClosingAmount || 0);
 
   const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => {
     const normalizedProductId = String(productId || '')
@@ -696,6 +720,31 @@ const Cashier = ({ onLogout, user }) => {
     localStorage.setItem(shiftStorageKey(user?.id), JSON.stringify(session));
   };
 
+  const resetShiftCloseForm = () => {
+    setShiftCloseCountMode('denomination');
+    setShiftCloseDenominations({});
+    setShiftClosingAmount(String(expectedShiftCash.toFixed(2)));
+    setShiftNote('');
+    setShiftError('');
+  };
+
+  const updateShiftCloseDenomination = (denomination, value) => {
+    setShiftCloseDenominations((current) => ({
+      ...current,
+      [denomination]: Math.max(0, Math.floor(Number(value) || 0)),
+    }));
+    setShiftError('');
+  };
+
+  useEffect(() => {
+    if (shiftCloseCountMode === 'denomination') {
+      const hasCounts = Object.values(shiftCloseDenominations).some((count) => Number(count) > 0);
+      if (hasCounts) {
+        setShiftClosingAmount(String(shiftCloseDenominationTotal.toFixed(2)));
+      }
+    }
+  }, [shiftCloseCountMode, shiftCloseDenominationTotal, shiftCloseDenominations]);
+
   const openShift = async () => {
     const openingAmount = Number(shiftOpeningAmount);
     if (!Number.isFinite(openingAmount) || openingAmount < 0) {
@@ -740,8 +789,12 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const closeShift = async () => {
-    const closingAmount = Number(shiftClosingAmount);
+  const closeShift = async (skipCashCount = false) => {
+    const closingAmount = skipCashCount ? expectedShiftCash : (
+      shiftCloseCountMode === 'denomination'
+        ? shiftCloseDenominationTotal
+        : Number(shiftClosingAmount)
+    );
     if (!Number.isFinite(closingAmount) || closingAmount < 0) {
       setShiftError('Enter a valid actual cash ending amount.');
       return;
@@ -751,28 +804,61 @@ const Cashier = ({ onLogout, user }) => {
     setShiftError('');
     try {
       const variance = closingAmount - expectedShiftCash;
+      // Only include denomination breakdown if: not admin override AND denomination mode was used
+      const denominationBreakdown = skipCashCount ? [] : (
+        shiftCloseCountMode === 'denomination'
+          ? shiftCloseBreakdown
+          : []
+      );
+      // Determine the count mode: admin-override takes precedence, then denomination vs manual
+      const countModeUsed = skipCashCount ? 'admin-override' : shiftCloseCountMode;
       const closed = {
         ...shiftSession,
         status: 'closed',
         closingAmount,
         expectedClosingAmount: expectedShiftCash,
         variance,
+        countMode: countModeUsed,
+        denominations: denominationBreakdown,
         closedAt: new Date().toISOString(),
         closeNote: shiftNote.trim(),
         deviceId,
       };
       await cashierApi.closeCashRegisterSession?.(closed).catch(() => {});
+      const denominationSummary = denominationBreakdown.length > 0
+        ? `; denominations: ${denominationBreakdown.map(d => `${d.count}x${d.denomination}`).join(', ')}`
+        : '';
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Shift Close',
-        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
+        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${skipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
       }).catch(() => {});
+      if (!skipCashCount) {
+        try {
+          await printShiftCloseReceipt({
+            cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
+            openedAt: shiftSession?.openedAt,
+            closedAt: closed.closedAt,
+            openingAmount: shiftOpeningCash,
+            cashSales: completedCashSales,
+            cashIn: shiftCashIn,
+            cashOut: shiftCashOut,
+            expectedCash: expectedShiftCash,
+            actualCash: closingAmount,
+            variance,
+            countMode: countModeUsed,
+            denominations: denominationBreakdown,
+          }, { documentName: `Shift Close ${closed.cashierName || user?.name || user?.email || 'Cashier'}` });
+        } catch (printError) {
+          showNotification((typeof printError === 'string' ? printError : printError?.message) || 'Shift close receipt could not be printed.');
+        }
+      }
       localStorage.removeItem(shiftStorageKey(user?.id));
       setShiftSession(null);
       setShowShiftClose(false);
-      setShiftClosingAmount('');
-      setShiftNote('');
-      showNotification(`Shift closed. Variance: ${money(variance)}.`);
+      setShowAdminLogout(false);
+      resetShiftCloseForm();
+      showNotification(`Shift closed${skipCashCount ? ' (admin override)' : ''}. Variance: ${money(variance)}.`);
       if (onLogout) {
         onLogout();
         navigate('/login');
@@ -2148,11 +2234,40 @@ const Cashier = ({ onLogout, user }) => {
     if (activeTransaction === txnId) setActiveTransaction(remaining[0].id);
   };
 
+  const approveAdminLogout = async () => {
+    setAdminLogoutError('');
+    setAdminLogoutBusy(true);
+    try {
+      if (adminLogoutApprovalMethod === 'barcode') {
+        await cashierApi.authorizeVoid(adminLogoutApprovalCode);
+      } else {
+        await cashierApi.authorizeVoid({
+          email: adminLogoutApprovalEmail,
+          password: adminLogoutApprovalPassword,
+        });
+      }
+      setAdminLogoutApproved(true);
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Admin Logout Request',
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} requested admin logout override.`),
+      }).catch(() => {});
+    } catch (err) {
+      setAdminLogoutError((typeof err === 'string' ? err : err.message) || 'Invalid credentials.');
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Admin Logout Security Alert',
+        detail: withDevice(`Failed admin logout attempt by ${user?.name || user?.email || 'Cashier'}.`),
+      }).catch(() => {});
+    } finally {
+      setAdminLogoutBusy(false);
+    }
+  };
+
   const handleLogout = () => {
     if (shiftSession) {
-      setShiftClosingAmount(String(expectedShiftCash.toFixed(2)));
+      resetShiftCloseForm();
       setShowShiftClose(true);
-      setShiftError('');
       return;
     }
     if (onLogout) {
@@ -3045,34 +3160,98 @@ const Cashier = ({ onLogout, user }) => {
 
       <Modal
         isOpen={showShiftClose}
-        onClose={() => setShowShiftClose(false)}
+        onClose={() => {
+          setShowShiftClose(false);
+          resetShiftCloseForm();
+        }}
         title="Close Shift"
         footer={
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={() => setShowShiftClose(false)} disabled={shiftSaving}>Cancel</button>
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={() => {
+              setShowShiftClose(false);
+              resetShiftCloseForm();
+            }} disabled={shiftSaving}>Cancel</button>
             <button className="btn btn-primary" onClick={closeShift} disabled={shiftSaving}>
-              {shiftSaving ? 'Closing...' : 'Close Shift & Logout'}
+              {shiftSaving ? 'Closing...' : 'Close Shift & Print'}
             </button>
           </div>
         }
       >
-        <div className={styles['audit-summary-grid']}>
-          <div><span>Cash Beginning</span><strong>{money(shiftOpeningCash)}</strong></div>
-          <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
-          <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
-          <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
-          <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
+        <div style={{ marginBottom: '18px' }}>
+          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Shift Summary</div>
+          <div className={styles['audit-summary-grid']}>
+            <div><span>Cash Beginning</span><strong>{money(shiftOpeningCash)}</strong></div>
+            <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
+            <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
+            <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
+            <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
+          </div>
         </div>
-        <Input
-          label="Actual Cash Ending"
-          type="number"
-          min="0"
-          step="0.01"
-          placeholder="0.00"
-          value={shiftClosingAmount}
-          onChange={(e) => setShiftClosingAmount(e.target.value)}
-          disabled={shiftSaving}
-        />
+        <div style={{ marginBottom: '18px' }}>
+          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Count Method</div>
+          <div className={styles['cash-flow-type-row']}>
+            <button
+              type="button"
+              className={shiftCloseCountMode === 'manual' ? styles.active : ''}
+              onClick={() => {
+                setShiftCloseCountMode('manual');
+                setShiftError('');
+              }}
+              disabled={shiftSaving}
+            >
+              Manual Total
+            </button>
+            <button
+              type="button"
+              className={shiftCloseCountMode === 'denomination' ? styles.active : ''}
+              onClick={() => {
+                setShiftCloseCountMode('denomination');
+                setShiftError('');
+              }}
+              disabled={shiftSaving}
+            >
+              Count by Denomination
+            </button>
+          </div>
+        </div>
+        <div style={{ marginBottom: '18px' }}>
+          {shiftCloseCountMode === 'denomination' ? (
+            <>
+              <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '12px' }}>Enter Denomination Counts</div>
+              <div className={styles['denomination-grid']}>
+              {DENOMINATIONS.map((denomination) => (
+                <label key={denomination} className={styles['denomination-row']}>
+                  <span>{money(denomination)}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder="0"
+                    value={shiftCloseDenominations[denomination] || ''}
+                    onChange={(e) => updateShiftCloseDenomination(denomination, e.target.value)}
+                    disabled={shiftSaving}
+                  />
+                </label>
+              ))}
+              </div>
+              <div className={styles['audit-entry-message']}>
+                <div style={{ fontSize: '12px', color: '#64748b', marginBottom: '6px' }}>Calculated Closing Amount</div>
+                <div style={{ fontSize: '18px', color: '#1e40af', fontWeight: '800' }}>{money(shiftCloseActualCashEnding)}</div>
+              </div>
+            </>
+          ) : (
+            <Input
+              label="Actual Cash Ending"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="0.00"
+              value={shiftClosingAmount}
+              onChange={(e) => setShiftClosingAmount(e.target.value)}
+              disabled={shiftSaving}
+            />
+          )}
+        </div>
         <Input
           label="Closing Note"
           placeholder="Optional note for shortage, overage, or correction"
@@ -3080,7 +3259,135 @@ const Cashier = ({ onLogout, user }) => {
           onChange={(e) => setShiftNote(e.target.value)}
           disabled={shiftSaving}
         />
-        {shiftError && <div style={{ color: '#dc2626', marginTop: 10 }}>{shiftError}</div>}
+        {shiftError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{shiftError}</div>}
+        <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid #e2e8f0' }}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAdminLogout(true);
+              setAdminLogoutError('');
+              setAdminLogoutApproved(false);
+              setAdminLogoutApprovalCode('');
+              setAdminLogoutApprovalEmail('');
+              setAdminLogoutApprovalPassword('');
+            }}
+            disabled={shiftSaving}
+            style={{
+              width: '100%',
+              padding: '10px 14px',
+              minHeight: '40px',
+              borderRadius: '8px',
+              border: '1px solid #fca5a5',
+              backgroundColor: '#fee2e2',
+              color: '#991b1b',
+              fontWeight: '600',
+              fontSize: '14px',
+              cursor: 'pointer',
+              opacity: shiftSaving ? 0.6 : 1,
+            }}
+          >
+            Admin Logout (Skip Count)
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showAdminLogout}
+        onClose={() => {
+          setShowAdminLogout(false);
+          setAdminLogoutError('');
+          setAdminLogoutApproved(false);
+          setAdminLogoutApprovalCode('');
+          setAdminLogoutApprovalEmail('');
+          setAdminLogoutApprovalPassword('');
+        }}
+        title="Admin Logout Confirmation"
+        footer={
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <button
+              className="btn btn-outline"
+              onClick={() => {
+                setShowAdminLogout(false);
+                setAdminLogoutError('');
+                setAdminLogoutApproved(false);
+                setAdminLogoutApprovalCode('');
+                setAdminLogoutApprovalEmail('');
+                setAdminLogoutApprovalPassword('');
+              }}
+              disabled={adminLogoutBusy}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={adminLogoutApproved ? () => closeShift(true) : approveAdminLogout}
+              disabled={adminLogoutBusy}
+            >
+              {adminLogoutBusy ? 'Processing...' : adminLogoutApproved ? 'Confirm Logout' : 'Verify'}
+            </button>
+          </div>
+        }
+      >
+        {!adminLogoutApproved ? (
+          <>
+            <p style={{ marginBottom: '16px', color: '#7f1d1d', fontWeight: '600' }}>⚠️ This will close the shift without counting cash. Manager approval required.</p>
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Approval Method</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApprovalMethod === 'barcode' ? '#f0fdf4' : '#ffffff' }}>
+                  <input
+                    type="radio"
+                    name="adminLogoutMethod"
+                    value="barcode"
+                    checked={adminLogoutApprovalMethod === 'barcode'}
+                    onChange={() => setAdminLogoutApprovalMethod('barcode')}
+                  />
+                  <span style={{ fontWeight: '600', fontSize: '13px' }}>Manager Barcode</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApprovalMethod === 'admin' ? '#f0fdf4' : '#ffffff' }}>
+                  <input
+                    type="radio"
+                    name="adminLogoutMethod"
+                    value="admin"
+                    checked={adminLogoutApprovalMethod === 'admin'}
+                    onChange={() => setAdminLogoutApprovalMethod('admin')}
+                  />
+                  <span style={{ fontWeight: '600', fontSize: '13px' }}>Admin Password</span>
+                </label>
+              </div>
+            </div>
+            {adminLogoutApprovalMethod === 'barcode' ? (
+              <Input
+                label="Manager Barcode"
+                placeholder="Scan or enter manager barcode"
+                value={adminLogoutApprovalCode}
+                onChange={(e) => setAdminLogoutApprovalCode(e.target.value)}
+                disabled={adminLogoutBusy}
+              />
+            ) : (
+              <>
+                <Input
+                  label="Admin Email"
+                  placeholder="Enter admin email"
+                  value={adminLogoutApprovalEmail}
+                  onChange={(e) => setAdminLogoutApprovalEmail(e.target.value)}
+                  disabled={adminLogoutBusy}
+                />
+                <Input
+                  label="Admin Password"
+                  type="password"
+                  placeholder="Enter admin password"
+                  value={adminLogoutApprovalPassword}
+                  onChange={(e) => setAdminLogoutApprovalPassword(e.target.value)}
+                  disabled={adminLogoutBusy}
+                />
+              </>
+            )}
+            {adminLogoutError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{adminLogoutError}</div>}
+          </>
+        ) : (
+          <p style={{ color: '#166534', fontWeight: '600' }}>✓ Admin verified. Click "Confirm Logout" to close the shift and logout without cash count.</p>
+        )}
       </Modal>
 
       <Modal

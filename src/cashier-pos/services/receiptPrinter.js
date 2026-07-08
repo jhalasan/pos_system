@@ -94,6 +94,48 @@ function moneyValue(value) {
   })
 }
 
+export function buildShiftCloseReceiptText({
+  cashierName,
+  openedAt,
+  closedAt,
+  openingAmount,
+  cashSales,
+  cashIn,
+  cashOut,
+  expectedCash,
+  actualCash,
+  variance,
+  countMode,
+  denominations = [],
+}) {
+  const openedDate = openedAt ? new Date(openedAt) : new Date()
+  const closedDate = closedAt ? new Date(closedAt) : new Date()
+  const breakdown = Array.isArray(denominations) ? denominations : []
+
+  return [
+    center(STORE_NAME),
+    ...STORE_ADDRESS_LINES.map(center),
+    center('SHIFT CLOSE REPORT'),
+    line(),
+    columns('Cashier', cashierName || 'Cashier'),
+    columns('Opened', openedDate.toLocaleString('en-PH')),
+    columns('Closed', closedDate.toLocaleString('en-PH')),
+    line(),
+    columns('Cash Beginning', moneyValue(openingAmount)),
+    columns('Cash Sales', moneyValue(cashSales)),
+    columns('Cash In', moneyValue(cashIn)),
+    columns('Cash Out', moneyValue(cashOut)),
+    columns('Expected Ending', moneyValue(expectedCash)),
+    columns('Actual Cash Ending', moneyValue(actualCash)),
+    columns('Variance', moneyValue(variance)),
+    line(),
+    center(`Count Mode: ${countMode === 'denomination' ? 'Denomination' : 'Manual'}`),
+    ...breakdown.map((item) => columns(`${item.denomination} x ${item.count}`, moneyValue((Number(item.count) || 0) * Number(item.denomination || 0)))),
+    line(),
+    center('Thank you!'),
+  ].filter(Boolean).join('\n')
+}
+
 function cleanText(value) {
   return String(value ?? '')
     .replace(/[^\x20-\x7E\n]/g, '')
@@ -363,6 +405,47 @@ export async function printCompletedReceipt(receiptData, options = {}) {
 
   printWithBrowser(receipts)
   return { printerName: 'browser print dialog', copies: receipts.length }
+}
+
+export async function printShiftCloseReceipt(shiftCloseData, options = {}) {
+  const printerName = receiptPrinterName(options)
+  const contents = buildShiftCloseReceiptText(shiftCloseData)
+  const spacing = savedReceiptSpacing()
+  const beforeFeedLines = clampNumber(options.beforeFeedLines ?? spacing.beforeLines, 0, 0, 8)
+  const afterFeedLines = clampNumber(options.afterFeedLines ?? spacing.afterLines, 0, 0, 8)
+  const invoke = tauriInvoke()
+
+  if (invoke) {
+    await assertReceiptPrinterReady({ ...options, printerName })
+    try {
+      return await invoke('print_receipt', {
+        printerName,
+        contents,
+        copies: 1,
+        openCashDrawer: false,
+        documentName: options.documentName || 'Shift Close Receipt',
+        beforeFeedLines,
+        afterFeedLines,
+      })
+    } catch (error) {
+      const message = typeof error === 'string' ? error : error?.message || ''
+      if (printerName && /deleted|1905|open printer/i.test(message)) {
+        return invoke('print_receipt', {
+          printerName: '',
+          contents,
+          copies: 1,
+          openCashDrawer: false,
+          documentName: options.documentName || 'Shift Close Receipt',
+          beforeFeedLines,
+          afterFeedLines,
+        })
+      }
+      throw error
+    }
+  }
+
+  printWithBrowser([contents], 'shift-close-print')
+  return { printerName: 'browser print dialog', copies: 1 }
 }
 
 export async function openCashDrawer(options = {}) {
