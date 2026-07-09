@@ -1209,6 +1209,50 @@ table.data tbody tr.unit-breakdown-row:hover {
 .analytics-tabs {
   margin-bottom: 18px;
 }
+.staff-tabs {
+  margin-top: 4px;
+}
+.cash-count-report-row {
+  cursor: pointer;
+}
+.cash-count-report-row:hover td {
+  background: var(--surface-2);
+}
+.cash-count-report-link {
+  max-width: 240px;
+  justify-self: start;
+  text-align: left;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.z-read-report-modal {
+  display: grid;
+  gap: 14px;
+}
+.z-read-report-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.z-read-report-summary strong {
+  color: var(--text);
+}
+.z-read-report-modal pre {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: #111827;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-x: auto;
+  white-space: pre;
+}
 .scan-flow {
   display: flex; gap: 10px; align-items: center;
   background: var(--info-soft); border: 1px solid #bae6fd;

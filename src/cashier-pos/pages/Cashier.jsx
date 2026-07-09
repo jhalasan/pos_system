@@ -2595,7 +2595,7 @@ const Cashier = ({ onLogout, user }) => {
             onChange={() => setMethod('admin')}
             disabled={disabled}
           />
-          Admin password
+          Manager password
         </label>
       </div>
 

@@ -326,13 +326,13 @@ async function authorizeManagerApproval({ code, email, password }) {
     }
 
     const legacyManager = await (await pbCollection('users')).getFirstListItem(
-      pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin") && status != "inactive"', { code: barcode }),
+      pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin" || role = "cashier") && status != "inactive"', { code: barcode }),
     ).catch((error) => {
       if (error.status === 404) return null
       throw error
     })
 
-    if (legacyManager) {
+    if (legacyManager && (legacyManager.role !== 'cashier' || barcode.startsWith('92'))) {
       return {
         id: legacyManager.id,
         name: legacyManager.name || legacyManager.email || 'Manager',
@@ -346,6 +346,11 @@ async function authorizeManagerApproval({ code, email, password }) {
   const managerPassword = String(password || '')
   if (managerEmail && managerPassword) {
     const manager = await authenticateRoleUser(managerEmail, managerPassword, 'manager')
+      .catch(async () => {
+        const cashierManager = await authenticateRoleUser(managerEmail, managerPassword, 'cashier')
+        if (!String(cashierManager?.void_barcode || '').startsWith('92')) throw new Error('Only manager accounts can approve cashier overrides.')
+        return cashierManager
+      })
       .catch(() => authenticateAdminUser(managerEmail, managerPassword))
     return {
       id: manager.id,
@@ -695,6 +700,9 @@ app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
   }
 
   const user = await authenticateRoleUser(email, password, 'cashier')
+  if (String(user.void_barcode || '').startsWith('92')) {
+    return res.status(403).json({ error: 'Manager accounts are for approvals, not cashier POS login.' })
+  }
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS' })
   res.json({ ok: true, user })
 }))
@@ -704,6 +712,9 @@ app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
 
   if (!barcode) {
     return res.status(400).json({ error: 'Cashier barcode is required.' })
+  }
+  if (barcode.startsWith('92')) {
+    return res.status(401).json({ error: 'Manager barcodes are for approvals, not cashier POS login.' })
   }
 
   const user = await (await pbCollection('users')).getFirstListItem(
@@ -1239,11 +1250,20 @@ function staffRoleFromRequest(req) {
   return String(req.query?.role || req.body?.role || 'cashier').trim() === 'manager' ? 'manager' : 'cashier'
 }
 
+function isManagerStaffRecord(record = {}) {
+  return record.role === 'manager' || (record.role === 'cashier' && String(record.void_barcode || '').startsWith('92'))
+}
+
 app.get('/api/cashiers', asyncRoute(async (req, res) => {
   const role = staffRoleFromRequest(req)
-  const records = await listRecords('users', `?filter=role="${role}"&sort=email&perPage=500`)
+  const records = await listRecords('users', '?sort=email&perPage=500')
+  const staffRecords = records.filter((record) => (
+    role === 'manager'
+      ? isManagerStaffRecord(record)
+      : record.role === 'cashier' && !isManagerStaffRecord(record)
+  ))
   const salesByCashier = await getSalesByCashier()
-  res.json(records.map((record) => toCashier(record, salesByCashier.get(record.id))))
+  res.json(staffRecords.map((record) => toCashier(record, salesByCashier.get(record.id))))
 }))
 
 app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, res) => {
@@ -1253,7 +1273,8 @@ app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, r
   }
 
   const created = await (await pbCollection('users')).create(payload)
-  await createLog({ action: payload.role === 'manager' ? 'Manager' : 'Cashier', detail: `Added ${payload.role} "${payload.email}"` })
+  const staffRole = staffRoleFromRequest(req)
+  await createLog({ action: staffRole === 'manager' ? 'Manager' : 'Cashier', detail: `Added ${staffRole} "${payload.email}"` })
   res.status(201).json(toCashier(created))
 }))
 
@@ -1264,12 +1285,14 @@ app.patch('/api/cashiers/:id', upload.single('profile_img'), asyncRoute(async (r
     delete payload.passwordConfirm
   }
   const updated = await (await pbCollection('users')).update(req.params.id, payload)
-  await createLog({ action: payload.role === 'manager' ? 'Manager' : 'Cashier', detail: `Updated ${payload.role} "${payload.email}"` })
+  const staffRole = staffRoleFromRequest(req)
+  await createLog({ action: staffRole === 'manager' ? 'Manager' : 'Cashier', detail: `Updated ${staffRole} "${payload.email}"` })
   res.json(toCashier(updated))
 }))
 
 app.get('/api/settings/cashiers', asyncRoute(async (_req, res) => {
-  const records = await listRecords('users', '?filter=role="cashier"&sort=email&perPage=500')
+  const records = (await listRecords('users', '?filter=role%3D%22cashier%22&sort=email&perPage=500'))
+    .filter((record) => !isManagerStaffRecord(record))
   const salesByCashier = await getSalesByCashier()
   res.json(records.map((record) => toCashier(record, salesByCashier.get(record.id))))
 }))

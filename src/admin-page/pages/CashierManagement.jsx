@@ -80,7 +80,7 @@ export default function CashierManagement() {
 
   function openAddCashier() {
     setEditingCashier(null)
-    setForm({ ...blank, role: activeTab, shift: isManagerTab ? '' : 'Morning' })
+    setForm({ ...blank, role: activeTab, shift: 'Morning' })
     setImagePreview('')
     setFormError('')
     setOpen(true)
@@ -157,11 +157,13 @@ export default function CashierManagement() {
       }
     }
 
+    const rawBarcode = String(form.cashierBarcode || '').trim() || nextStaffBarcode(activeTab)
+    const staffBarcode = isManagerTab && !rawBarcode.startsWith('92') ? `92${rawBarcode}` : rawBarcode
     const savePayload = {
       ...form,
       role: activeTab,
-      shift: isManagerTab ? '' : form.shift,
-      cashierBarcode: String(form.cashierBarcode || '').trim() || nextStaffBarcode(activeTab),
+      shift: form.shift || 'Morning',
+      cashierBarcode: staffBarcode,
     }
 
     setSaving(true)
@@ -388,10 +390,10 @@ export default function CashierManagement() {
         </button>
       </PageHeader>
 
-      <div className="scan-mode-row analytics-tabs" role="tablist" aria-label="Staff sections">
+      <div className="scan-mode-row analytics-tabs staff-tabs" role="tablist" aria-label="Staff sections">
         <button
           type="button"
-          className={activeTab === 'cashier' ? 'active' : ''}
+          className={`scan-mode ${activeTab === 'cashier' ? 'active' : ''}`}
           onClick={() => switchStaffTab('cashier')}
           role="tab"
           aria-selected={activeTab === 'cashier'}
@@ -400,7 +402,7 @@ export default function CashierManagement() {
         </button>
         <button
           type="button"
-          className={activeTab === 'manager' ? 'active' : ''}
+          className={`scan-mode ${activeTab === 'manager' ? 'active' : ''}`}
           onClick={() => switchStaffTab('manager')}
           role="tab"
           aria-selected={activeTab === 'manager'}

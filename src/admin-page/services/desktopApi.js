@@ -130,16 +130,20 @@ function isCriticalStock(product) {
 function toSettingsUser(record) {
   const email = record.email || ''
   const name = record.name || email.split('@')[0] || 'User'
+  const barcode = record.void_barcode || record.cashierBarcode || ''
+  const role = record.role === 'manager' || (record.role === 'cashier' && String(barcode).startsWith('92'))
+    ? 'manager'
+    : (record.role || '')
 
   return {
     id: record.id,
     name,
     email,
-    role: record.role || '',
+    role,
     shift: record.shift || '',
     status: record.status || 'active',
     cashierId: record.id,
-    cashierBarcode: record.void_barcode || record.cashierBarcode || '',
+    cashierBarcode: barcode,
     quickLoginEnabled: Boolean(record.quick_login_enabled ?? record.quickLoginEnabled),
   }
 }
@@ -543,18 +547,21 @@ async function fetchGcashPayments() {
 }
 
 function cashierPayload(data) {
-  const role = String(data.role || '').trim() === 'manager' ? 'manager' : 'cashier'
+  const requestedRole = String(data.role || '').trim() === 'manager' ? 'manager' : 'cashier'
+  const cashierBarcode = String(data.cashierBarcode || data.void_barcode || '').trim()
+  const staffBarcode = requestedRole === 'manager' && cashierBarcode && !cashierBarcode.startsWith('92')
+    ? `92${cashierBarcode}`
+    : cashierBarcode
   const payload = {
     name: String(data.name || '').trim(),
     email: String(data.email || '').trim(),
     shift: data.shift || 'Morning',
     status: data.status || 'active',
-    role,
+    role: 'cashier',
     emailVisibility: true,
   }
 
-  const cashierBarcode = String(data.cashierBarcode || data.void_barcode || '').trim()
-  if (cashierBarcode) payload.void_barcode = cashierBarcode
+  if (staffBarcode) payload.void_barcode = staffBarcode
 
   if (String(data.password || '').trim()) {
     payload.password = data.password
@@ -1118,18 +1125,25 @@ async function listDesktopStaff(role = 'cashier') {
   if (await isCloudReachable()) {
     const [cloudRecords, salesTotals] = await Promise.all([
       pb.collection('users').getFullList({
-        filter: `role = "${staffRole}"`,
         sort: 'name,email',
         requestKey: null,
       }),
       salesByCashier(),
     ])
-    const records = await ensureQuickLoginEmailVisibility(cloudRecords)
+    const staffRecords = cloudRecords.filter((record) => {
+      const isManager = record.role === 'manager' || (record.role === 'cashier' && String(record.void_barcode || '').startsWith('92'))
+      return staffRole === 'manager' ? isManager : record.role === 'cashier' && !isManager
+    })
+    const records = await ensureQuickLoginEmailVisibility(staffRecords)
     await cacheUsers(records)
     return records.map((record) => toCashierUser(record, salesTotals.get(record.id)))
   }
 
-  return (await adminDb.users.where('role').equals(staffRole).toArray()).map(toCashierUser)
+  const localUsers = await adminDb.users.where('role').equals('cashier').toArray()
+  const filtered = staffRole === 'manager'
+    ? localUsers.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92'))
+    : localUsers.filter((user) => !String(user.void_barcode || user.cashierBarcode || '').startsWith('92'))
+  return filtered.map(toCashierUser)
 }
 
 async function listDesktopCashiers() {

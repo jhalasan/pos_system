@@ -1,12 +1,14 @@
 import { useCallback, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
+import Modal from '../components/Modal'
 import { IconDollar, IconDownload, IconList, IconSearch, IconUsers } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { currentAdminUser } from '../auth'
+import { buildShiftCloseReceiptText } from '../../cashier-pos/services/receiptPrinter'
 
 const AUDIT_REVIEW_KEY = 'nexa_reviewed_cash_audits'
 const PAGE_SIZE = 10
@@ -148,6 +150,10 @@ function parseCashCountLog(log) {
     ...log,
     cashierName: cashierNameFromDetail(detail, log.user || 'Cashier'),
     device: deviceFromDetail(detail),
+    openingAmount: optionalAmountAfter('beginning', detail),
+    cashSales: optionalAmountAfter('cash sales', detail),
+    cashIn: optionalAmountAfter('cash in', detail),
+    cashOut: optionalAmountAfter('cash out', detail),
     expected,
     actual,
     variance,
@@ -157,6 +163,35 @@ function parseCashCountLog(log) {
     isAdminOverride: adminOverride,
     automaticCashCount: optionalAmountAfter('automatic cash count', detail),
   }
+}
+
+function denominationsFromBreakdown(breakdown = '') {
+  return String(breakdown || '')
+    .split(',')
+    .map((item) => item.trim().match(/^(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)/i))
+    .filter(Boolean)
+    .map((match) => ({
+      count: Number(match[1]) || 0,
+      denomination: Number(match[2]) || 0,
+    }))
+    .filter((item) => item.count > 0 && item.denomination > 0)
+}
+
+function zReadTextFromCashCount(row) {
+  return buildShiftCloseReceiptText({
+    cashierName: row.cashierName,
+    openedAt: row.openedAt || row.time,
+    closedAt: row.time,
+    openingAmount: row.openingAmount ?? 0,
+    cashSales: row.cashSales ?? 0,
+    cashIn: row.cashIn ?? 0,
+    cashOut: row.cashOut ?? 0,
+    expectedCash: row.expected ?? 0,
+    actualCash: row.actual ?? 0,
+    variance: row.variance ?? ((Number(row.actual) || 0) - (Number(row.expected) || 0)),
+    countMode: row.countMode === 'denomination' ? 'denomination' : 'manual',
+    denominations: denominationsFromBreakdown(row.breakdown),
+  })
 }
 
 function loadReviewedAudits() {
@@ -183,6 +218,7 @@ export default function Audit() {
   const [logVisibleState, setLogVisibleState] = useState({ key: '', count: PAGE_SIZE })
   const [toast, setToast] = useState('')
   const [reviewedAudits, setReviewedAudits] = useState(loadReviewedAudits)
+  const [selectedCashCount, setSelectedCashCount] = useState(null)
 
   const { fromDate, toDate } = filterDates(dateRange, customFrom, customTo)
   const reviewKey = `${fromDate || 'all'}:${toDate || 'all'}`
@@ -767,7 +803,12 @@ export default function Audit() {
                 const variance = row.variance ?? 0
                 const status = varianceStatus(row.actual ?? 0, row.expected ?? 0, true)
                 return (
-                  <tr key={row.id}>
+                  <tr
+                    key={row.id}
+                    className="cash-count-report-row"
+                    onClick={() => setSelectedCashCount(row)}
+                    title="View Z-read report"
+                  >
                     <td>{formatDate(row.time)}</td>
                     <td>{row.cashierName}</td>
                     <td><span className="badge badge-info">{row.action}</span></td>
@@ -784,7 +825,18 @@ export default function Audit() {
                       )}
                     </td>
                     <td>{row.device || '-'}</td>
-                    <td className="muted">{row.breakdown || '-'}</td>
+                    <td className="muted">
+                      <button
+                        type="button"
+                        className="link-btn cash-count-report-link"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setSelectedCashCount(row)
+                        }}
+                      >
+                        {row.breakdown || 'View Z-read'}
+                      </button>
+                    </td>
                   </tr>
                 )
               })}
@@ -795,6 +847,26 @@ export default function Audit() {
           </table>
         </div>
       </div>
+      {selectedCashCount && (
+        <Modal
+          title="Z-Read Report"
+          onClose={() => setSelectedCashCount(null)}
+          footer={
+            <button className="btn btn-primary" onClick={() => setSelectedCashCount(null)}>
+              Close
+            </button>
+          }
+        >
+          <div className="z-read-report-modal">
+            <div className="z-read-report-summary">
+              <strong>{selectedCashCount.cashierName}</strong>
+              <span>{formatDate(selectedCashCount.time)}</span>
+              <span>{selectedCashCount.device || 'No device recorded'}</span>
+            </div>
+            <pre>{zReadTextFromCashCount(selectedCashCount)}</pre>
+          </div>
+        </Modal>
+      )}
       </>
       ) : (
       <>

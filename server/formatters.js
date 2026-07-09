@@ -134,7 +134,10 @@ export function productFormData(input, categoryId, file) {
 
 export function toCashier(record, sales = 0) {
   const email = record.email || ''
-  const role = record.role || 'cashier'
+  const barcode = record.void_barcode || ''
+  const role = record.role === 'manager' || (record.role === 'cashier' && String(barcode).startsWith('92'))
+    ? 'manager'
+    : (record.role || 'cashier')
 
   return {
     id: record.id,
@@ -145,7 +148,7 @@ export function toCashier(record, sales = 0) {
     shift: record.shift || 'Morning',
     status: record.status || 'active',
     quickLoginEnabled: Boolean(record.quick_login_enabled),
-    cashierBarcode: record.void_barcode || '',
+    cashierBarcode: barcode,
     image: firstFileValue(record.profile_img) || '',
     imageUrl: profileImageUrl(record),
     sales: Number(sales) || 0,
@@ -169,19 +172,21 @@ export function toUserAccount(record) {
 
 export function cashierPayload(input = {}) {
   const password = input.password || process.env.DEFAULT_CASHIER_PASSWORD || 'cashier123'
-  const role = ['cashier', 'manager'].includes(String(input.role || '').trim())
-    ? String(input.role).trim()
-    : 'cashier'
+  const requestedRole = String(input.role || '').trim() === 'manager' ? 'manager' : 'cashier'
+  const barcode = String(input.cashierBarcode || input.void_barcode || '').trim()
+  const staffBarcode = requestedRole === 'manager' && barcode && !barcode.startsWith('92')
+    ? `92${barcode}`
+    : barcode
 
   return {
     name: String(input.name || '').trim(),
     email: String(input.email || '').trim(),
     shift: input.shift || 'Morning',
     status: input.status || 'active',
-    void_barcode: String(input.cashierBarcode || input.void_barcode || '').trim(),
+    void_barcode: staffBarcode,
     password,
     passwordConfirm: password,
-    role,
+    role: 'cashier',
     emailVisibility: true,
   }
 }

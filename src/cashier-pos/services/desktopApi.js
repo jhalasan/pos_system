@@ -57,6 +57,9 @@ function toQuickLoginAccount(record) {
     id: record.id,
     email,
     name: name || email.split('@')[0] || 'Cashier',
+    role: record.role || 'cashier',
+    status: record.status || 'active',
+    shift: record.shift || '',
     cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
   }
 }
@@ -68,6 +71,7 @@ function toCachedQuickLoginAccount(record) {
     name: String(record.name || '').trim() || String(record.email || '').trim().split('@')[0] || 'Cashier',
     role: record.role || 'cashier',
     status: record.status || 'active',
+    shift: record.shift || '',
     quickLoginEnabled: Boolean(record.quickLoginEnabled ?? record.quick_login_enabled),
     cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
   }
@@ -100,7 +104,7 @@ async function cacheQuickLoginAccounts(records = []) {
 async function cachedQuickLoginAccounts() {
   await initializeCashierDb()
   return cashierDb.quickLoginAccounts
-    .filter((account) => account.role === 'cashier' && account.status === 'active' && account.quickLoginEnabled)
+    .filter((account) => account.role === 'cashier' && !String(account.cashierBarcode || '').startsWith('92') && account.status === 'active' && account.quickLoginEnabled)
     .toArray()
     .then((records) => records.map(toQuickLoginAccount))
 }
@@ -111,7 +115,7 @@ async function adminCachedCashierQuickLoginAccounts() {
     return adminDb.users
       .where('role')
       .equals('cashier')
-      .filter((account) => account.status === 'active' && Boolean(account.quick_login_enabled ?? account.quickLoginEnabled))
+      .filter((account) => !String(account.cashierBarcode || account.void_barcode || '').startsWith('92') && account.status === 'active' && Boolean(account.quick_login_enabled ?? account.quickLoginEnabled))
       .toArray()
       .then((records) => records.map(toQuickLoginAccount).filter((account) => account.email))
   } catch {
@@ -385,11 +389,11 @@ async function authorizeManagerApproval(authorization = {}) {
     }
 
     const legacyManager = await activeRuntime.pb.collection('users').getFirstListItem(
-      activeRuntime.pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin") && status != "inactive"', { code }),
+      activeRuntime.pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin" || role = "cashier") && status != "inactive"', { code }),
       { requestKey: null },
     ).catch(() => null)
 
-    if (legacyManager) {
+    if (legacyManager && (legacyManager.role !== 'cashier' || code.startsWith('92'))) {
       return {
         id: legacyManager.id,
         name: legacyManager.name || legacyManager.email || 'Manager',
@@ -405,7 +409,9 @@ async function authorizeManagerApproval(authorization = {}) {
     const auth = await adminClient.collection('users').authWithPassword(email, password)
     const manager = auth.record
 
-    if (!['manager', 'admin'].includes(manager?.role)) throw new Error('Only manager accounts can approve cashier overrides.')
+    if (!['manager', 'admin'].includes(manager?.role) && !(manager?.role === 'cashier' && String(manager?.void_barcode || '').startsWith('92'))) {
+      throw new Error('Only manager accounts can approve cashier overrides.')
+    }
     if (manager?.status === 'inactive') throw new Error('This manager account is inactive.')
 
     return {
@@ -435,6 +441,10 @@ export const desktopCashierApi = {
       activeRuntime.logout()
       throw new Error('Only cashier accounts can access this area.')
     }
+    if (String(auth.record?.void_barcode || '').startsWith('92')) {
+      activeRuntime.logout()
+      throw new Error('Manager accounts are for approvals, not cashier POS login.')
+    }
     if (auth.record?.status === 'inactive') {
       activeRuntime.logout()
       throw new Error('This account is inactive.')
@@ -446,7 +456,7 @@ export const desktopCashierApi = {
     })
     void activeRuntime.pb.collection('users').getFullList({
       filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
-      fields: 'id,name,email,role,status,quick_login_enabled,void_barcode',
+      fields: 'id,name,email,role,shift,status,quick_login_enabled,void_barcode',
       sort: 'name',
       requestKey: null,
     }).then(cacheQuickLoginAccounts).catch(() => {})
@@ -465,7 +475,7 @@ export const desktopCashierApi = {
     await initializeCashierDb()
 
     let account = await cashierDb.quickLoginAccounts
-      .filter((record) => record.role === 'cashier' && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
+      .filter((record) => record.role === 'cashier' && !String(record.cashierBarcode || '').startsWith('92') && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
       .first()
 
     if (!account) {
@@ -474,7 +484,7 @@ export const desktopCashierApi = {
         account = await adminDb.users
           .where('role')
           .equals('cashier')
-          .filter((record) => record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
+          .filter((record) => !String(record.cashierBarcode || record.void_barcode || '').startsWith('92') && record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
           .first()
       } catch {
         account = null
@@ -482,6 +492,7 @@ export const desktopCashierApi = {
     }
 
     if (!account && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      if (code.startsWith('92')) throw new Error('Manager barcodes are for approvals, not cashier POS login.')
       const activeRuntime = await runtime()
       const record = await activeRuntime.pb.collection('users').getFirstListItem(
         activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier" && status != "inactive"', { code }),
@@ -530,13 +541,14 @@ export const desktopCashierApi = {
     const activeRuntime = await runtime()
     return activeRuntime.pb.collection('users').getFullList({
       filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
-      fields: 'id,name,email,role,status,quick_login_enabled,void_barcode',
+      fields: 'id,name,email,role,shift,status,quick_login_enabled,void_barcode',
       sort: 'name',
       requestKey: null,
     })
       .then(async (records) => {
         await cacheQuickLoginAccounts(records)
         return mergeAccountsById(records.map(toQuickLoginAccount), cachedAccounts, adminCachedAccounts)
+          .filter((account) => !String(account.cashierBarcode || '').startsWith('92'))
           .filter((account) => account.email)
       })
       .catch((error) => {
