@@ -2134,7 +2134,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const closePaymentFlow = () => {
-    if (paymentFlow.step !== 'amount') return;
+    if (paymentFlow.step !== 'amount' && !paymentFlow.completedTxn) return;
     setPaymentFlow({
       open: false,
       step: 'amount',
@@ -3047,10 +3047,12 @@ const Cashier = ({ onLogout, user }) => {
         isOpen={paymentFlow.open}
         onClose={paymentFlow.busy ? () => {} : closePaymentFlow}
         title={paymentFlow.method === 'gcash' ? 'Complete GCash Sale' : paymentFlow.method === 'split' ? 'Complete Split Sale' : 'Complete Cash Sale'}
-        closeButton={!paymentFlow.busy && paymentFlow.step === 'amount'}
+        closeButton={!paymentFlow.busy && (paymentFlow.step === 'amount' || Boolean(paymentFlow.completedTxn))}
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || paymentFlow.step !== 'amount'}>Cancel</button>
+            <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || (paymentFlow.step !== 'amount' && !paymentFlow.completedTxn)}>
+              {paymentFlow.step === 'amount' ? 'Cancel' : 'Close'}
+            </button>
             <button className="btn btn-primary" onClick={advancePaymentFlow} disabled={paymentFlow.busy}>
               {paymentFlow.busy
                 ? 'Processing...'
