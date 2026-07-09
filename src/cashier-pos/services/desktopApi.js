@@ -385,7 +385,7 @@ async function authorizeManagerApproval(authorization = {}) {
     }
 
     const legacyManager = await activeRuntime.pb.collection('users').getFirstListItem(
-      activeRuntime.pb.filter('void_barcode = {:code} && role = "admin"', { code }),
+      activeRuntime.pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin") && status != "inactive"', { code }),
       { requestKey: null },
     ).catch(() => null)
 
@@ -403,20 +403,20 @@ async function authorizeManagerApproval(authorization = {}) {
     const adminClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL)
     adminClient.autoCancellation(false)
     const auth = await adminClient.collection('users').authWithPassword(email, password)
-    const admin = auth.record
+    const manager = auth.record
 
-    if (admin?.role !== 'admin') throw new Error('Only admin accounts can approve completed transaction voids.')
-    if (admin?.status === 'inactive') throw new Error('This admin account is inactive.')
+    if (!['manager', 'admin'].includes(manager?.role)) throw new Error('Only manager accounts can approve cashier overrides.')
+    if (manager?.status === 'inactive') throw new Error('This manager account is inactive.')
 
     return {
-      id: admin.id,
-      name: admin.name || admin.email || 'Manager',
-      email: admin.email || '',
+      id: manager.id,
+      name: manager.name || manager.email || 'Manager',
+      email: manager.email || '',
       method: 'password',
     }
   }
 
-  throw new Error('Manager approval requires a barcode or admin email and password.')
+  throw new Error('Manager approval requires a barcode or manager email and password.')
 }
 
 export const desktopCashierApi = {

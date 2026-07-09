@@ -40,6 +40,14 @@ function amountAfter(label, detail = '') {
   return match ? Number(match[1].replace(/,/g, '')) || 0 : 0
 }
 
+function optionalAmountAfter(label, detail = '') {
+  const pattern = new RegExp(`${label}\\s+PHP\\s*([+-]?[\\d,.]+)`, 'i')
+  const match = String(detail).match(pattern)
+  if (!match) return null
+  const amount = Number(match[1].replace(/,/g, ''))
+  return Number.isFinite(amount) ? amount : null
+}
+
 function cashFlowAmount(log) {
   const detail = String(log.detail || '')
   const signed = amountAfter('signed', detail)
@@ -100,7 +108,7 @@ function textAfter(label, detail = '') {
 
 function countModeFromDetail(detail = '') {
   const detail_str = String(detail || '')
-  const match = detail_str.match(/count\s+mode:\s*([a-z\-]+)/i)
+  const match = detail_str.match(/count\s+mode:?\s*([a-z-]+)/i)
   return match ? match[1].trim().toLowerCase() : ''
 }
 
@@ -112,12 +120,43 @@ function isAdminOverride(detail = '') {
   return hasAdminOverrideMarker(detail) || countModeFromDetail(detail) === 'admin-override'
 }
 
-function isDenominationCount(detail = '') {
-  return countModeFromDetail(detail) === 'denomination'
-}
-
 function breakdownFromDetail(detail = '') {
   return String(detail).match(/denominations:\s*(.+?)(?=;|$)/i)?.[1]?.trim() || textAfter('breakdown', detail)
+}
+
+function countMethodLabel(countMode = '', isAdmin = false) {
+  if (isAdmin || countMode === 'admin-override') return 'Admin Override'
+  if (countMode === 'denomination') return 'Cash Count'
+  if (countMode === 'manual') return 'Manual Count'
+  return countMode ? countMode.replace(/-/g, ' ') : 'Manual Count'
+}
+
+function parseCashCountLog(log) {
+  if (log?.action !== 'Cash Audit' && log?.action !== 'Shift Close') return null
+  const detail = String(log.detail || '')
+  const expected = optionalAmountAfter('expected', detail)
+  const actual = optionalAmountAfter('actual', detail)
+    ?? optionalAmountAfter('on hand', detail)
+    ?? optionalAmountAfter('ending', detail)
+  const loggedVariance = optionalAmountAfter('variance', detail)
+  const variance = loggedVariance ?? (
+    expected !== null && actual !== null ? actual - expected : null
+  )
+  const countMode = countModeFromDetail(detail)
+  const adminOverride = isAdminOverride(detail)
+  return {
+    ...log,
+    cashierName: cashierNameFromDetail(detail, log.user || 'Cashier'),
+    device: deviceFromDetail(detail),
+    expected,
+    actual,
+    variance,
+    countMode,
+    countMethod: countMethodLabel(countMode, adminOverride),
+    breakdown: breakdownFromDetail(detail),
+    isAdminOverride: adminOverride,
+    automaticCashCount: optionalAmountAfter('automatic cash count', detail),
+  }
 }
 
 function loadReviewedAudits() {
@@ -216,30 +255,29 @@ export default function Audit() {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
         const logTime = new Date(log.time).getTime() || 0
         const isLatestShiftAudit = logTime >= row.latestShiftAuditTime
-        const countMode = countModeFromDetail(log.detail)
-        const isAdmin = isAdminOverride(log.detail)
-        const breakdown = breakdownFromDetail(log.detail)
+        const cashCount = parseCashCountLog(log)
+        const countMode = cashCount?.countMode || ''
+        const isAdmin = Boolean(cashCount?.isAdminOverride)
+        const breakdown = cashCount?.breakdown || ''
         
         if (isLatestShiftAudit) {
           row.latestShiftAuditTime = logTime
-          row.cashBeginning = amountAfter('beginning', log.detail) || row.cashBeginning
-          row.expectedCashEnding = amountAfter('expected', log.detail) || row.expectedCashEnding
-          row.actualCashEnding = amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || row.actualCashEnding
-          row.automaticCashCount = amountAfter('automatic cash count', log.detail) || row.automaticCashCount
-          // Always set countMode from the log detail, never fallback to old value
+          row.cashBeginning = optionalAmountAfter('beginning', log.detail) ?? row.cashBeginning
+          row.expectedCashEnding = cashCount?.expected ?? row.expectedCashEnding
+          row.actualCashEnding = cashCount?.actual ?? row.actualCashEnding
+          row.automaticCashCount = cashCount?.automaticCashCount ?? row.automaticCashCount
           row.countMode = countMode
           row.breakdown = breakdown
-          row.variance = amountAfter('variance', log.detail)
+          row.variance = cashCount?.variance ?? row.variance
           row.hasManualAudit = true
-          // Always set isAdminOverride from current log
           row.isAdminOverride = isAdmin
         }
         row.entries.push({
           ...log,
-          amount: amountAfter('actual', log.detail) || amountAfter('on hand', log.detail) || 0,
+          amount: cashCount?.actual ?? 0,
           category: countMode ? `Count: ${countMode}` : '',
-          device: deviceFromDetail(log.detail),
-          automaticCashCount: amountAfter('automatic cash count', log.detail),
+          device: cashCount?.device || deviceFromDetail(log.detail),
+          automaticCashCount: cashCount?.automaticCashCount,
           breakdown,
           isAdminOverride: isAdmin,
         })
@@ -283,7 +321,7 @@ export default function Audit() {
         ? (Number.isFinite(row.variance) && Math.abs(row.variance) > 0.000001 ? row.variance : (actual - expected))
         : 0
       const flags = []
-      if (row.isAdminOverride) flags.push('⚠️ Admin Override')
+      if (row.isAdminOverride) flags.push('Admin Override')
       if (!row.hasManualAudit) flags.push('Missing closing count')
       if (Math.abs(variance) >= 1) flags.push(variance < 0 ? 'Cash shortage' : 'Cash overage')
       if (row.registerOpens >= 5) flags.push('Many drawer opens')
@@ -318,25 +356,38 @@ export default function Audit() {
     return (logs || [])
       .filter((log) => auditActions.has(log.action) && inLogRange(log.time))
       .map((log) => {
-        const countMode = countModeFromDetail(log.detail)
+        const cashCount = parseCashCountLog(log)
+        const countMode = cashCount?.countMode || countModeFromDetail(log.detail)
+        const countAmount = cashCount?.actual ?? (
+          amountAfter('actual', log.detail)
+          || amountAfter('beginning', log.detail)
+          || amountAfter('cash out', log.detail)
+          || amountAfter('cash in', log.detail)
+          || 0
+        )
         return {
           ...log,
-          cashierName: cashierNameFromDetail(log.detail, log.user || 'Cashier'),
-          device: deviceFromDetail(log.detail),
+          cashierName: cashCount?.cashierName || cashierNameFromDetail(log.detail, log.user || 'Cashier'),
+          device: cashCount?.device || deviceFromDetail(log.detail),
           amount: log.action === 'Cash In' || log.action === 'Cash Out'
             ? Math.abs(cashFlowAmount(log))
-            : amountAfter('actual', log.detail)
-              || amountAfter('beginning', log.detail)
-              || amountAfter('cash out', log.detail)
-              || amountAfter('cash in', log.detail)
-              || 0,
-          isAdminOverride: isAdminOverride(log.detail),
+            : countAmount,
+          isAdminOverride: cashCount?.isAdminOverride ?? isAdminOverride(log.detail),
           countMode,
-          breakdown: breakdownFromDetail(log.detail),
+          countMethod: cashCount?.countMethod || countMethodLabel(countMode, isAdminOverride(log.detail)),
+          breakdown: cashCount?.breakdown || breakdownFromDetail(log.detail),
         }
       })
       .sort((a, b) => new Date(b.time) - new Date(a.time))
   }, [logs, inLogRange])
+
+  const cashCountRows = useMemo(() => (
+    (logs || [])
+      .filter((log) => (log.action === 'Cash Audit' || log.action === 'Shift Close') && inRange(log.time))
+      .map(parseCashCountLog)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.time) - new Date(a.time))
+  ), [logs, inRange])
 
   const search = query.trim().toLowerCase()
   const filteredAuditRows = useMemo(() => {
@@ -356,6 +407,22 @@ export default function Audit() {
       row.variance,
     ].some((value) => String(value || '').toLowerCase().includes(search)))
   }, [auditRows, search])
+
+  const filteredCashCountRows = useMemo(() => {
+    if (!search) return cashCountRows
+    return cashCountRows.filter((row) => [
+      row.cashierName,
+      row.action,
+      row.device,
+      row.expected,
+      row.actual,
+      row.variance,
+      row.countMethod,
+      row.breakdown,
+      row.detail,
+      row.time,
+    ].some((value) => String(value || '').toLowerCase().includes(search)))
+  }, [cashCountRows, search])
 
   const logSearch = logQuery.trim().toLowerCase()
   const logActionOptions = useMemo(() => (
@@ -466,6 +533,13 @@ export default function Audit() {
         </button>
         <button
           type="button"
+          className={`scan-mode ${subTab === 'cash-counts' ? 'active' : ''}`}
+          onClick={() => setSubTab('cash-counts')}
+        >
+          Cash Counts
+        </button>
+        <button
+          type="button"
           className={`scan-mode ${subTab === 'logs' ? 'active' : ''}`}
           onClick={() => setSubTab('logs')}
         >
@@ -556,9 +630,11 @@ export default function Audit() {
                     {row.isAdminOverride ? (
                       <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e' }}>Admin Override</span>
                     ) : row.countMode === 'denomination' ? (
-                      <span className="badge badge-success" title={row.breakdown}>{row.breakdown || 'Denomination'}</span>
+                      <span className="badge badge-success" title={row.breakdown}>Cash Count</span>
+                    ) : !row.hasManualAudit ? (
+                      <span className="badge badge-warning">Not Counted</span>
                     ) : (
-                      <span className="muted">Manual</span>
+                      <span className="muted">{countMethodLabel(row.countMode, false)}</span>
                     )}
                   </td>
                   <td>{peso(row.variance)}</td>
@@ -608,6 +684,112 @@ export default function Audit() {
               ))}
               {filteredAuditRows.length === 0 && (
                 <tr><td colSpan="7" className="muted">No cash flow matches the selected filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </>
+      ) : subTab === 'cash-counts' ? (
+      <>
+      <div className="card">
+        <div className="panel-body">
+          <div className="receipt-filter-grid compact-filter-grid">
+            <div className="field span-2">
+              <span>Search Cash Counts</span>
+              <div className="input-search">
+                <IconSearch size={16} />
+                <input
+                  className="input"
+                  placeholder="Search cashier, method, amount, device..."
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+              </div>
+            </div>
+            <label className="field">
+              <span>Date Range</span>
+              <select className="select" value={dateRange} onChange={(event) => setDateRange(event.target.value)}>
+                <option value="all">All dates</option>
+                <option value="today">Today</option>
+                <option value="7days">Last 7 days</option>
+                <option value="month">This month</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </label>
+            {dateRange === 'custom' && (
+              <>
+                <label className="field">
+                  <span>From</span>
+                  <input className="input" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} />
+                </label>
+                <label className="field">
+                  <span>To</span>
+                  <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />
+                </label>
+              </>
+            )}
+            <label className="field">
+              <span>Selected Date</span>
+              <div className="input" style={{ display: 'flex', alignItems: 'center', minHeight: 36 }}>
+                {selectedDateLabel}
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="panel-head">
+          <div>
+            <h3>Cash Count History</h3>
+            <span className="sub">Cash counts and shift closing counts for {selectedDateLabel}.</span>
+          </div>
+          <span className="muted">{filteredCashCountRows.length} count(s)</span>
+        </div>
+        <div className="table-wrap">
+          <table className="data">
+            <thead>
+              <tr>
+                <th>Date / Time</th>
+                <th>Cashier</th>
+                <th>Type</th>
+                <th>Expected</th>
+                <th>Actual Count</th>
+                <th>Variance</th>
+                <th>Method</th>
+                <th>Device</th>
+                <th>Breakdown</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredCashCountRows.map((row) => {
+                const variance = row.variance ?? 0
+                const status = varianceStatus(row.actual ?? 0, row.expected ?? 0, true)
+                return (
+                  <tr key={row.id}>
+                    <td>{formatDate(row.time)}</td>
+                    <td>{row.cashierName}</td>
+                    <td><span className="badge badge-info">{row.action}</span></td>
+                    <td>{row.expected !== null ? peso(row.expected) : '-'}</td>
+                    <td><strong>{row.actual !== null ? peso(row.actual) : '-'}</strong></td>
+                    <td><span className={`badge ${status.badge}`}>{peso(variance)}</span></td>
+                    <td>
+                      {row.isAdminOverride ? (
+                        <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e' }}>Admin Override</span>
+                      ) : row.countMode === 'denomination' ? (
+                        <span className="badge badge-success">Cash Count</span>
+                      ) : (
+                        <span className="muted">{row.countMethod}</span>
+                      )}
+                    </td>
+                    <td>{row.device || '-'}</td>
+                    <td className="muted">{row.breakdown || '-'}</td>
+                  </tr>
+                )
+              })}
+              {filteredCashCountRows.length === 0 && (
+                <tr><td colSpan="9" className="muted">No cash counts for this date range.</td></tr>
               )}
             </tbody>
           </table>
@@ -699,8 +881,8 @@ export default function Audit() {
                   <td>{log.cashierName}</td>
                   <td>
                     <span className="badge badge-info">{log.action}</span>
-                    {log.isAdminOverride && <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e', marginLeft: 6 }}>🔐 Admin</span>}
-                    {log.countMode === 'denomination' && <span className="badge badge-success" style={{ marginLeft: 6 }} title={log.breakdown}>📊 {log.breakdown}</span>}
+                    {log.isAdminOverride && <span className="badge" style={{ backgroundColor: '#fed7aa', color: '#92400e', marginLeft: 6 }}>Admin Override</span>}
+                    {log.countMode === 'denomination' && <span className="badge badge-success" style={{ marginLeft: 6 }} title={log.breakdown}>Cash Count</span>}
                   </td>
                   <td>{log.device || '-'}</td>
                   <td>{log.amount ? peso(log.amount) : '-'}</td>

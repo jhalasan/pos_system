@@ -48,6 +48,10 @@ function barcodePrinterName(options = {}) {
   return String(options.printerName || savedBarcodePrintSettings().printerName || savedReceiptPrinterName() || import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME).trim()
 }
 
+function isPdfLikePrinter(printerName = '') {
+  return /pdf|xps|document\s+writer|onenote/i.test(String(printerName || ''))
+}
+
 function center(text = '') {
   const value = cleanText(text).slice(0, RECEIPT_WIDTH)
   const left = Math.max(0, Math.floor((RECEIPT_WIDTH - value.length) / 2))
@@ -104,7 +108,7 @@ function buildBarcodeText(labels, copies) {
   return expandLabels(labels, copies).map(buildLabelText).join('\n')
 }
 
-function barcodeSvg(value) {
+export function barcodeSvg(value) {
   const { bars, width } = code128Bars(value)
   const rects = bars.map((bar) => `<rect x="${bar.x}" y="0" width="${bar.width}" height="70" fill="#111827" />`).join('')
   return `<svg viewBox="0 0 ${width} 78" preserveAspectRatio="none" aria-label="Barcode ${escapeHtml(value)}">${rects}</svg>`
@@ -451,9 +455,10 @@ export function savedBarcodePrintSettings() {
     return {
       printerName: String(settings.printerName || '').trim(),
       copies: clampNumber(settings.copies, 1, 1, 99),
+      pdfDirectory: String(settings.pdfDirectory || '').trim(),
     }
   } catch {
-    return { printerName: '', copies: 1 }
+    return { printerName: '', copies: 1, pdfDirectory: '' }
   }
 }
 
@@ -463,9 +468,16 @@ export function saveBarcodePrintSettings(settings = {}) {
     ...settings,
   }
   next.printerName = String(next.printerName || '').trim()
+  next.pdfDirectory = String(next.pdfDirectory || '').trim()
   next.copies = clampNumber(next.copies, 1, 1, 99)
   localStorage.setItem(BARCODE_PRINT_SETTINGS_KEY, JSON.stringify(next))
   return next
+}
+
+export async function selectBarcodePdfDirectory() {
+  const invoke = tauriInvoke()
+  if (!invoke) throw new Error('Folder selection is only available in the desktop app.')
+  return invoke('select_export_folder')
 }
 
 export async function listBarcodePrinters() {
@@ -506,6 +518,20 @@ export async function printBarcodeLabels(inputLabels, options = {}) {
       preview: true,
       printerName: previewPrinterName,
       copies: labels.length * copies,
+    }
+  }
+
+  if (invoke && !useBrowserPrint && isPdfLikePrinter(printerName)) {
+    const path = await saveBarcodeLabelsPdf(labels, {
+      ...options,
+      copies,
+      documentName,
+    })
+    return {
+      printerName,
+      copies: labels.length * copies,
+      path,
+      saved: Boolean(path),
     }
   }
 
@@ -551,6 +577,14 @@ export async function saveBarcodeLabelsPdf(inputLabels, options = {}) {
   const invoke = tauriInvoke()
 
   if (invoke) {
+    const directory = String(options.pdfDirectory || options.directory || '').trim()
+    if (directory) {
+      return invoke('write_export_file', {
+        directory,
+        filename,
+        contents,
+      })
+    }
     return invoke('save_print_file', {
       defaultFilename: filename,
       contents,

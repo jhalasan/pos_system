@@ -10,7 +10,7 @@ const titles = {
   inventory: 'Inventory',
   products: 'Product Management',
   barcodes: 'Barcode Tools',
-  cashiers: 'Cashier Management',
+  cashiers: 'Staff Management',
   analytics: 'Analytics',
   'transaction-logs': 'Transaction Logs',
   receipts: 'Transaction Logs',

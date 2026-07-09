@@ -115,7 +115,7 @@ export function buildShiftCloseReceiptText({
   return [
     center(STORE_NAME),
     ...STORE_ADDRESS_LINES.map(center),
-    center('SHIFT CLOSE REPORT'),
+    center('Z-READ REPORT'),
     line(),
     columns('Cashier', cashierName || 'Cashier'),
     columns('Opened', openedDate.toLocaleString('en-PH')),
@@ -271,7 +271,7 @@ function buildPrintableHtml(receipts) {
 </html>`
 }
 
-function receiptTexts(receiptData, options = {}) {
+function receiptTexts(receiptData) {
   const copies = envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
   return Array.from({ length: copies }, () => buildReceiptText(receiptData))
 }

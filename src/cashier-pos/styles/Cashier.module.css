@@ -623,6 +623,36 @@
   gap: 5px;
 }
 
+.receipt-printer-select {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  padding: 4px 8px 4px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.receipt-printer-select span {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.receipt-printer-select select {
+  width: min(100%, 320px);
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13px;
+  outline: 0;
+}
+
 .receipt-printer-setting small {
   color: #64748b;
   font-size: 12px;
@@ -833,6 +863,48 @@
   border-color: #16a34a;
   background: #dcfce7;
   color: #166534;
+}
+
+.z-read-preview-panel {
+  margin-top: 18px;
+  border: 1px solid #dbe3ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  overflow: hidden;
+}
+
+.z-read-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #dbe3ef;
+  color: #0f172a;
+}
+
+.z-read-preview-head strong,
+.z-read-preview-head span {
+  display: block;
+}
+
+.z-read-preview-head span {
+  color: #4f46e5;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.z-read-preview-panel pre {
+  width: min(100%, 320px);
+  margin: 14px auto;
+  padding: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #111827;
+  font: 12px/1.45 Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
 }
 
 @media (max-width: 720px) {
@@ -2207,6 +2279,7 @@
 :global(:root.theme-dark) .transaction-summary-strip,
 :global(:root.theme-dark) .search-result-item,
 :global(:root.theme-dark) .receipt-settings-toggle,
+:global(:root.theme-dark) .receipt-printer-select,
 :global(:root.theme-dark) .shortcut-row,
 :global(:root[data-theme="dark"]) .cashier-header,
 :global(:root[data-theme="dark"]) .add-product-section,
@@ -2215,6 +2288,7 @@
 :global(:root[data-theme="dark"]) .transaction-summary-strip,
 :global(:root[data-theme="dark"]) .search-result-item,
 :global(:root[data-theme="dark"]) .receipt-settings-toggle,
+:global(:root[data-theme="dark"]) .receipt-printer-select,
 :global(:root[data-theme="dark"]) .shortcut-row {
   background-color: var(--surface);
   border-color: var(--border);
@@ -2269,6 +2343,8 @@
 :global(:root.theme-dark) .filter-label,
 :global(:root.theme-dark) .settings-section-head h4,
 :global(:root.theme-dark) .receipt-settings-toggle strong,
+:global(:root.theme-dark) .receipt-printer-select span,
+:global(:root.theme-dark) .receipt-printer-select select,
 :global(:root.theme-dark) .shortcut-row strong,
 :global(:root.theme-dark) .shortcut-input,
 :global(:root[data-theme="dark"]) .header-title,
@@ -2280,6 +2356,8 @@
 :global(:root[data-theme="dark"]) .filter-label,
 :global(:root[data-theme="dark"]) .settings-section-head h4,
 :global(:root[data-theme="dark"]) .receipt-settings-toggle strong,
+:global(:root[data-theme="dark"]) .receipt-printer-select span,
+:global(:root[data-theme="dark"]) .receipt-printer-select select,
 :global(:root[data-theme="dark"]) .shortcut-row strong,
 :global(:root[data-theme="dark"]) .shortcut-input {
   color: var(--text);

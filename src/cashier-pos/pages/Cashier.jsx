@@ -7,7 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
-import { getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
+import { buildShiftCloseReceiptText, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { toBaseStockQuantity } from '../offline/stockUtils';
 import styles from '../styles/Cashier.module.css';
@@ -435,6 +435,7 @@ const Cashier = ({ onLogout, user }) => {
   const [cashierAuditSaving, setCashierAuditSaving] = useState(false);
   const [cashierAuditMessage, setCashierAuditMessage] = useState('');
   const [shiftSession, setShiftSession] = useState(() => loadCashierShift(user?.id));
+  const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
   const [shiftOpeningAmount, setShiftOpeningAmount] = useState('');
@@ -444,6 +445,8 @@ const Cashier = ({ onLogout, user }) => {
   const [shiftNote, setShiftNote] = useState('');
   const [shiftError, setShiftError] = useState('');
   const [shiftSaving, setShiftSaving] = useState(false);
+  const [shiftCloseStep, setShiftCloseStep] = useState('count');
+  const [shiftCloseDraft, setShiftCloseDraft] = useState(null);
   const [showAdminLogout, setShowAdminLogout] = useState(false);
   const [adminLogoutApprovalMethod, setAdminLogoutApprovalMethod] = useState('barcode');
   const [adminLogoutApprovalCode, setAdminLogoutApprovalCode] = useState('');
@@ -812,7 +815,19 @@ const Cashier = ({ onLogout, user }) => {
     setShiftClosingAmount(String(expectedShiftCash.toFixed(2)));
     setShiftNote('');
     setShiftError('');
+    setShiftCloseStep('count');
+    setShiftCloseDraft(null);
   };
+
+  useEffect(() => {
+    const invoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke;
+    if (!invoke) return;
+    invoke('list_printers')
+      .then((availablePrinters) => {
+        setReceiptPrinters(Array.isArray(availablePrinters) ? availablePrinters : []);
+      })
+      .catch(() => setReceiptPrinters([]));
+  }, []);
 
   const updateShiftCloseDenomination = (denomination, value) => {
     setShiftCloseDenominations((current) => ({
@@ -875,41 +890,113 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const closeShift = async (skipCashCount = false) => {
-    const closingAmount = skipCashCount ? expectedShiftCash : (
+  const buildShiftCloseDraft = (skipCashCount = false) => {
+    const shouldSkipCashCount = skipCashCount === true;
+    const closingAmount = shouldSkipCashCount ? expectedShiftCash : (
       shiftCloseCountMode === 'denomination'
         ? shiftCloseDenominationTotal
         : Number(shiftClosingAmount)
     );
     if (!Number.isFinite(closingAmount) || closingAmount < 0) {
       setShiftError('Enter a valid actual cash ending amount.');
+      return null;
+    }
+
+    const variance = closingAmount - expectedShiftCash;
+    const denominationBreakdown = shouldSkipCashCount ? [] : (
+      shiftCloseCountMode === 'denomination'
+        ? shiftCloseBreakdown
+        : []
+    );
+    const countModeUsed = shouldSkipCashCount ? 'admin-override' : shiftCloseCountMode;
+    const closed = {
+      ...shiftSession,
+      status: 'closed',
+      closingAmount,
+      expectedClosingAmount: expectedShiftCash,
+      variance,
+      countMode: countModeUsed,
+      denominations: denominationBreakdown,
+      closedAt: new Date().toISOString(),
+      closeNote: shiftNote.trim(),
+      deviceId,
+    };
+    const cashierName = closed.cashierName || user?.name || user?.email || 'Cashier';
+    const receiptData = {
+      cashierName,
+      openedAt: shiftSession?.openedAt,
+      closedAt: closed.closedAt,
+      openingAmount: shiftOpeningCash,
+      cashSales: completedCashSales,
+      cashIn: shiftCashIn,
+      cashOut: shiftCashOut,
+      expectedCash: expectedShiftCash,
+      actualCash: closingAmount,
+      variance,
+      countMode: countModeUsed,
+      denominations: denominationBreakdown,
+    };
+
+    return {
+      closed,
+      cashierName,
+      closingAmount,
+      variance,
+      denominationBreakdown,
+      countModeUsed,
+      receiptData,
+    };
+  };
+
+  const prepareShiftClosePreview = () => {
+    const draft = buildShiftCloseDraft(false);
+    if (!draft) return;
+    setShiftCloseDraft(draft);
+    setShiftCloseStep('preview');
+    setShiftError('');
+  };
+
+  const editShiftCloseCount = () => {
+    setShiftCloseStep('count');
+    setShiftCloseDraft(null);
+    setShiftError('');
+  };
+
+  const printShiftCloseDraft = async () => {
+    const draft = shiftCloseDraft || buildShiftCloseDraft(false);
+    if (!draft) return;
+    setShiftSaving(true);
+    setShiftError('');
+    try {
+      await printShiftCloseReceipt(draft.receiptData, { documentName: `Z-Read ${draft.cashierName}` });
+      setShiftCloseDraft(draft);
+      setShiftCloseStep('printed');
+      showNotification('Z-read printed. Review the drawer, then close/logout.');
+    } catch (printError) {
+      const message = (typeof printError === 'string' ? printError : printError?.message) || 'Z-read could not be printed.';
+      setShiftError(`${message} Fix the printer, then print again before closing the shift.`);
+      showNotification(message);
+    } finally {
+      setShiftSaving(false);
+    }
+  };
+
+  const closeShift = async (skipCashCount = false) => {
+    const shouldSkipCashCount = skipCashCount === true;
+    const draft = shouldSkipCashCount ? buildShiftCloseDraft(true) : shiftCloseDraft;
+    if (!draft) {
+      setShiftError('Preview and print the Z-read before closing the shift.');
+      return;
+    }
+    if (!shouldSkipCashCount && shiftCloseStep !== 'printed') {
+      setShiftError('Print the Z-read before closing the shift.');
       return;
     }
 
     setShiftSaving(true);
     setShiftError('');
     try {
-      const variance = closingAmount - expectedShiftCash;
-      // Only include denomination breakdown if: not admin override AND denomination mode was used
-      const denominationBreakdown = skipCashCount ? [] : (
-        shiftCloseCountMode === 'denomination'
-          ? shiftCloseBreakdown
-          : []
-      );
-      // Determine the count mode: admin-override takes precedence, then denomination vs manual
-      const countModeUsed = skipCashCount ? 'admin-override' : shiftCloseCountMode;
-      const closed = {
-        ...shiftSession,
-        status: 'closed',
-        closingAmount,
-        expectedClosingAmount: expectedShiftCash,
-        variance,
-        countMode: countModeUsed,
-        denominations: denominationBreakdown,
-        closedAt: new Date().toISOString(),
-        closeNote: shiftNote.trim(),
-        deviceId,
-      };
+      const { closed, variance, denominationBreakdown, countModeUsed, closingAmount } = draft;
       await cashierApi.closeCashRegisterSession?.(closed).catch(() => {});
       const denominationSummary = denominationBreakdown.length > 0
         ? `; denominations: ${denominationBreakdown.map(d => `${d.count}x${d.denomination}`).join(', ')}`
@@ -917,10 +1004,10 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Shift Close',
-        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${skipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
+        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${shouldSkipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
       }).catch(() => {});
       appendCashCountHistory({
-        type: skipCashCount ? 'admin-override-close' : 'shift-close',
+        type: shouldSkipCashCount ? 'admin-override-close' : 'shift-close',
         cashierId: closed.cashierId || user?.id || '',
         cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
         countedAt: closed.closedAt,
@@ -935,32 +1022,12 @@ const Cashier = ({ onLogout, user }) => {
         denominations: denominationBreakdown,
         deviceId,
       });
-      if (!skipCashCount) {
-        try {
-          await printShiftCloseReceipt({
-            cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
-            openedAt: shiftSession?.openedAt,
-            closedAt: closed.closedAt,
-            openingAmount: shiftOpeningCash,
-            cashSales: completedCashSales,
-            cashIn: shiftCashIn,
-            cashOut: shiftCashOut,
-            expectedCash: expectedShiftCash,
-            actualCash: closingAmount,
-            variance,
-            countMode: countModeUsed,
-            denominations: denominationBreakdown,
-          }, { documentName: `Shift Close ${closed.cashierName || user?.name || user?.email || 'Cashier'}` });
-        } catch (printError) {
-          showNotification((typeof printError === 'string' ? printError : printError?.message) || 'Shift close receipt could not be printed.');
-        }
-      }
       localStorage.removeItem(shiftStorageKey(user?.id));
       setShiftSession(null);
       setShowShiftClose(false);
       setShowAdminLogout(false);
       resetShiftCloseForm();
-      showNotification(`Shift closed${skipCashCount ? ' (admin override)' : ''}. Variance: ${money(variance)}.`);
+      showNotification(`Shift closed${shouldSkipCashCount ? ' (admin override)' : ''}. Variance: ${money(variance)}.`);
       if (onLogout) {
         onLogout();
         navigate('/login');
@@ -1350,7 +1417,7 @@ const Cashier = ({ onLogout, user }) => {
   const approvalError = (method) => (
     method === 'barcode'
       ? 'Scan or enter the manager barcode.'
-      : 'Enter the admin email and password.'
+      : 'Enter the manager email and password.'
   );
 
   const resetLookupApproval = () => {
@@ -1671,6 +1738,10 @@ const Cashier = ({ onLogout, user }) => {
     const amount = Number(cashFlowAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       setCashFlowError('Enter a valid cash flow amount.');
+      return;
+    }
+    if (cashFlowType === 'out' && amount > expectedShiftCash) {
+      setCashFlowError(`Insufficient drawer cash. Available cash is ${money(Math.max(expectedShiftCash, 0))}.`);
       return;
     }
 
@@ -2390,15 +2461,15 @@ const Cashier = ({ onLogout, user }) => {
       setAdminLogoutApproved(true);
       await cashierApi.logActivity({
         cashierId: user?.id,
-        action: 'Admin Logout Request',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} requested admin logout override.`),
+        action: 'Manager Logout Approval',
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} requested manager-approved logout.`),
       }).catch(() => {});
     } catch (err) {
       setAdminLogoutError((typeof err === 'string' ? err : err.message) || 'Invalid credentials.');
       await cashierApi.logActivity({
         cashierId: user?.id,
-        action: 'Admin Logout Security Alert',
-        detail: withDevice(`Failed admin logout attempt by ${user?.name || user?.email || 'Cashier'}.`),
+        action: 'Manager Logout Security Alert',
+        detail: withDevice(`Failed manager-approved logout attempt by ${user?.name || user?.email || 'Cashier'}.`),
       }).catch(() => {});
     } finally {
       setAdminLogoutBusy(false);
@@ -2411,8 +2482,8 @@ const Cashier = ({ onLogout, user }) => {
     try {
       await cashierApi.logActivity({
         cashierId: user?.id,
-        action: 'Admin Logout',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} logged out with admin approval. Shift remains open; no cash count or shift close was recorded.`),
+        action: 'Manager Approved Logout',
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} logged out with manager approval. Shift remains open; no cash count or shift close was recorded.`),
       }).catch(() => {});
       setShowAdminLogout(false);
       setShowShiftClose(false);
@@ -2539,17 +2610,17 @@ const Cashier = ({ onLogout, user }) => {
       ) : (
         <div className={styles['approval-admin-grid']}>
           <Input
-            label="Admin Email"
+            label="Manager Email"
             type="email"
-            placeholder="Enter admin email"
+            placeholder="Enter manager email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={disabled}
           />
           <Input
-            label="Admin Password"
+            label="Manager Password"
             type="password"
-            placeholder="Enter admin password"
+            placeholder="Enter manager password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             disabled={disabled}
@@ -3433,13 +3504,31 @@ const Cashier = ({ onLogout, user }) => {
         title="Close Shift"
         footer={
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={() => {
-              setShowShiftClose(false);
-              resetShiftCloseForm();
-            }} disabled={shiftSaving}>Cancel</button>
-            <button className="btn btn-primary" onClick={closeShift} disabled={shiftSaving}>
-              {shiftSaving ? 'Closing...' : 'Close Shift & Print'}
-            </button>
+            {shiftCloseStep === 'count' ? (
+              <>
+                <button className="btn btn-outline" onClick={() => {
+                  setShowShiftClose(false);
+                  resetShiftCloseForm();
+                }} disabled={shiftSaving}>Cancel</button>
+                <button className="btn btn-primary" onClick={prepareShiftClosePreview} disabled={shiftSaving}>
+                  Preview Z-Read
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-outline" onClick={editShiftCloseCount} disabled={shiftSaving}>
+                  Edit Count
+                </button>
+                <button className="btn btn-outline" onClick={printShiftCloseDraft} disabled={shiftSaving}>
+                  {shiftSaving ? 'Printing...' : shiftCloseStep === 'printed' ? 'Reprint Z-Read' : 'Print Z-Read'}
+                </button>
+                {shiftCloseStep === 'printed' && (
+                  <button className="btn btn-primary" onClick={() => closeShift(false)} disabled={shiftSaving}>
+                    {shiftSaving ? 'Closing...' : 'Close Shift & Logout'}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         }
       >
@@ -3463,7 +3552,7 @@ const Cashier = ({ onLogout, user }) => {
                 setShiftCloseCountMode('manual');
                 setShiftError('');
               }}
-              disabled={shiftSaving}
+              disabled={shiftSaving || shiftCloseStep !== 'count'}
             >
               Manual Total
             </button>
@@ -3474,7 +3563,7 @@ const Cashier = ({ onLogout, user }) => {
                 setShiftCloseCountMode('denomination');
                 setShiftError('');
               }}
-              disabled={shiftSaving}
+              disabled={shiftSaving || shiftCloseStep !== 'count'}
             >
               Count by Denomination
             </button>
@@ -3495,7 +3584,7 @@ const Cashier = ({ onLogout, user }) => {
                     placeholder="0"
                     value={shiftCloseDenominations[denomination] || ''}
                     onChange={(e) => updateShiftCloseDenomination(denomination, e.target.value)}
-                    disabled={shiftSaving}
+                    disabled={shiftSaving || shiftCloseStep !== 'count'}
                   />
                 </label>
               ))}
@@ -3514,7 +3603,7 @@ const Cashier = ({ onLogout, user }) => {
               placeholder="0.00"
               value={shiftClosingAmount}
               onChange={(e) => setShiftClosingAmount(e.target.value)}
-              disabled={shiftSaving}
+              disabled={shiftSaving || shiftCloseStep !== 'count'}
             />
           )}
         </div>
@@ -3523,8 +3612,17 @@ const Cashier = ({ onLogout, user }) => {
           placeholder="Optional note for shortage, overage, or correction"
           value={shiftNote}
           onChange={(e) => setShiftNote(e.target.value)}
-          disabled={shiftSaving}
+          disabled={shiftSaving || shiftCloseStep !== 'count'}
         />
+        {shiftCloseDraft && (
+          <div className={styles['z-read-preview-panel']}>
+            <div className={styles['z-read-preview-head']}>
+              <strong>Z-Read Thermal Preview</strong>
+              <span>{shiftCloseStep === 'printed' ? 'Printed' : 'Ready to print'}</span>
+            </div>
+            <pre>{buildShiftCloseReceiptText(shiftCloseDraft.receiptData)}</pre>
+          </div>
+        )}
         {shiftError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{shiftError}</div>}
         <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid #e2e8f0' }}>
           <button
@@ -3618,7 +3716,7 @@ const Cashier = ({ onLogout, user }) => {
                     checked={adminLogoutApprovalMethod === 'admin'}
                     onChange={() => setAdminLogoutApprovalMethod('admin')}
                   />
-                  <span style={{ fontWeight: '600', fontSize: '13px' }}>Admin Password</span>
+                  <span style={{ fontWeight: '600', fontSize: '13px' }}>Manager Password</span>
                 </label>
               </div>
             </div>
@@ -3633,16 +3731,16 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <>
                 <Input
-                  label="Admin Email"
-                  placeholder="Enter admin email"
+                  label="Manager Email"
+                  placeholder="Enter manager email"
                   value={adminLogoutApprovalEmail}
                   onChange={(e) => setAdminLogoutApprovalEmail(e.target.value)}
                   disabled={adminLogoutBusy}
                 />
                 <Input
-                  label="Admin Password"
+                  label="Manager Password"
                   type="password"
-                  placeholder="Enter admin password"
+                  placeholder="Enter manager password"
                   value={adminLogoutApprovalPassword}
                   onChange={(e) => setAdminLogoutApprovalPassword(e.target.value)}
                   disabled={adminLogoutBusy}
@@ -3652,7 +3750,7 @@ const Cashier = ({ onLogout, user }) => {
             {adminLogoutError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{adminLogoutError}</div>}
           </>
         ) : (
-          <p style={{ color: '#166534', fontWeight: '600' }}>Admin verified. Click "Confirm Logout" to logout without closing the shift.</p>
+          <p style={{ color: '#166534', fontWeight: '600' }}>Manager approval verified. Click "Confirm Logout" to logout without closing the shift.</p>
         )}
       </Modal>
 
@@ -4321,14 +4419,25 @@ const Cashier = ({ onLogout, user }) => {
                   </span>
                 </label>
                 <div className={styles['receipt-printer-setting']}>
-                  <Input
-                    label="Receipt Printer Name"
-                    value={receiptSettings.printerName || ''}
-                    placeholder={import.meta.env.VITE_RECEIPT_PRINTER_NAME || 'XP-58H'}
-                    onChange={(e) => saveReceiptSettings({ printerName: e.target.value })}
-                  />
+                  <label className={styles['receipt-printer-select']}>
+                    <span>Receipt Printer</span>
+                    <select
+                      value={receiptSettings.printerName || ''}
+                      onChange={(e) => saveReceiptSettings({ printerName: e.target.value })}
+                    >
+                      <option value="">System default ({import.meta.env.VITE_RECEIPT_PRINTER_NAME || 'XP-58H'})</option>
+                      {receiptSettings.printerName && !receiptPrinters.some((printer) => printer.name === receiptSettings.printerName) && (
+                        <option value={receiptSettings.printerName}>{receiptSettings.printerName}</option>
+                      )}
+                      {receiptPrinters.map((printer) => (
+                        <option key={printer.name} value={printer.name}>
+                          {printer.name}{printer.isDefault ? ' (Default)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <small>
-                    Use the exact Windows printer name. Leave blank to use the configured default.
+                    Select the Windows printer used for receipts and cash drawer commands.
                   </small>
                 </div>
                 <label className={styles['receipt-settings-toggle']}>

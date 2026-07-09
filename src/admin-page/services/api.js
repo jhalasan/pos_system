@@ -121,6 +121,7 @@ const webApi = {
   stockOutInventory: (data) => request('/inventory/stock-out', { method: 'POST', body: JSON.stringify(data) }),
   fsnInventory: () => request('/inventory/fsn'),
   cashiers: () => request('/cashiers'),
+  staff: (role = 'cashier') => request(`/cashiers?role=${encodeURIComponent(role)}`),
   receipts: (filters = {}) => {
     const params = new URLSearchParams()
     for (const [key, value] of Object.entries(filters || {})) {
@@ -134,6 +135,9 @@ const webApi = {
   createCashier: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
   updateCashier: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
   deleteCashier: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),
+  createStaff: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
+  updateStaff: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
+  deleteStaff: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),
   activityLogs: () => request('/activity-logs'),
   markAuditReviewed: (data) => request('/audit-reviews', {
     method: 'POST',

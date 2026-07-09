@@ -118,11 +118,11 @@ function primaryInventoryLabel(product) {
 
   const summary = (visibleBreakdown.length ? visibleBreakdown : [breakdown[breakdown.length - 1]])
     .map((unit) => `${formatQty(unit.count)} ${pluralizeUnit(unit.unit, unit.count)}`)
-    .join(', ')
+    .join(' + ')
 
   return {
-    main: summary,
-    detail: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total`,
+    main: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total stock`,
+    detail: `Breakdown: ${summary}`,
   }
 }
 
@@ -130,6 +130,28 @@ function unitRowLabel(product, unit) {
   const conversion = Number(unit.conversion) || 1
   if (conversion === 1) return `1 ${unit.unit} = 1 ${product.unit}`
   return `1 ${unit.unit} = ${formatQty(conversion)} ${pluralizeUnit(product.unit, conversion)}`
+}
+
+function unitStockLabel(product, unit) {
+  const conversion = Number(unit.conversion) || 1
+  const count = Number(unit.count) || 0
+  const total = Number(unit.total) || 0
+  const unitName = pluralizeUnit(unit.unit, count)
+  const totalUnitName = pluralizeUnit(unit.unit, total)
+  const baseQty = Number(product.qty) || 0
+  const baseUnitName = pluralizeUnit(product.unit, baseQty)
+
+  if (conversion === 1) {
+    return {
+      main: `${formatQty(count)} loose ${unitName}`,
+      detail: `${formatQty(baseQty)} ${baseUnitName} total stock`,
+    }
+  }
+
+  return {
+    main: `${formatQty(count)} full ${unitName} in breakdown`,
+    detail: `Total equivalent: ${formatQty(total)} ${totalUnitName}`,
+  }
 }
 
 export default function ProductManagement() {
@@ -451,7 +473,9 @@ export default function ProductManagement() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded ? remainderBreakdown.map((unit) => (
+                    {isExpanded ? remainderBreakdown.map((unit) => {
+                      const unitLabel = unitStockLabel(p, unit)
+                      return (
                       <tr className="product-unit-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
                         <td>
                           <div className="prod-cell product-unit-cell">
@@ -466,8 +490,8 @@ export default function ProductManagement() {
                         <td>{p.category}</td>
                         <td className="t-center">
                           <div className="stock-stack">
-                            <strong>{formatQty(unit.total)} {pluralizeUnit(unit.unit, unit.total)} available</strong>
-                            <small>{formatQty(unit.count)} {pluralizeUnit(unit.unit, unit.count)} in breakdown</small>
+                            <strong>{unitLabel.main}</strong>
+                            <small>{unitLabel.detail}</small>
                           </div>
                         </td>
                         <td>{unit.unit}</td>
@@ -483,7 +507,8 @@ export default function ProductManagement() {
                           </button>
                         </td>
                       </tr>
-                    )) : null}
+                      )
+                    }) : null}
                   </Fragment>
                 )
               })}

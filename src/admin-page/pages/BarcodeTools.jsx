@@ -167,7 +167,13 @@ export default function BarcodeTools() {
   }, [printableBarcodes, selectedBarcodeIds])
 
   useEffect(() => {
-    listBarcodePrinters().then(setPrinters)
+    listBarcodePrinters().then((availablePrinters) => {
+      setPrinters(availablePrinters)
+      if (savedBarcodePrintSettings().printerName === BROWSER_PRINT_VALUE && availablePrinters.length > 0) {
+        const defaultPrinter = availablePrinters.find((printer) => printer.isDefault) || availablePrinters[0]
+        setPrintSettings(saveBarcodePrintSettings({ printerName: defaultPrinter.name }))
+      }
+    })
   }, [])
 
   function flash(message) {

@@ -923,6 +923,96 @@ table.data tbody tr.unit-breakdown-row:hover {
 .icon-btn.del:hover { background: var(--danger-soft); color: var(--danger); border-color: #f3b4b4; }
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; width: 100%; }
 .cashier-print-btn { min-height: 34px; padding: 0 10px; font-size: 12px; }
+.cashier-status-col {
+  width: 116px;
+  min-width: 116px;
+  text-align: center !important;
+}
+.cashier-actions-col {
+  width: 160px;
+  min-width: 160px;
+  text-align: center !important;
+}
+.cashier-status-col .badge {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 58px;
+}
+.cashier-row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 142px;
+  white-space: nowrap;
+}
+.barcode-folder-button {
+  max-width: 150px;
+}
+.barcode-preview-modal {
+  display: grid;
+  gap: 14px;
+}
+.barcode-preview-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.barcode-preview-summary strong,
+.barcode-preview-summary span,
+.barcode-preview-summary small {
+  display: block;
+}
+.barcode-preview-summary span,
+.barcode-preview-summary small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.barcode-preview-sheet {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  max-height: min(54vh, 520px);
+  overflow: auto;
+  padding: 2px;
+}
+.barcode-preview-label {
+  min-height: 130px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  text-align: center;
+}
+.barcode-preview-label strong,
+.barcode-preview-label span,
+.barcode-preview-label code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.barcode-preview-label strong {
+  color: var(--text);
+  font-size: 13px;
+}
+.barcode-preview-label span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.barcode-preview-svg svg {
+  width: 100%;
+  height: 72px;
+  display: block;
+  margin-top: 8px;
+}
+.barcode-preview-label code {
+  margin-top: 6px;
+  color: var(--text);
+  font-size: 12px;
+  letter-spacing: 1px;
+}
 
 .toolbar {
   display: flex; gap: 12px; align-items: center;

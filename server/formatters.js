@@ -134,12 +134,14 @@ export function productFormData(input, categoryId, file) {
 
 export function toCashier(record, sales = 0) {
   const email = record.email || ''
+  const role = record.role || 'cashier'
 
   return {
     id: record.id,
     cashierId: record.id,
-    name: record.name || email.split('@')[0] || 'Cashier',
+    name: record.name || email.split('@')[0] || (role === 'manager' ? 'Manager' : 'Cashier'),
     email,
+    role,
     shift: record.shift || 'Morning',
     status: record.status || 'active',
     quickLoginEnabled: Boolean(record.quick_login_enabled),
@@ -167,6 +169,9 @@ export function toUserAccount(record) {
 
 export function cashierPayload(input = {}) {
   const password = input.password || process.env.DEFAULT_CASHIER_PASSWORD || 'cashier123'
+  const role = ['cashier', 'manager'].includes(String(input.role || '').trim())
+    ? String(input.role).trim()
+    : 'cashier'
 
   return {
     name: String(input.name || '').trim(),
@@ -176,7 +181,7 @@ export function cashierPayload(input = {}) {
     void_barcode: String(input.cashierBarcode || input.void_barcode || '').trim(),
     password,
     passwordConfirm: password,
-    role: 'cashier',
+    role,
     emailVisibility: true,
   }
 }

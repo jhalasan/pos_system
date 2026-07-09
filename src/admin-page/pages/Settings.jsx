@@ -9,6 +9,11 @@ import {
   getExportLocations,
   saveExportLocations,
 } from '../utils/exportSettings'
+import {
+  saveBarcodePrintSettings,
+  savedBarcodePrintSettings,
+  selectBarcodePdfDirectory,
+} from '../utils/barcodePrinter'
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 
 export default function Settings() {
@@ -21,6 +26,7 @@ export default function Settings() {
   const { data: cashiers, setData: setCashiers, loading, error } = useApi(api.settingsCashiers, [])
   const [toast, setToast] = useState('')
   const [exportLocations, setExportLocations] = useState(getExportLocations)
+  const [barcodePrintSettings, setBarcodePrintSettings] = useState(savedBarcodePrintSettings)
   const [theme, setTheme] = useState(getStoredTheme)
 
   function flash(message) {
@@ -55,6 +61,11 @@ export default function Settings() {
     setExportLocations(saved)
   }
 
+  function updateBarcodeLocation(value) {
+    const saved = saveBarcodePrintSettings({ ...barcodePrintSettings, pdfDirectory: value })
+    setBarcodePrintSettings(saved)
+  }
+
   function updateTheme(enabled) {
     const nextTheme = saveTheme(enabled ? THEMES.dark : THEMES.light)
     setTheme(nextTheme)
@@ -73,6 +84,17 @@ export default function Settings() {
       if (!selected) return
       updateExportLocation(type, selected)
       flash(`${exportLocationLabels[type]} export location saved.`)
+    } catch (err) {
+      flash(err.message || 'Unable to open folder picker.')
+    }
+  }
+
+  async function chooseBarcodeFolder() {
+    try {
+      const selected = await selectBarcodePdfDirectory()
+      if (!selected) return
+      updateBarcodeLocation(selected)
+      flash('Cashier Barcodes export location saved.')
     } catch (err) {
       flash(err.message || 'Unable to open folder picker.')
     }
@@ -159,6 +181,25 @@ export default function Settings() {
                 </div>
               </label>
             ))}
+            <label className="field">
+              <span>Cashier Barcodes</span>
+              <div className="folder-picker-row">
+                <input
+                  className="input"
+                  value={barcodePrintSettings.pdfDirectory}
+                  placeholder="Example: C:\\Users\\Public\\Documents\\Nexa POS Exports"
+                  onChange={(event) => updateBarcodeLocation(event.target.value)}
+                  onBlur={() => flash('Cashier Barcodes export location saved.')}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={chooseBarcodeFolder}
+                >
+                  <IconDownload size={16} /> Choose Folder
+                </button>
+              </div>
+            </label>
           </div>
         </div>
 

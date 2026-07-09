@@ -2157,7 +2157,8 @@
         "type": "select",
         "values": [
           "admin",
-          "cashier"
+          "cashier",
+          "manager"
         ]
       },
       {

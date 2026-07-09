@@ -4,7 +4,7 @@ import { logout } from '../auth'
 import { api } from '../services/api'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
-  IconCloud, IconUserPlus, IconLogout, IconSettings, IconBarcode,
+  IconCloud, IconLogout, IconSettings, IconBarcode,
   IconReceipt,
 } from './Icons'
 
@@ -13,7 +13,7 @@ const navItems = [
   { to: '/admin/inventory', label: 'Inventory', icon: IconBox },
   { to: '/admin/products', label: 'Product Management', icon: IconTag },
   { to: '/admin/barcodes', label: 'Barcode Tools', icon: IconBarcode },
-  { to: '/admin/cashiers', label: 'Cashier Management', icon: IconUsers },
+  { to: '/admin/cashiers', label: 'Staff Management', icon: IconUsers },
   { to: '/admin/analytics', label: 'Analytics', icon: IconChart },
   { to: '/admin/transaction-logs', label: 'Transaction Logs', icon: IconReceipt },
   { to: '/admin/audit', label: 'Audit', icon: IconList },
@@ -86,9 +86,9 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
           <IconCloud size={18} />
           <span className="nav-text">Sync to Cloud</span>
         </button>
-        <NavLink to="/admin/cashiers" className="nav-item" onClick={onNavigate} title={collapsed ? 'Add Cashier' : undefined}>
-          <IconUserPlus size={18} />
-          <span className="nav-text">Add Cashier</span>
+        <NavLink to="/admin/settings" className="nav-item" onClick={onNavigate} title={collapsed ? 'Settings' : undefined}>
+          <IconSettings size={18} />
+          <span className="nav-text">Settings</span>
         </NavLink>
         <button className="nav-item danger" style={{ width: '100%' }} onClick={handleLogout} title={collapsed ? 'Logout' : undefined}>
           <IconLogout size={18} />

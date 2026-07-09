@@ -543,12 +543,13 @@ async function fetchGcashPayments() {
 }
 
 function cashierPayload(data) {
+  const role = String(data.role || '').trim() === 'manager' ? 'manager' : 'cashier'
   const payload = {
     name: String(data.name || '').trim(),
     email: String(data.email || '').trim(),
     shift: data.shift || 'Morning',
     status: data.status || 'active',
-    role: 'cashier',
+    role,
     emailVisibility: true,
   }
 
@@ -1111,12 +1112,13 @@ async function listDesktopProducts() {
   return getAllProducts()
 }
 
-async function listDesktopCashiers() {
+async function listDesktopStaff(role = 'cashier') {
   await startAdminRuntime()
+  const staffRole = role === 'manager' ? 'manager' : 'cashier'
   if (await isCloudReachable()) {
     const [cloudRecords, salesTotals] = await Promise.all([
       pb.collection('users').getFullList({
-        filter: 'role = "cashier"',
+        filter: `role = "${staffRole}"`,
         sort: 'name,email',
         requestKey: null,
       }),
@@ -1127,7 +1129,11 @@ async function listDesktopCashiers() {
     return records.map((record) => toCashierUser(record, salesTotals.get(record.id)))
   }
 
-  return (await adminDb.users.where('role').equals('cashier').toArray()).map(toCashierUser)
+  return (await adminDb.users.where('role').equals(staffRole).toArray()).map(toCashierUser)
+}
+
+async function listDesktopCashiers() {
+  return listDesktopStaff('cashier')
 }
 
 export const desktopAdminApi = {
@@ -1567,31 +1573,42 @@ export const desktopAdminApi = {
   async cashiers() {
     return listDesktopCashiers()
   },
+  async staff(role = 'cashier') {
+    return listDesktopStaff(role)
+  },
   receipts: fetchReceiptRecords,
   async createCashier(data) {
     await startAdminRuntime()
+    const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to create cashier accounts.')
+      throw new Error(`Internet is required to create ${roleLabel} accounts.`)
     }
     const created = await pb.collection('users').create(cashierBody(data), { requestKey: null }).catch((error) => {
-      throw new Error(pocketBaseErrorMessage(error, 'Unable to create cashier.'))
+      throw new Error(pocketBaseErrorMessage(error, `Unable to create ${roleLabel}.`))
     })
     await cacheUsers([created])
-    await recordActivity('Cashier', `Created cashier "${created.name || created.email}".`)
+    await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Created ${roleLabel} "${created.name || created.email}".`)
     return toCashierUser(created)
+  },
+  async createStaff(data) {
+    return this.createCashier(data)
   },
   async updateCashier(id, data) {
     await startAdminRuntime()
+    const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to update cashier accounts.')
+      throw new Error(`Internet is required to update ${roleLabel} accounts.`)
     }
     const body = cashierUpdateBody(data)
     const updated = await pb.collection('users').update(id, body, { requestKey: null }).catch((error) => {
-      throw new Error(pocketBaseErrorMessage(error, 'Unable to update cashier.'))
+      throw new Error(pocketBaseErrorMessage(error, `Unable to update ${roleLabel}.`))
     })
     await cacheUsers([updated])
-    await recordActivity('Cashier', `Updated cashier "${updated.name || updated.email}".`)
+    await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Updated ${roleLabel} "${updated.name || updated.email}".`)
     return toCashierUser(updated)
+  },
+  async updateStaff(id, data) {
+    return this.updateCashier(id, data)
   },
   async deleteCashier(id) {
     await startAdminRuntime()
@@ -1602,6 +1619,9 @@ export const desktopAdminApi = {
     await adminDb.users.delete(id)
     await recordActivity('Cashier', 'Deleted cashier account.')
     return null
+  },
+  async deleteStaff(id) {
+    return this.deleteCashier(id)
   },
   async activityLogs() {
     await startAdminRuntime()

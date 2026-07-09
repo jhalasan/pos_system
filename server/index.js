@@ -326,7 +326,7 @@ async function authorizeManagerApproval({ code, email, password }) {
     }
 
     const legacyManager = await (await pbCollection('users')).getFirstListItem(
-      pb.filter('void_barcode = {:code} && role = "admin"', { code: barcode }),
+      pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin") && status != "inactive"', { code: barcode }),
     ).catch((error) => {
       if (error.status === 404) return null
       throw error
@@ -345,7 +345,8 @@ async function authorizeManagerApproval({ code, email, password }) {
   const managerEmail = String(email || '').trim()
   const managerPassword = String(password || '')
   if (managerEmail && managerPassword) {
-    const manager = await authenticateAdminUser(managerEmail, managerPassword)
+    const manager = await authenticateRoleUser(managerEmail, managerPassword, 'manager')
+      .catch(() => authenticateAdminUser(managerEmail, managerPassword))
     return {
       id: manager.id,
       name: manager.name || manager.email || 'Manager',
@@ -354,7 +355,7 @@ async function authorizeManagerApproval({ code, email, password }) {
     }
   }
 
-  const error = new Error('Manager approval requires a valid barcode or admin email and password.')
+  const error = new Error('Manager approval requires a valid barcode or manager email and password.')
   error.status = 400
   throw error
 }
@@ -1234,8 +1235,13 @@ app.get('/api/inventory/fsn', asyncRoute(async (_req, res) => {
   res.json(classified)
 }))
 
-app.get('/api/cashiers', asyncRoute(async (_req, res) => {
-  const records = await listRecords('users', '?filter=role="cashier"&sort=email&perPage=500')
+function staffRoleFromRequest(req) {
+  return String(req.query?.role || req.body?.role || 'cashier').trim() === 'manager' ? 'manager' : 'cashier'
+}
+
+app.get('/api/cashiers', asyncRoute(async (req, res) => {
+  const role = staffRoleFromRequest(req)
+  const records = await listRecords('users', `?filter=role="${role}"&sort=email&perPage=500`)
   const salesByCashier = await getSalesByCashier()
   res.json(records.map((record) => toCashier(record, salesByCashier.get(record.id))))
 }))
@@ -1247,7 +1253,7 @@ app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, r
   }
 
   const created = await (await pbCollection('users')).create(payload)
-  await createLog({ action: 'Cashier', detail: `Added cashier "${payload.email}"` })
+  await createLog({ action: payload.role === 'manager' ? 'Manager' : 'Cashier', detail: `Added ${payload.role} "${payload.email}"` })
   res.status(201).json(toCashier(created))
 }))
 
@@ -1258,7 +1264,7 @@ app.patch('/api/cashiers/:id', upload.single('profile_img'), asyncRoute(async (r
     delete payload.passwordConfirm
   }
   const updated = await (await pbCollection('users')).update(req.params.id, payload)
-  await createLog({ action: 'Cashier', detail: `Updated cashier "${payload.email}"` })
+  await createLog({ action: payload.role === 'manager' ? 'Manager' : 'Cashier', detail: `Updated ${payload.role} "${payload.email}"` })
   res.json(toCashier(updated))
 }))
 
