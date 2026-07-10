@@ -18,7 +18,6 @@ const navItems = [
   { to: '/admin/transaction-logs', label: 'Transaction Logs', icon: IconReceipt },
   { to: '/admin/audit', label: 'Audit', icon: IconList },
   { to: '/admin/logs', label: 'Activity Logs', icon: IconList },
-  { to: '/admin/settings', label: 'Settings', icon: IconSettings },
 ]
 
 export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
