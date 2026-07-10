@@ -260,11 +260,31 @@ export default function CashierManagement() {
       return
     }
 
-    openBarcodePreview({
+    const label = {
         title: cashier.name || staffNoun,
         value: code,
         meta: [cashier.cashierId || cashier.id, isManagerTab ? 'Manager approval' : cashier.shift].filter(Boolean).join(' | '),
-    }, `${staffNoun} Barcode ${cashier.name || code}`)
+    }
+
+    // A row action labelled Print should submit the job immediately. The old
+    // flow only opened a second preview, which made manager labels appear to do
+    // nothing until another Print button was found and clicked.
+    setPrintingBarcode(cashier.id)
+    try {
+      const result = await printBarcodeLabels(label, {
+        ...cashierPrintSettings(),
+        documentName: `${staffNoun} Barcode ${cashier.name || code}`,
+      })
+      if (result?.path) {
+        flash(`${staffNoun} barcode PDF saved to ${result.path}.`)
+      } else {
+        flash(`Sent ${Number(result?.copies) || printSettings.copies} ${staffNoun.toLowerCase()} barcode label(s) to ${result?.printerName || 'printer'}.`)
+      }
+    } catch (err) {
+      flash(err.message || `Unable to print ${staffNoun.toLowerCase()} barcode.`)
+    } finally {
+      setPrintingBarcode('')
+    }
   }
 
   async function printSelectedCashiers() {

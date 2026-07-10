@@ -4,25 +4,26 @@ function firstFileValue(value) {
   return Array.isArray(value) ? value[0] : value
 }
 
-function normalizeProduct(record, pb) {
+export function normalizeProduct(record, pb) {
   const category = Array.isArray(record.expand?.category)
     ? record.expand.category[0]
     : record.expand?.category
   const image = firstFileValue(record.product_img ?? record.image)
-  const sellingUnits = Array.isArray(record.selling_units)
-    ? record.selling_units
-    : (typeof record.selling_units === 'string' ? JSON.parse(record.selling_units || '[]') : [])
+  const rawSellingUnits = record.selling_units ?? record.sellingUnits
+  const sellingUnits = Array.isArray(rawSellingUnits)
+    ? rawSellingUnits
+    : (typeof rawSellingUnits === 'string' ? JSON.parse(rawSellingUnits || '[]') : [])
 
   return {
     id: record.id,
     barcode: String(record.barcode || '').trim(),
     name: String(record.name || ''),
-    category: category?.name || '',
+    category: category?.name || record.categoryName || record.category || '',
     categoryId: Array.isArray(record.category) ? record.category[0] : record.category || '',
-    quantity: Number(record.quantity) || 0,
+    quantity: Number(record.quantity ?? record.qty) || 0,
     price: Number(record.price) || 0,
-    unit: record.base_unit || 'Piece',
-    minStock: Number(record.min_stock) || 0,
+    unit: record.base_unit || record.unit || 'Piece',
+    minStock: Number(record.min_stock ?? record.minStock ?? record.lowStock) || 0,
     sellingUnits: sellingUnits.map((unit) => ({
       barcode: String(unit?.barcode || '').trim(),
       unit: String(unit?.unit || '').trim(),

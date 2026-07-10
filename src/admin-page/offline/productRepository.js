@@ -38,6 +38,7 @@ export function normalizeProduct(record, pb) {
     price: Number(record.price) || 0,
     cost: Number(record.cost) || 0,
     profitMargin: Number(record.profitMargin) || 0,
+    hasMultipleUnits: Boolean(record.has_multiple_units ?? record.hasMultipleUnits),
     image: image || record.image || '',
     imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),
     imageBlob: record.imageBlob,

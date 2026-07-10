@@ -70,14 +70,25 @@ async function productBody(pb, data) {
   const qty = Number(data.qty)
   const lowStock = Number(data.lowStock)
   const price = Number(data.price)
+  const cost = Number(data.cost)
+  const profitMargin = Number(data.profitMargin)
+  const initialStock = Number(data.initialStock ?? data.initial_stock)
+  const conversionQuantity = Number(data.conversionQuantity ?? data.conversion_quantity ?? 1)
   const payload = {
     name: String(data.name || '').trim(),
     barcode: String(data.barcode || '').trim(),
     category: data.categoryId || await getOrCreateCategoryId(pb, data.category),
     quantity: numberFieldValue(qty),
     base_unit: data.unit || 'Piece',
+    purchase_unit: String(data.purchaseUnit || data.purchase_unit || '').trim(),
+    conversion_quantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
+    initial_stock: Number.isFinite(initialStock) ? Math.max(0, initialStock) : 0,
+    stock_unit: String(data.stockUnit || data.stock_unit || '').trim(),
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
     price: Number.isFinite(price) ? Math.max(0, price) : 0,
+    cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
+    profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
+    has_multiple_units: Boolean(data.hasMultipleUnits ?? data.has_multiple_units),
   }
   // include selling units when present so desktop/admin sync preserves additional units
   if (Array.isArray(data.sellingUnits) && data.sellingUnits.length > 0) {

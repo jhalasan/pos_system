@@ -113,11 +113,21 @@ function toProduct(record) {
     categoryId: firstRelation(record.category) || '',
     qty: Number(record.quantity) || 0,
     unit: record.base_unit || 'Piece',
+    purchaseUnit: record.purchase_unit || record.purchaseUnit || 'Box',
+    conversionQuantity: Number(record.conversion_quantity ?? record.conversionQuantity ?? 1) || 1,
+    initialStock: Number(record.initial_stock ?? record.initialStock ?? 0) || 0,
+    stockUnit: record.stock_unit || record.stockUnit || '',
     lowStock: Number(record.min_stock) || 0,
     price: Number(record.price) || 0,
+    cost: Number(record.cost) || 0,
+    profitMargin: Number(record.profitMargin) || 0,
+    hasMultipleUnits: Boolean(record.has_multiple_units ?? record.hasMultipleUnits),
     image: image || '',
     imageUrl: fileUrl(record, image),
     tiers: [{ label: 'Retail', price: Number(record.price) || 0 }],
+    sellingUnits: Array.isArray(record.selling_units)
+      ? record.selling_units
+      : (typeof record.selling_units === 'string' ? JSON.parse(record.selling_units || '[]') : []),
     status: deriveStatus(record),
   }
 }
@@ -1038,6 +1048,21 @@ async function queueOperation(type, productId, payload) {
   return op
 }
 
+async function flushProductOperations(productId) {
+  // syncNow can return an already-running sync whose operation snapshot was
+  // taken before this product was queued. Run once more when this product is
+  // still pending so "saved" also means visible to connected cashiers.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await syncEngine?.syncNow()
+    const stillPending = await adminDb.pendingOps
+      .where('productId')
+      .equals(productId)
+      .filter((op) => ['pending', 'failed'].includes(op.status))
+      .first()
+    if (!stillPending) break
+  }
+}
+
 function enqueueInventoryScan(task) {
   const queued = inventoryScanQueue.then(task, task)
   inventoryScanQueue = queued.catch(() => {})
@@ -1274,6 +1299,10 @@ export const desktopAdminApi = {
       await queueOperation('createProduct', product.id, product)
     })
     await recordActivity('Product', `Created product "${product.name}".`)
+    if (await isCloudReachable()) {
+      await flushProductOperations(product.id).catch(rememberPocketBaseRateLimit)
+      return (await getProductByBarcode(product.barcode)) || product
+    }
     return product
   },
 
@@ -1292,6 +1321,10 @@ export const desktopAdminApi = {
       await queueOperation('updateProduct', id, product)
     })
     await recordActivity('Product', `Updated product "${product.name}".`)
+    if (await isCloudReachable()) {
+      await flushProductOperations(product.id).catch(rememberPocketBaseRateLimit)
+      return (await getProductByBarcode(product.barcode)) || product
+    }
     return product
   },
 

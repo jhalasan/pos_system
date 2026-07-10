@@ -3,7 +3,7 @@ import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
 import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
-import { getAllProducts, getProductByBarcode } from '../offline/productRepository'
+import { getAllProducts, getProductByBarcode, normalizeProduct } from '../offline/productRepository'
 import {
   adjustLocalSale,
   finalizeSaleLocally,
@@ -471,6 +471,29 @@ async function authorizeManagerApproval(authorization = {}) {
   throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
 }
 
+async function adminCachedProductByBarcode(barcode) {
+  const normalizedBarcode = String(barcode || '').trim()
+  if (!normalizedBarcode) return null
+
+  try {
+    await initializeAdminDb()
+    const record = await adminDb.products
+      .filter((candidate) => (
+        !candidate.deleted
+        && (
+          String(candidate.barcode || '').trim() === normalizedBarcode
+          || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => (
+            String(unit?.barcode || '').trim() === normalizedBarcode
+          )))
+        )
+      ))
+      .first()
+    return record ? normalizeProduct(record) : null
+  } catch {
+    return null
+  }
+}
+
 export const desktopCashierApi = {
   async currentUser() {
     const activeRuntime = await runtime()
@@ -610,6 +633,12 @@ export const desktopCashierApi = {
   async productByBarcode(barcode) {
     await initializeCashierDb()
     let product = await getProductByBarcode(barcode)
+
+    if (!product) {
+      product = await adminCachedProductByBarcode(barcode)
+      if (product) await cashierDb.products.put(product)
+    }
+
     if (!product && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
@@ -617,6 +646,30 @@ export const desktopCashierApi = {
         throw error
       })
       product = await getProductByBarcode(barcode)
+
+      // Resolve directly from the just-contacted cloud as a final safeguard.
+      // This keeps a valid selling-unit barcode usable even if an older local
+      // IndexedDB catalog did not persist the sellingUnits property correctly.
+      if (!product) {
+        const normalizedBarcode = String(barcode || '').trim()
+        const cloudRecords = await activeRuntime.pb.collection('products').getFullList({
+          expand: 'category',
+          requestKey: null,
+        })
+        const cloudRecord = cloudRecords.find((record) => (
+          String(record.barcode || '').trim() === normalizedBarcode
+          || (Array.isArray(record.selling_units) && record.selling_units.some((unit) => (
+            String(unit?.barcode || '').trim() === normalizedBarcode
+          )))
+        ))
+        if (cloudRecord) {
+          product = normalizeProduct(cloudRecord, activeRuntime.pb)
+          await cashierDb.products.put(product)
+        }
+      }
+    }
+    if (!product && isPocketBaseRateLimited()) {
+      throw new Error(`${pocketBaseRateLimitMessage()} Product barcode "${barcode}" is not cached on this cashier yet.`)
     }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
     if (product.quantity <= 0) throw new Error(`"${product.name}" is out of stock.`)

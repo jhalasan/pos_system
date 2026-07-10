@@ -125,12 +125,14 @@ function unitLabel(value, quantity = 2) {
   return `${label}s`
 }
 
-function stockInputLabel(form) {
+function stockInputLabel(form, isEdit = false) {
+  if (isEdit) return `Total Stock (${unitLabel(form.unit)})`
   if (!form.hasMultipleUnits) return 'Starting Stock'
   return `Starting Stock (${unitLabel(form.purchaseUnit)})`
 }
 
-function stockInputHelp(form, baseInventoryPreview) {
+function stockInputHelp(form, baseInventoryPreview, isEdit = false) {
+  if (isEdit) return `${baseInventoryPreview} ${unitLabel(form.unit, baseInventoryPreview)} currently in inventory`
   if (!form.hasMultipleUnits) return ''
   const stockCount = Number(form.initialStock) || 0
   const purchaseUnits = unitLabel(form.purchaseUnit, stockCount)
@@ -248,7 +250,7 @@ function inferUnitStructure(product, rawSellingUnits = []) {
   return { baseUnit, purchaseUnit, conversionQuantity }
 }
 
-function buildInitialForm(product, categories) {
+function buildInitialForm(product, categories, isEdit = false) {
   const rawSellingUnits = product?.sellingUnits || product?.selling_units || []
   const { baseUnit, purchaseUnit, conversionQuantity } = inferUnitStructure(product, rawSellingUnits)
   const costValue = Number(product?.cost) || Number(product?.price) || 0
@@ -277,7 +279,9 @@ function buildInitialForm(product, categories) {
     unit: baseUnit,
     purchaseUnit,
     conversionQuantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
-    initialStock: Number(product?.initialStock ?? product?.qty ?? product?.quantity ?? 0) || 0,
+    initialStock: isEdit
+      ? (Number(product?.qty ?? product?.quantity) || 0)
+      : (Number(product?.initialStock ?? product?.qty ?? product?.quantity ?? 0) || 0),
     lowStock: Number(product?.lowStock ?? product?.min_stock ?? blank.lowStock) || 0,
     cost: costValue,
     profitMargin: marginValue,
@@ -323,7 +327,8 @@ function resolveInventoryBaseQty(initialStock, conversionQuantity) {
 }
 
 export default function ProductModal({ mode, product, categories = defaultCategories, onClose, onSave }) {
-  const initialForm = buildInitialForm(product, categories)
+  const isEdit = mode === 'edit'
+  const initialForm = buildInitialForm(product, categories, isEdit)
   const [form, setForm] = useState(initialForm)
   const [sellingUnits, setSellingUnits] = useState(initialForm.sellingUnits || [])
   const [imageFile, setImageFile] = useState(null)
@@ -331,8 +336,6 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   const [isDragging, setIsDragging] = useState(false)
   const fileInputRef = useRef(null)
   const objectUrlRef = useRef('')
-
-  const isEdit = mode === 'edit'
 
   useEffect(() => {
     return () => {
@@ -586,14 +589,22 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       return
     }
 
-    const baseInventory = resolveInventoryBaseQty(initialStock, conversionQuantity)
+    // Starting stock is only used when the product is created. Inventory can
+    // change independently afterwards, so an ordinary details edit must never
+    // recalculate or overwrite the live quantity.
+    const baseInventory = isEdit
+      ? Math.max(0, Number(product?.qty ?? product?.quantity) || 0)
+      : resolveInventoryBaseQty(initialStock, conversionQuantity)
+    const savedInitialStock = isEdit
+      ? Math.max(0, Number(product?.initialStock ?? product?.initial_stock) || 0)
+      : initialStock
     const baseBarcode = String(normalizedSellingUnits[0]?.barcode || '').trim()
 
     onSave({
       ...form,
       barcode: baseBarcode,
       qty: baseInventory,
-      initialStock,
+      initialStock: savedInitialStock,
       lowStock: Number(form.lowStock) || 0,
       cost: costValue,
       profitMargin: marginValue,
@@ -612,7 +623,9 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   const conversionText = form.hasMultipleUnits && form.purchaseUnit && form.unit && Number(form.conversionQuantity) > 0
     ? `1 ${form.purchaseUnit || 'Purchase Unit'} = ${Number(form.conversionQuantity) || 0} ${unitLabel(form.unit, Number(form.conversionQuantity))}`
     : ''
-  const baseInventoryPreview = resolveInventoryBaseQty(Number(form.initialStock), Number(form.conversionQuantity))
+  const baseInventoryPreview = isEdit
+    ? Math.max(0, Number(form.initialStock) || 0)
+    : resolveInventoryBaseQty(Number(form.initialStock), Number(form.conversionQuantity))
   const selectableBaseUnits = Array.from(new Set([...baseUnitOptions, form.unit].filter(Boolean)))
   const selectablePurchaseUnits = Array.from(new Set([
     ...purchaseUnitOptions,
@@ -686,11 +699,12 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         ) : null}
 
         <div className="field">
-          <label>{stockInputLabel(form)}</label>
-          <input className="input" type="number" min="0" value={form.initialStock} onChange={(e) => setFormValue('initialStock', e.target.value)} />
-          {form.hasMultipleUnits ? (
+          <label>{stockInputLabel(form, isEdit)}</label>
+          <input className="input" type="number" min="0" value={form.initialStock} onChange={(e) => setFormValue('initialStock', e.target.value)} disabled={isEdit} />
+          {isEdit ? <small>Current inventory is managed from Inventory Scanner and is preserved when product details are edited.</small> : null}
+          {form.hasMultipleUnits || isEdit ? (
             <small style={{ marginTop: 2 }}>
-              {stockInputHelp(form, baseInventoryPreview)}
+              {stockInputHelp(form, baseInventoryPreview, isEdit)}
             </small>
           ) : null}
         </div>
