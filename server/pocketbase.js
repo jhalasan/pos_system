@@ -2,16 +2,10 @@ import PocketBase from 'pocketbase'
 import 'dotenv/config'
 
 const POCKETBASE_ENDPOINTS = {
-  // 1. PRODUCTION / DEPLOYMENT:
-  // Use this when the live API domain is ready.
-  production: 'https://api.yourstartup.com',
+  production: 'https://nexasystems.pockethost.io',
 
-  // 2. REMOTE TEAM TESTING:
-  // WARNING: ngrok URLs change every time ngrok restarts unless you use a reserved domain.
   remoteTeamTesting: 'https://xxxx.ngrok-free.app',
 
-  // 3. LOCAL ALONE DEVELOPMENT:
-  // Use this when PocketBase is running on this machine.
   localAloneDevelopment: 'http://127.0.0.1:8090',
 }
 
@@ -61,7 +55,7 @@ async function authAsPocketBaseAdmin() {
 
 export async function ensurePocketBaseAuth() {
   if (!PB_SUPERUSER_EMAIL || !PB_SUPERUSER_PASSWORD) {
-    const error = new Error('PocketBase superuser credentials are missing. Set POCKETBASE_SUPERUSER_EMAIL and POCKETBASE_SUPERUSER_PASSWORD in .env.')
+    const error = new Error('PocketBase superuser credentials are missing. Set POCKETBASE_SUPERUSER_EMAIL and POCKETBASE_SUPERUSER_PASSWORD as deployment secrets or host environment variables.')
     error.status = 500
     throw error
   }

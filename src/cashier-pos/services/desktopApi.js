@@ -123,6 +123,49 @@ async function adminCachedCashierQuickLoginAccounts() {
   }
 }
 
+function cachedApprover(record, code) {
+  const barcode = String(record?.cashierBarcode || record?.void_barcode || '').trim()
+  if (!barcode || barcode !== code) return null
+  const role = String(record?.role || '').trim()
+  const status = String(record?.status || 'active').trim()
+  const isManagerBarcode = barcode.startsWith('92')
+  const canApprove = role === 'manager' || role === 'admin' || (role === 'cashier' && isManagerBarcode)
+  if (!canApprove || status === 'inactive') return null
+
+  return {
+    id: record.id || '',
+    name: record.name || record.email || 'Manager',
+    email: record.email || '',
+    method: 'barcode',
+  }
+}
+
+async function cachedManagerApprovalByBarcode(code) {
+  const barcode = String(code || '').trim()
+  if (!barcode) return null
+
+  try {
+    await initializeCashierDb()
+    const cashierRecord = await cashierDb.quickLoginAccounts
+      .filter((record) => cachedApprover(record, barcode))
+      .first()
+    const approver = cachedApprover(cashierRecord, barcode)
+    if (approver) return approver
+  } catch {
+    // Cache fallback is best-effort; cloud lookup remains the source of truth.
+  }
+
+  try {
+    await initializeAdminDb()
+    const adminRecord = await adminDb.users
+      .filter((record) => cachedApprover(record, barcode))
+      .first()
+    return cachedApprover(adminRecord, barcode)
+  } catch {
+    return null
+  }
+}
+
 function runtime() {
   runtimePromise ||= startCashierRuntime()
   return runtimePromise
@@ -401,6 +444,9 @@ async function authorizeManagerApproval(authorization = {}) {
         method: 'barcode',
       }
     }
+
+    const cachedManager = await cachedManagerApprovalByBarcode(code)
+    if (cachedManager) return cachedManager
   }
 
   if (email && password) {
@@ -422,7 +468,7 @@ async function authorizeManagerApproval(authorization = {}) {
     }
   }
 
-  throw new Error('Manager approval requires a barcode or manager email and password.')
+  throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
 }
 
 export const desktopCashierApi = {

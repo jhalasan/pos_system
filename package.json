@@ -7,6 +7,7 @@
     "api": "node server/index.js",
     "start": "node server/index.js",
     "host": "npm run build && node server/index.js",
+    "deploy": "npm run build && npm start",
     "dev": "vite",
     "dev:lan": "vite --host 0.0.0.0",
     "dev:cashier": "vite --mode cashier",

@@ -1410,8 +1410,8 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const approvalPayload = ({ method, code, email, password }) => {
-    if (method === 'barcode') return { code: code.trim() };
-    return { email: email.trim(), password };
+    if (method === 'barcode') return { code: String(code || '').trim() };
+    return { email: String(email || '').trim(), password };
   };
 
   const approvalError = (method) => (
@@ -1419,6 +1419,35 @@ const Cashier = ({ onLogout, user }) => {
       ? 'Scan or enter the manager barcode.'
       : 'Enter the manager email and password.'
   );
+
+  const submitOnEnter = (handler, valueFromEvent) => (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    handler?.(valueFromEvent?.(e));
+  };
+
+  const verifyDiscountApproval = async (override = {}) => {
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : discountApprovalCode;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : discountApprovalEmail;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : discountApprovalPassword;
+    try {
+      const authorization = approvalPayload({
+        method: discountApprovalMethod,
+        code,
+        email,
+        password,
+      });
+      if (!authorization.code && (!authorization.email || !authorization.password)) {
+        setDiscountError(approvalError(discountApprovalMethod));
+        return;
+      }
+      await cashierApi.authorizeVoid(authorization);
+      setDiscountApproved(true);
+      setDiscountError('');
+    } catch (err) {
+      setDiscountError(err.message || 'Invalid manager approval code.');
+    }
+  };
 
   const resetLookupApproval = () => {
     setLookupApprovalMethod('barcode');
@@ -1558,14 +1587,17 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const handleLookupApprovalAction = async () => {
+  const handleLookupApprovalAction = async (override = {}) => {
     if (!lookupSale) return;
 
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : lookupApprovalCode;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : lookupApprovalEmail;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : lookupApprovalPassword;
     const authorization = approvalPayload({
       method: lookupApprovalMethod,
-      code: lookupApprovalCode,
-      email: lookupApprovalEmail,
-      password: lookupApprovalPassword,
+      code,
+      email,
+      password,
     });
     if (!authorization.code && (!authorization.email || !authorization.password)) {
       setLookupError(approvalError(lookupApprovalMethod));
@@ -1660,9 +1692,10 @@ const Cashier = ({ onLogout, user }) => {
     setVoidError('');
   };
 
-  const confirmVoidTransaction = async () => {
+  const confirmVoidTransaction = async (override = {}) => {
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : managerBarcode;
     try {
-      await cashierApi.authorizeVoid(managerBarcode);
+      await cashierApi.authorizeVoid(code);
     } catch (err) {
       setVoidError(err.message || 'Manager barcode is not valid.');
       return;
@@ -1729,7 +1762,7 @@ const Cashier = ({ onLogout, user }) => {
     setCashFlowError('');
   };
 
-  const confirmCashFlow = async () => {
+  const confirmCashFlow = async (override = {}) => {
     if (!shiftSession) {
       setShowShiftOpen(true);
       setCashFlowError('Open a cashier shift before recording cash flow.');
@@ -1745,12 +1778,15 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
+    const approvalCode = Object.hasOwn(override || {}, 'code') ? override.code : cashFlowApprovalCode;
+    const approvalEmail = Object.hasOwn(override || {}, 'email') ? override.email : cashFlowApprovalEmail;
+    const approvalPassword = Object.hasOwn(override || {}, 'password') ? override.password : cashFlowApprovalPassword;
     try {
       const authorization = approvalPayload({
         method: cashFlowApprovalMethod,
-        code: cashFlowApprovalCode,
-        email: cashFlowApprovalEmail,
-        password: cashFlowApprovalPassword,
+        code: approvalCode,
+        email: approvalEmail,
+        password: approvalPassword,
       });
       if (!authorization.code && (!authorization.email || !authorization.password)) {
         setCashFlowError(approvalError(cashFlowApprovalMethod));
@@ -1834,17 +1870,20 @@ const Cashier = ({ onLogout, user }) => {
     setShowCompletedVoidModal(true);
   };
 
-  const handleConfirmCompletedVoid = async () => {
+  const handleConfirmCompletedVoid = async (override = {}) => {
     if (!completedVoidTarget?.saleId) {
       setCompletedVoidError('Completed sale reference is missing.');
       return;
     }
 
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : completedVoidCode;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : completedVoidEmail;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : completedVoidPassword;
     const authorization = approvalPayload({
       method: completedVoidApprovalMethod,
-      code: completedVoidCode,
-      email: completedVoidEmail,
-      password: completedVoidPassword,
+      code,
+      email,
+      password,
     });
 
     if (!authorization.code && (!authorization.email || !authorization.password)) {
@@ -2446,16 +2485,19 @@ const Cashier = ({ onLogout, user }) => {
     if (activeTransaction === txnId) setActiveTransaction(remaining[0].id);
   };
 
-  const approveAdminLogout = async () => {
+  const approveAdminLogout = async (override = {}) => {
     setAdminLogoutError('');
     setAdminLogoutBusy(true);
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : adminLogoutApprovalCode;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : adminLogoutApprovalEmail;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : adminLogoutApprovalPassword;
     try {
       if (adminLogoutApprovalMethod === 'barcode') {
-        await cashierApi.authorizeVoid(adminLogoutApprovalCode);
+        await cashierApi.authorizeVoid(code);
       } else {
         await cashierApi.authorizeVoid({
-          email: adminLogoutApprovalEmail,
-          password: adminLogoutApprovalPassword,
+          email,
+          password,
         });
       }
       setAdminLogoutApproved(true);
@@ -2571,6 +2613,7 @@ const Cashier = ({ onLogout, user }) => {
     setEmail,
     password,
     setPassword,
+    onSubmit,
     disabled = false,
   }) => (
     <div className={styles['approval-panel']}>
@@ -2605,6 +2648,8 @@ const Cashier = ({ onLogout, user }) => {
           placeholder="Scan or enter manager barcode"
           value={code}
           onChange={(e) => setCode(e.target.value)}
+          onKeyDown={submitOnEnter(onSubmit, (e) => ({ code: e.currentTarget.value }))}
+          autoFocus
           disabled={disabled}
         />
       ) : (
@@ -2615,6 +2660,8 @@ const Cashier = ({ onLogout, user }) => {
             placeholder="Enter manager email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={submitOnEnter(onSubmit, (e) => ({ email: e.currentTarget.value }))}
+            autoFocus
             disabled={disabled}
           />
           <Input
@@ -2623,6 +2670,7 @@ const Cashier = ({ onLogout, user }) => {
             placeholder="Enter manager password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={submitOnEnter(onSubmit, (e) => ({ password: e.currentTarget.value }))}
             disabled={disabled}
           />
         </div>
@@ -3361,7 +3409,14 @@ const Cashier = ({ onLogout, user }) => {
         }
       >
         <p>Please scan the manager barcode to confirm the void.</p>
-        <Input label="Manager Barcode" placeholder="Enter manager barcode" value={managerBarcode} onChange={(e) => setManagerBarcode(e.target.value)} />
+        <Input
+          label="Manager Barcode"
+          placeholder="Scan or enter manager barcode"
+          value={managerBarcode}
+          onChange={(e) => setManagerBarcode(e.target.value)}
+          onKeyDown={submitOnEnter(confirmVoidTransaction, (e) => ({ code: e.currentTarget.value }))}
+          autoFocus
+        />
         {voidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidError}</div>}
       </Modal>
 
@@ -3393,25 +3448,7 @@ const Cashier = ({ onLogout, user }) => {
               Cancel
             </button>
             {!discountApproved ? (
-              <button className="btn btn-primary" onClick={async () => {
-                try {
-                  const authorization = approvalPayload({
-                    method: discountApprovalMethod,
-                    code: discountApprovalCode,
-                    email: discountApprovalEmail,
-                    password: discountApprovalPassword,
-                  });
-                  if (!authorization.code && (!authorization.email || !authorization.password)) {
-                    setDiscountError(approvalError(discountApprovalMethod));
-                    return;
-                  }
-                  await cashierApi.authorizeVoid(authorization);
-                  setDiscountApproved(true);
-                  setDiscountError('');
-                } catch (err) {
-                  setDiscountError(err.message || 'Invalid manager approval code.');
-                }
-              }}>
+              <button className="btn btn-primary" onClick={verifyDiscountApproval}>
                 Verify
               </button>
             ) : (
@@ -3451,6 +3488,7 @@ const Cashier = ({ onLogout, user }) => {
               setEmail: setDiscountApprovalEmail,
               password: discountApprovalPassword,
               setPassword: setDiscountApprovalPassword,
+              onSubmit: verifyDiscountApproval,
             })}
           </>
         ) : (
@@ -3726,6 +3764,8 @@ const Cashier = ({ onLogout, user }) => {
                 placeholder="Scan or enter manager barcode"
                 value={adminLogoutApprovalCode}
                 onChange={(e) => setAdminLogoutApprovalCode(e.target.value)}
+                onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ code: e.currentTarget.value }))}
+                autoFocus
                 disabled={adminLogoutBusy}
               />
             ) : (
@@ -3735,6 +3775,8 @@ const Cashier = ({ onLogout, user }) => {
                   placeholder="Enter manager email"
                   value={adminLogoutApprovalEmail}
                   onChange={(e) => setAdminLogoutApprovalEmail(e.target.value)}
+                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ email: e.currentTarget.value }))}
+                  autoFocus
                   disabled={adminLogoutBusy}
                 />
                 <Input
@@ -3743,6 +3785,7 @@ const Cashier = ({ onLogout, user }) => {
                   placeholder="Enter manager password"
                   value={adminLogoutApprovalPassword}
                   onChange={(e) => setAdminLogoutApprovalPassword(e.target.value)}
+                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ password: e.currentTarget.value }))}
                   disabled={adminLogoutBusy}
                 />
               </>
@@ -3833,6 +3876,7 @@ const Cashier = ({ onLogout, user }) => {
           setEmail: setCashFlowApprovalEmail,
           password: cashFlowApprovalPassword,
           setPassword: setCashFlowApprovalPassword,
+          onSubmit: confirmCashFlow,
         })}
         {cashFlowError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashFlowError}</div>}
       </Modal>
@@ -4116,6 +4160,7 @@ const Cashier = ({ onLogout, user }) => {
                   setEmail: setLookupApprovalEmail,
                   password: lookupApprovalPassword,
                   setPassword: setLookupApprovalPassword,
+                  onSubmit: handleLookupApprovalAction,
                   disabled: lookupActionLoading,
                 })}
                 <Input
@@ -4552,6 +4597,7 @@ const Cashier = ({ onLogout, user }) => {
           setEmail: setCompletedVoidEmail,
           password: completedVoidPassword,
           setPassword: setCompletedVoidPassword,
+          onSubmit: handleConfirmCompletedVoid,
           disabled: completedVoidLoading,
         })}
         <Input

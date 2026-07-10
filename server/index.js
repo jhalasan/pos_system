@@ -10,6 +10,7 @@ import {
   authenticateRoleUser,
   pb,
   pbCollection,
+  PB_URL,
 } from './pocketbase.js'
 import {
   activityLogPayload,
@@ -28,7 +29,7 @@ const PORT = Number(process.env.PORT || process.env.API_PORT || 3001)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST_DIR = path.resolve(__dirname, '..', 'dist')
 const INDEX_HTML = path.join(DIST_DIR, 'index.html')
-const PB_PROXY_TARGET = process.env.POCKETBASE_PROXY_TARGET || 'http://127.0.0.1:8090'
+const PB_PROXY_TARGET = process.env.POCKETBASE_PROXY_TARGET || PB_URL
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:1420,http://localhost:5133,http://localhost:5173,http://localhost:5174')
   .split(',')
   .map((origin) => origin.trim())
@@ -93,7 +94,7 @@ app.use('/api/pocketbase', createProxyMiddleware({
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' })
       }
-      res.end(JSON.stringify({ error: 'PocketBase proxy failed. Make sure PocketBase is running on http://127.0.0.1:8090.' }))
+      res.end(JSON.stringify({ error: `PocketBase proxy failed. Make sure PocketBase is reachable at ${PB_PROXY_TARGET}.` }))
     },
   },
 }))
