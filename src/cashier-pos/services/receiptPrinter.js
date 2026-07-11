@@ -271,8 +271,10 @@ function buildPrintableHtml(receipts) {
 </html>`
 }
 
-function receiptTexts(receiptData) {
-  const copies = envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
+function receiptTexts(receiptData, options = {}) {
+  const copies = Number.isFinite(Number(options.copies)) && Number(options.copies) > 0
+    ? Number(options.copies)
+    : envNumber(import.meta.env.VITE_RECEIPT_COPIES, DEFAULT_COPY_COUNT)
   return Array.from({ length: copies }, () => buildReceiptText(receiptData))
 }
 
@@ -373,14 +375,14 @@ export async function printCompletedReceipt(receiptData, options = {}) {
   const documentName = options.documentName || `Receipt ${receiptData?.transactionNo || ''}`.trim()
   const invoke = tauriInvoke()
 
-  if (invoke) {
+    if (invoke) {
     await assertReceiptPrinterReady({ ...options, printerName })
     const contents = receipts.join('\n')
     try {
       return await invoke('print_receipt', {
         printerName,
         contents,
-        copies: 1,
+        copies: receipts.length,
         openCashDrawer,
         documentName,
         beforeFeedLines,

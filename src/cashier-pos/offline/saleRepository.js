@@ -1,9 +1,31 @@
 import { cashierDb, initializeCashierDb } from './db'
+import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
+import { barcodesMatch } from '../utils/barcodeUtils'
+import { normalizeProduct } from './productRepository'
 import { toBaseStockQuantity } from './stockUtils'
 
 async function hasTable(name) {
   await initializeCashierDb()
   return cashierDb.tables.some((table) => table.name === name)
+}
+
+async function loadProductFromAdminCache({ productId, barcode }) {
+  await initializeAdminDb()
+  if (productId) {
+    const cached = await adminDb.products.get(String(productId))
+    if (cached) return normalizeProduct(cached)
+  }
+
+  const normalizedBarcode = String(barcode || '').trim()
+  if (!normalizedBarcode) return null
+
+  const cached = await adminDb.products
+    .filter((candidate) => (
+      barcodesMatch(candidate.barcode, normalizedBarcode)
+      || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => barcodesMatch(unit?.barcode, normalizedBarcode)))
+    ))
+    .first()
+  return cached ? normalizeProduct(cached) : null
 }
 
 function newClientSaleId() {
@@ -65,18 +87,36 @@ export async function finalizeSaleLocally(sale) {
     cashierDb.pendingSales,
   ]
   if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
+  // Pre-resolve any missing products from the admin cache before starting
+  // the cashier DB transaction. This avoids awaiting other DBs while a
+  // Dexie transaction is active which can cause "transaction has finished"
+  // InvalidStateError when object stores are accessed after the transaction
+  // lifetime.
+  const recoveredProducts = []
+  for (const item of pendingSale.items) {
+    if (!item.productId || item.quantity <= 0) {
+      throw new Error(`Invalid line item: ${item.name || item.productId || 'unknown product'}.`)
+    }
+
+    const local = await cashierDb.products.get(item.productId)
+    if (!local) {
+      const fetched = await loadProductFromAdminCache({ productId: item.productId, barcode: item.barcode })
+      if (fetched) recoveredProducts.push(fetched)
+    }
+  }
 
   await cashierDb.transaction(
     'rw',
     ...transactionTables,
     async () => {
-      for (const item of pendingSale.items) {
-        if (!item.productId || item.quantity <= 0) {
-          throw new Error(`Invalid line item: ${item.name || item.productId || 'unknown product'}.`)
-        }
+      if (recoveredProducts.length) {
+        await cashierDb.products.bulkPut(recoveredProducts)
+      }
 
+      for (const item of pendingSale.items) {
         const product = await cashierDb.products.get(item.productId)
         if (!product) throw new Error(`Product "${item.name || item.productId}" is not available locally.`)
+
         const baseQuantity = toBaseStockQuantity(item.quantity, item.conversion)
         if (product.quantity < baseQuantity) {
           throw new Error(`"${product.name}" has only ${product.quantity} item(s) left.`)

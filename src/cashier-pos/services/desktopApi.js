@@ -4,6 +4,7 @@ import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { getAllProducts, getProductByBarcode, normalizeProduct } from '../offline/productRepository'
+import { barcodesMatch } from '../utils/barcodeUtils'
 import {
   adjustLocalSale,
   finalizeSaleLocally,
@@ -179,6 +180,23 @@ function toCashierProduct(product) {
   }
 }
 
+async function adminCachedProducts() {
+  try {
+    await initializeAdminDb()
+    const products = await adminDb.products
+      .filter((product) => !product.deleted)
+      .toArray()
+
+    return products.map((product) => ({
+      ...product,
+      quantity: Number(product.quantity ?? product.qty) || 0,
+      minStock: Number(product.minStock ?? product.lowStock) || 0,
+    }))
+  } catch {
+    return []
+  }
+}
+
 function saleItemCount(sale) {
   return (sale.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
 }
@@ -345,7 +363,7 @@ async function ensureProducts() {
   await initializeCashierDb()
   let products = await getAllProducts()
 
-  if (products.length === 0 && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+  if (products.length === 0 && !isPocketBaseRateLimited()) {
     const activeRuntime = await runtime()
     await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
       rememberPocketBaseRateLimit(error)
@@ -482,9 +500,9 @@ async function adminCachedProductByBarcode(barcode) {
       .filter((candidate) => (
         !candidate.deleted
         && (
-          String(candidate.barcode || '').trim() === normalizedBarcode
+          barcodesMatch(candidate.barcode, normalizedBarcode)
           || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => (
-            String(unit?.barcode || '').trim() === normalizedBarcode
+            barcodesMatch(unit?.barcode, normalizedBarcode)
           )))
         )
       ))
@@ -627,26 +645,51 @@ export const desktopCashierApi = {
   },
 
   async products() {
-    return (await ensureProducts()).map(toCashierProduct)
+    const products = await ensureProducts()
+    if (products.length > 0) {
+      return products.map(toCashierProduct)
+    }
+
+    const adminProducts = await adminCachedProducts()
+    if (adminProducts.length > 0) {
+      const cached = adminProducts.map((product) => toCashierProduct(normalizeProduct(product)))
+      await cashierDb.transaction('rw', cashierDb.products, async () => {
+        await cashierDb.products.bulkPut(cached)
+      })
+      return cached
+    }
+
+    return []
   },
 
   async productByBarcode(barcode) {
     await initializeCashierDb()
     let product = await getProductByBarcode(barcode)
 
-    const fallbackProduct = product
-      ? await adminCachedProductByBarcode(barcode)
-      : null
+    let fallbackProduct = await adminCachedProductByBarcode(barcode)
     if (fallbackProduct) {
       product = fallbackProduct
       await cashierDb.products.put(product)
     }
 
-    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+    if (!product) {
+      const adminProducts = await adminCachedProducts()
+      if (adminProducts.length) {
+        fallbackProduct = adminProducts.find((candidate) => (
+          barcodesMatch(candidate.barcode, barcode)
+          || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => barcodesMatch(unit.barcode, barcode)))
+        ))
+        if (fallbackProduct) {
+          product = normalizeProduct(fallbackProduct)
+          await cashierDb.products.put(product)
+        }
+      }
+    }
+
+    if (!isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
         rememberPocketBaseRateLimit(error)
-        throw error
       })
       const refreshedProduct = await getProductByBarcode(barcode)
       if (refreshedProduct) {
@@ -663,9 +706,9 @@ export const desktopCashierApi = {
           requestKey: null,
         })
         const cloudRecord = cloudRecords.find((record) => (
-          String(record.barcode || '').trim() === normalizedBarcode
+          barcodesMatch(record.barcode, normalizedBarcode)
           || (Array.isArray(record.selling_units) && record.selling_units.some((unit) => (
-            String(unit?.barcode || '').trim() === normalizedBarcode
+            barcodesMatch(unit?.barcode, normalizedBarcode)
           )))
         ))
         if (cloudRecord) {
@@ -681,7 +724,7 @@ export const desktopCashierApi = {
     if (Number(product.quantity ?? product.qty ?? 0) <= 0) throw new Error(`"${product.name}" is out of stock.`)
 
     const matchingUnit = Array.isArray(product.sellingUnits)
-      ? product.sellingUnits.find((unit) => String(unit.barcode || '').trim() === String(barcode || '').trim())
+      ? product.sellingUnits.find((unit) => barcodesMatch(unit.barcode, barcode))
       : null
     const result = toCashierProduct(product)
     if (matchingUnit) {

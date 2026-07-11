@@ -1,4 +1,5 @@
 import { cashierDb } from './db'
+import { barcodesMatch, normalizeBarcode } from '../utils/barcodeUtils'
 
 function firstFileValue(value) {
   return Array.isArray(value) ? value[0] : value
@@ -54,17 +55,17 @@ export function getAllProducts() {
 }
 
 export async function getProductByBarcode(barcode) {
-  const normalizedBarcode = String(barcode || '').trim()
+  const normalizedBarcode = normalizeBarcode(barcode)
   if (!normalizedBarcode) return undefined
 
   const baseProduct = await cashierDb.products
-    .filter((product) => String(product.barcode || '').trim() === normalizedBarcode)
+    .filter((product) => barcodesMatch(product.barcode, normalizedBarcode))
     .first()
   if (baseProduct) return baseProduct
 
   return cashierDb.products
     .filter((product) => Array.isArray(product.sellingUnits)
-      ? product.sellingUnits.some((unit) => String(unit.barcode || '').trim() === normalizedBarcode)
+      ? product.sellingUnits.some((unit) => barcodesMatch(unit.barcode, normalizedBarcode))
       : false)
     .first()
 }
@@ -74,16 +75,17 @@ export function searchProducts(query, limit = 50) {
   if (!normalizedQuery) return getAllProducts().then((products) => products.slice(0, limit))
 
   return cashierDb.products
-    .filter((product) => (
-      product.name.toLocaleLowerCase().includes(normalizedQuery)
-      || product.barcode.includes(normalizedQuery)
+    .filter((product) => {
+      const productBarcode = normalizeBarcode(product.barcode || '').toLowerCase()
+      return product.name.toLocaleLowerCase().includes(normalizedQuery)
+      || productBarcode.includes(normalizedQuery)
       || (Array.isArray(product.sellingUnits)
         ? product.sellingUnits.some((unit) => (
-          String(unit?.barcode || '').toLocaleLowerCase().includes(normalizedQuery)
+          normalizeBarcode(String(unit?.barcode || '')).toLowerCase().includes(normalizedQuery)
           || String(unit?.unit || '').toLocaleLowerCase().includes(normalizedQuery)
         ))
         : false)
-    ))
+    })
     .limit(limit)
     .toArray()
 }

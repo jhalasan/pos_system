@@ -73,15 +73,56 @@ async function ensureCloudSaleItems(pb, sale, cloudSale) {
 
   const createdItems = []
   for (const item of sale.items) {
-    const created = await pb.collection('sale_items').create({
+    let productId = String(item.productId || '').trim()
+    if (productId) {
+      // verify product exists in cloud
+      try {
+        await pb.collection('products').getOne(productId, { requestKey: null })
+      } catch {
+        productId = ''
+      }
+    }
+
+    // fallback: resolve by barcode if productId missing
+    if (!productId && String(item.barcode || '').trim()) {
+      const normalized = String(item.barcode || '').trim()
+      try {
+        const cloudProducts = await pb.collection('products').getFullList({ requestKey: null }).catch(() => [])
+        const matched = cloudProducts.find((p) => (
+          String(p.barcode || '').trim() === normalized
+          || (Array.isArray(p.selling_units) && p.selling_units.some((u) => String(u?.barcode || '').trim() === normalized))
+        ))
+        if (matched) productId = String(matched.id)
+      } catch {
+        // ignore and proceed
+      }
+    }
+
+    // attempt to create sale_item; if productId still missing, try without product relation
+    const payload = {
       sale_id: cloudSale.id,
-      product_id: item.productId,
+      product_id: productId || null,
       quantity_sold: Number(item.quantity) || 0,
       price_at_sale: Number(item.price) || 0,
-    }, {
-      requestKey: `sale-item:${sale.clientSaleId}:${item.productId}`,
-    })
-    createdItems.push(created)
+    }
+
+    try {
+      const created = await pb.collection('sale_items').create(payload, {
+        requestKey: `sale-item:${sale.clientSaleId}:${productId || 'unknown'}`,
+      })
+      createdItems.push(created)
+    } catch (err) {
+      // If creation failed due to invalid product relation, try removing product_id
+      try {
+        const fallback = { ...payload, product_id: null }
+        const created = await pb.collection('sale_items').create(fallback, {
+          requestKey: `sale-item-fallback:${sale.clientSaleId}:${Date.now()}`,
+        })
+        createdItems.push(created)
+      } catch (innerErr) {
+        throw innerErr
+      }
+    }
   }
 
   return { items: createdItems, createdNow: true }

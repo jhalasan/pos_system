@@ -1285,6 +1285,7 @@ const Cashier = ({ onLogout, user }) => {
       updateReceiptPrintJob(jobId, { status: 'Printing' });
       await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
         documentName: `Receipt ${transactionNo}`,
+        copies: 1,
       });
       updateReceiptPrintJob(jobId, { status: 'Waiting for printer' });
       await waitForPrinterQueueToClear(transactionNo);

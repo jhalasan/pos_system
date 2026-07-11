@@ -5,11 +5,15 @@
  * - Validates format
  */
 export function normalizeBarcode(barcode) {
-  const trimmed = String(barcode || '').trim()
+  const raw = String(barcode || '')
+  const trimmed = raw.trim()
   if (!trimmed) return ''
-  // Keep original case but trim whitespace
-  // Some barcodes might be case-sensitive in some systems
-  return trimmed
+
+  // Remove control characters and normalize whitespace.
+  const cleaned = trimmed
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .replace(/\s+/g, '')
+  return cleaned
 }
 
 /**
@@ -18,7 +22,12 @@ export function normalizeBarcode(barcode) {
 export function barcodesMatch(barcode1, barcode2) {
   const norm1 = normalizeBarcode(barcode1).toUpperCase()
   const norm2 = normalizeBarcode(barcode2).toUpperCase()
-  return norm1 === norm2 && norm1.length > 0
+  if (!norm1 || !norm2) return false
+  if (norm1 === norm2) return true
+
+  const digits1 = norm1.replace(/\D/g, '')
+  const digits2 = norm2.replace(/\D/g, '')
+  return digits1 && digits2 && digits1 === digits2
 }
 
 /**
