@@ -72,6 +72,7 @@ export function useApproval(initialMethod = 'barcode') {
     setEmail,
     setPassword,
     setError,
+    setLoading,
     reset,
     verify,
     getPayload,

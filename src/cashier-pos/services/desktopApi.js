@@ -407,12 +407,13 @@ function numberPayload(value) {
 
 async function authorizeManagerApproval(authorization = {}) {
   const payload = typeof authorization === 'string' ? { code: authorization } : authorization
+  const method = String(payload?.method || '').trim().toLowerCase()
   const code = String(payload?.code || '').trim()
   const email = String(payload?.email || '').trim()
   const password = String(payload?.password || '')
   const activeRuntime = await runtime()
 
-  if (code) {
+  if ((method === 'barcode' || (!method && code)) && code) {
     const authorizationRecord = await activeRuntime.pb.collection('authorization_barcodes').getFirstListItem(
       activeRuntime.pb.filter('code = {:code} && status = "active"', { code }),
       { expand: 'generated_by', requestKey: null },
@@ -449,7 +450,7 @@ async function authorizeManagerApproval(authorization = {}) {
     if (cachedManager) return cachedManager
   }
 
-  if (email && password) {
+  if ((method === 'password' || (!method && email && password)) && email && password) {
     const adminClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL)
     adminClient.autoCancellation(false)
     const auth = await adminClient.collection('users').authWithPassword(email, password)

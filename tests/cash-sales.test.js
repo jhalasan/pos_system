@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getCashSalesAmount, getCashSalesAmountFromSources } from '../src/cashier-pos/utils/cashSales.js';
+import { getCashSalesAmount, getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../src/cashier-pos/utils/cashSales.js';
 
 test('counts completed cash and split sales even when the transaction tab is closed', () => {
   const sales = [
@@ -83,4 +83,21 @@ test('only includes completed sales from the logged-in cashier', () => {
     historySales: [],
     cashierId: 'cashier-a',
   }), 200);
+});
+
+test('persists retained completed sales to local storage and restores them for the same cashier', () => {
+  const store = new Map();
+  const localStorageStub = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => store.set(key, value),
+    removeItem: (key) => store.delete(key),
+  };
+
+  global.localStorage = localStorageStub;
+
+  const sales = [{ saleId: 'sale-100', paymentMethod: 'cash', totalAmount: 250, rawStatus: 'completed' }];
+  saveRetainedCompletedSales(sales, 'cashier-a');
+
+  assert.deepEqual(loadRetainedCompletedSales('cashier-a'), [{ ...sales[0], cashierId: 'cashier-a' }]);
+  assert.deepEqual(loadRetainedCompletedSales('cashier-b'), []);
 });

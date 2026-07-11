@@ -13,7 +13,7 @@ import { buildShiftCloseReceiptText, getReceiptPrinterStatus, openCashDrawer, pr
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
-import { getCashSalesAmountFromSources } from '../utils/cashSales';
+import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -201,6 +201,7 @@ const DEFAULT_SHORTCUT_SETTINGS = {
 };
 const CASHIER_AUDIT_ENTRY_KEY = 'nexa_cashier_audit_entry';
 const CASHIER_SHIFT_KEY = 'nexa_cashier_shift_session';
+const CASHIER_TRANSACTIONS_KEY = 'nexa_cashier_transactions';
 const CASHIER_DEVICE_KEY = 'nexa_cashier_device_id';
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 const CASH_FLOW_CATEGORIES = {
@@ -258,13 +259,45 @@ function loadCashierAuditEntry() {
   }
 }
 
-function shiftStorageKey(userId) {
-  return `${CASHIER_SHIFT_KEY}:${userId || 'cashier'}`;
+function loadCashierTransactions() {
+  try {
+    const value = JSON.parse(localStorage.getItem(CASHIER_TRANSACTIONS_KEY) || 'null');
+    if (!value || !Array.isArray(value.transactions)) return null;
+    return {
+      transactions: value.transactions,
+      activeTransaction: Number(value.activeTransaction) || (value.transactions[0]?.id || 1),
+    };
+  } catch {
+    return null;
+  }
 }
 
-function loadCashierShift(userId) {
+function saveCashierTransactions(transactions, activeTransaction) {
   try {
-    const session = JSON.parse(localStorage.getItem(shiftStorageKey(userId)) || 'null');
+    localStorage.setItem(CASHIER_TRANSACTIONS_KEY, JSON.stringify({
+      transactions,
+      activeTransaction,
+    }));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function clearCashierTransactions() {
+  try {
+    localStorage.removeItem(CASHIER_TRANSACTIONS_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function shiftStorageKey() {
+  return CASHIER_SHIFT_KEY;
+}
+
+function loadCashierShift() {
+  try {
+    const session = JSON.parse(localStorage.getItem(shiftStorageKey()) || 'null');
     return session?.status === 'open' ? session : null;
   } catch {
     return null;
@@ -398,7 +431,7 @@ const Cashier = ({ onLogout, user }) => {
   const [productsError, setProductsError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [historyRecords, setHistoryRecords] = useState([]);
-  const [retainedCompletedSales, setRetainedCompletedSales] = useState([]);
+  const [retainedCompletedSales, setRetainedCompletedSales] = useState(() => loadRetainedCompletedSales(user?.id));
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -424,7 +457,7 @@ const Cashier = ({ onLogout, user }) => {
   const [cashCountHistory, setCashCountHistory] = useState(loadCashCountHistory);
   const [cashierAuditSaving, setCashierAuditSaving] = useState(false);
   const [cashierAuditMessage, setCashierAuditMessage] = useState('');
-  const [shiftSession, setShiftSession] = useState(() => loadCashierShift(user?.id));
+  const [shiftSession, setShiftSession] = useState(() => loadCashierShift());
   const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
@@ -528,12 +561,14 @@ const Cashier = ({ onLogout, user }) => {
         rawStatus: txn?.completedSale?.rawStatus || 'completed',
       }))
       .filter(Boolean);
+    // If a shift is open (shared session), include global retained sales across cashiers.
+    const cashierFilter = shiftSession ? '' : user?.id;
     return getCashSalesAmountFromSources({
       retainedSales: retainedCompletedSales,
       currentSales: transactionSales,
-      cashierId: user?.id,
+      cashierId: cashierFilter,
     });
-  }, [historyRecords, retainedCompletedSales, transactions]);
+  }, [historyRecords, retainedCompletedSales, transactions, shiftSession, user?.id]);
 
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
@@ -800,7 +835,7 @@ const Cashier = ({ onLogout, user }) => {
 
   const persistShiftSession = (session) => {
     setShiftSession(session);
-    localStorage.setItem(shiftStorageKey(user?.id), JSON.stringify(session));
+    localStorage.setItem(shiftStorageKey(), JSON.stringify(session));
   };
 
   const resetShiftCloseForm = () => {
@@ -980,11 +1015,11 @@ const Cashier = ({ onLogout, user }) => {
     const draft = shouldSkipCashCount ? buildShiftCloseDraft(true) : shiftCloseDraft;
     if (!draft) {
       setShiftError('Preview and print the Z-read before closing the shift.');
-      return;
+      return false;
     }
     if (!shouldSkipCashCount && shiftCloseStep !== 'printed') {
       setShiftError('Print the Z-read before closing the shift.');
-      return;
+      return false;
     }
 
     setShiftSaving(true);
@@ -1016,19 +1051,31 @@ const Cashier = ({ onLogout, user }) => {
         denominations: denominationBreakdown,
         deviceId,
       });
-      localStorage.removeItem(shiftStorageKey(user?.id));
+      localStorage.removeItem(shiftStorageKey());
+      clearCashierTransactions();
+      setRetainedCompletedSales([]);
+      // clear global retained sales (and any per-cashier entries)
+      saveRetainedCompletedSales([], '');
       setShiftSession(null);
       setShowShiftClose(false);
       setShowAdminLogout(false);
       resetShiftCloseForm();
       showNotification(`Shift closed${shouldSkipCashCount ? ' (admin override)' : ''}. Variance: ${money(variance)}.`);
-      if (onLogout) {
-        onLogout();
-        navigate('/login');
-      }
+      return true;
     } finally {
       setShiftSaving(false);
     }
+  };
+
+  const handleCloseShiftAndLogout = async (skipCashCount = false) => {
+    const closedSuccessfully = await closeShift(skipCashCount);
+    if (!closedSuccessfully) return false;
+
+    if (onLogout) {
+      onLogout();
+      navigate('/login');
+    }
+    return true;
   };
 
   const saveCashierAuditEntry = async () => {
@@ -1336,16 +1383,44 @@ const Cashier = ({ onLogout, user }) => {
   }, [paymentFlow.open, paymentFlow.step]);
 
   useEffect(() => {
-    const session = loadCashierShift(user?.id);
+    if (!user?.id) {
+      const persistedSession = loadCashierShift();
+      setShiftSession(persistedSession);
+      const retained = persistedSession ? loadRetainedCompletedSales() : [];
+      setRetainedCompletedSales(retained);
+      setShowShiftOpen(!persistedSession);
+      return;
+    }
+
+    const session = loadCashierShift();
+    const retained = session ? loadRetainedCompletedSales() : loadRetainedCompletedSales(user?.id);
     setShiftSession(session);
+    setRetainedCompletedSales(retained);
     setShowShiftOpen(!session);
     if (session) {
       setCashierAuditEntry((current) => ({
         ...current,
         cashBeginning: current.cashBeginning || String(session.openingAmount ?? ''),
       }));
+      const savedTransactions = loadCashierTransactions();
+      if (savedTransactions?.transactions?.length) {
+        setTransactions(savedTransactions.transactions);
+        setActiveTransaction(savedTransactions.activeTransaction);
+      }
+    } else {
+      setTransactions([createTransaction(1)]);
+      setActiveTransaction(1);
+      clearCashierTransactions();
     }
   }, [user?.id]);
+
+  useEffect(() => {
+    if (shiftSession) {
+      saveCashierTransactions(transactions, activeTransaction);
+    } else if (!loadCashierShift()) {
+      clearCashierTransactions();
+    }
+  }, [transactions, activeTransaction, shiftSession]);
 
   useEffect(() => {
     if (!user || idleLocked) return undefined;
@@ -2151,6 +2226,7 @@ const Cashier = ({ onLogout, user }) => {
       const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
       const completedSale = {
         ...completedPayment,
+        cashierId: user?.id,
         saleId: sale.id,
         transactionNo: sale.transactionNo || completedTransactionNo,
         status: 'completed',
@@ -2171,10 +2247,15 @@ const Cashier = ({ onLogout, user }) => {
       });
       setRetainedCompletedSales((current) => {
         const key = completedSale.saleId || completedSale.transactionNo || completedSale.id;
-        if (!key || current.some((entry) => String(entry.saleId || entry.transactionNo || entry.id || '') === String(key))) {
-          return current;
-        }
-        return [completedSale, ...current];
+          const next = !key || current.some((entry) => String(entry.saleId || entry.transactionNo || entry.id || '') === String(key))
+            ? current
+            : [completedSale, ...current];
+          if (shiftSession) {
+            saveRetainedCompletedSales(next);
+          } else {
+            saveRetainedCompletedSales(next, user?.id);
+          }
+        return next;
       });
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
       setActiveTransaction(completingTransactionId);
@@ -2439,16 +2520,18 @@ const Cashier = ({ onLogout, user }) => {
   const approveAdminLogout = async (override = {}) => {
     adminLogoutApproval.setError('');
     adminLogoutApproval.setLoading(true);
+    const method = Object.hasOwn(override || {}, 'method') ? override.method : adminLogoutApproval.method;
     const code = Object.hasOwn(override || {}, 'code') ? override.code : adminLogoutApproval.code;
     const email = Object.hasOwn(override || {}, 'email') ? override.email : adminLogoutApproval.email;
     const password = Object.hasOwn(override || {}, 'password') ? override.password : adminLogoutApproval.password;
     try {
-      if (adminLogoutApproval.method === 'barcode') {
-        await cashierApi.authorizeVoid(code);
+      if (method === 'barcode') {
+        await cashierApi.authorizeVoid({ code, method: 'barcode' });
       } else {
         await cashierApi.authorizeVoid({
           email,
           password,
+          method: 'password',
         });
       }
       setAdminLogoutApproved(true);
@@ -2473,28 +2556,41 @@ const Cashier = ({ onLogout, user }) => {
     setAdminLogoutBusy(true);
     adminLogoutApproval.setError('');
     try {
-      await cashierApi.logActivity({
-        cashierId: user?.id,
-        action: 'Manager Approved Logout',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} logged out with manager approval. Shift remains open; no cash count or shift close was recorded.`),
-      }).catch(() => {});
+      if (shiftSession) {
+        persistShiftSession(shiftSession);
+        saveCashierTransactions(transactions, activeTransaction);
+      }
       setShowAdminLogout(false);
       setShowShiftClose(false);
+      setAdminLogoutApproved(false);
+      adminLogoutApproval.reset();
       if (onLogout) {
         onLogout();
         navigate('/login');
       }
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Manager Approved Logout',
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} logged out with manager approval while keeping the shift open.`),
+      }).catch(() => {});
     } finally {
       setAdminLogoutBusy(false);
     }
   };
 
   const handleLogout = () => {
+    if (showAdminLogout) {
+      setShowAdminLogout(false);
+      setAdminLogoutApproved(false);
+      adminLogoutApproval.reset();
+    }
+
     if (shiftSession) {
       resetShiftCloseForm();
       setShowShiftClose(true);
       return;
     }
+
     if (onLogout) {
       onLogout();
       navigate('/login');
@@ -3505,7 +3601,7 @@ const Cashier = ({ onLogout, user }) => {
                   {shiftSaving ? 'Printing...' : shiftCloseStep === 'printed' ? 'Reprint Z-Read' : 'Print Z-Read'}
                 </button>
                 {shiftCloseStep === 'printed' && (
-                  <button className="btn btn-primary" onClick={() => closeShift(false)} disabled={shiftSaving}>
+                  <button className="btn btn-primary" onClick={() => handleCloseShiftAndLogout(false)} disabled={shiftSaving}>
                     {shiftSaving ? 'Closing...' : 'Close Shift & Logout'}
                   </button>
                 )}
@@ -3667,7 +3763,7 @@ const Cashier = ({ onLogout, user }) => {
       >
         {!adminLogoutApproved ? (
           <>
-            <p style={{ marginBottom: '16px', color: '#7f1d1d', fontWeight: '600' }}>This logs out the cashier with manager approval. The shift remains open and no cash count is recorded.</p>
+            <p style={{ marginBottom: '16px', color: '#7f1d1d', fontWeight: '600' }}>This logs out the cashier with manager approval and closes the open shift using an admin override cash count.</p>
             <div style={{ marginBottom: '16px' }}>
               <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Approval Method</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
@@ -3699,7 +3795,7 @@ const Cashier = ({ onLogout, user }) => {
                 placeholder="Scan or enter manager barcode"
                 value={adminLogoutApproval.code}
                 onChange={(e) => adminLogoutApproval.setCode(e.target.value)}
-                onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ code: e.currentTarget.value }))}
+                onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ code: e.currentTarget.value, method: 'barcode' }))}
                 autoFocus
                 disabled={adminLogoutBusy}
               />
@@ -3710,7 +3806,7 @@ const Cashier = ({ onLogout, user }) => {
                   placeholder="Enter manager email"
                   value={adminLogoutApproval.email}
                   onChange={(e) => adminLogoutApproval.setEmail(e.target.value)}
-                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ email: e.currentTarget.value }))}
+                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ email: e.currentTarget.value, method: 'password' }))}
                   autoFocus
                   disabled={adminLogoutBusy}
                 />
@@ -3720,7 +3816,7 @@ const Cashier = ({ onLogout, user }) => {
                   placeholder="Enter manager password"
                   value={adminLogoutApproval.password}
                   onChange={(e) => adminLogoutApproval.setPassword(e.target.value)}
-                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ password: e.currentTarget.value }))}
+                  onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ password: e.currentTarget.value, method: 'password' }))}
                   disabled={adminLogoutBusy}
                 />
               </>

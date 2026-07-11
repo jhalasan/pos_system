@@ -5,6 +5,7 @@ import Modal from '../components/Modal'
 import { IconDollar, IconDownload, IconList, IconSearch, IconUsers } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { loadRetainedCompletedSales } from '../../cashier-pos/utils/cashSales'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { currentAdminUser } from '../auth'
@@ -269,12 +270,20 @@ export default function Audit() {
       return rows.get(key)
     }
 
-    for (const receipt of receipts || []) {
-      if (!inRange(receipt.createdAt)) continue
-      const row = ensure(receipt.cashierName || 'Cashier')
-      const method = String(receipt.paymentMethod || '').toLowerCase()
-      if (method === 'cash') row.cashSales += Number(receipt.cashAmount || receipt.totalAmount) || 0
-      if (method === 'split') row.cashSales += Number(receipt.splitPayments?.cash || receipt.cashAmount) || 0
+    // include retained (local) completed sales so admin sees unsynced cash sales while a shift is open
+    const retained = loadRetainedCompletedSales()
+    const combinedReceipts = [...(retained || []), ...(receipts || [])]
+    const seenReceipts = new Set()
+    for (const receipt of combinedReceipts) {
+      const createdAt = receipt.createdAt || receipt.completedAt || receipt.time || receipt?.completedSale?.completedAt
+      const key = String(receipt.transactionNo || receipt.saleId || receipt.id || createdAt || JSON.stringify(receipt))
+      if (seenReceipts.has(key)) continue
+      seenReceipts.add(key)
+      if (!inRange(createdAt)) continue
+      const row = ensure(receipt.cashierName || receipt?.cashierName || 'Cashier')
+      const method = String(receipt.paymentMethod || receipt?.paymentMethod || receipt?.completedSale?.paymentMethod || '').toLowerCase()
+      if (method === 'cash') row.cashSales += Number(receipt.cashAmount || receipt.totalAmount || receipt?.completedSale?.cashAmount) || 0
+      if (method === 'split') row.cashSales += Number(receipt.splitPayments?.cash || receipt.cashAmount || receipt?.completedSale?.splitPayments?.cash || receipt?.completedSale?.cashAmount) || 0
     }
 
     for (const log of logs || []) {
