@@ -701,9 +701,6 @@ app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
   }
 
   const user = await authenticateRoleUser(email, password, 'cashier')
-  if (String(user.void_barcode || '').startsWith('92')) {
-    return res.status(403).json({ error: 'Manager accounts are for approvals, not cashier POS login.' })
-  }
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS' })
   res.json({ ok: true, user })
 }))
@@ -714,10 +711,6 @@ app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
   if (!barcode) {
     return res.status(400).json({ error: 'Cashier barcode is required.' })
   }
-  if (barcode.startsWith('92')) {
-    return res.status(401).json({ error: 'Manager barcodes are for approvals, not cashier POS login.' })
-  }
-
   const user = await (await pbCollection('users')).getFirstListItem(
     pb.filter('void_barcode = {:barcode} && role = "cashier" && status != "inactive"', { barcode }),
     { requestKey: null },

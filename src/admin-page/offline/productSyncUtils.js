@@ -28,9 +28,13 @@ export function mergeProductWithCloudRecord(cloudProduct, localProduct, pendingO
   const shouldPreserveLocal = localProduct?.pendingSync || stockOps.length > 0
   if (!shouldPreserveLocal) return cloudProduct
 
+  const fallbackQty = Number(localProduct?.qty ?? localProduct?.quantity ?? cloudProduct?.qty ?? cloudProduct?.quantity) || 0
+  const baseQty = localProduct?.pendingSync || stockOps.length > 0
+    ? fallbackQty
+    : Number(cloudProduct?.qty ?? cloudProduct?.quantity) || 0
   const qty = stockOps.length > 0
-    ? Math.max(0, (Number(cloudProduct.qty) || 0) + stockDelta)
-    : Math.max(0, Number(localProduct?.qty) || 0)
+    ? Math.max(0, baseQty + stockDelta)
+    : Math.max(0, baseQty)
   return {
     ...cloudProduct,
     qty,

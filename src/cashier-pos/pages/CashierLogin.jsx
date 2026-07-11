@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Envelope, Eye, EyeSlash, Cart, UpcScan } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
+import { normalizeBarcode } from '../utils/barcodeUtils';
+import { allowsCashierBarcodeLogin } from '../utils/cashierLoginPolicy';
 import styles from '../styles/CashierLogin.module.css';
 
 const QUICK_LOGIN_CACHE_KEY = 'nexa_cashier_quick_accounts';
@@ -93,14 +95,15 @@ const CashierLogin = ({ onLogin }) => {
     e.preventDefault();
     setError('');
 
-    if (!barcode.trim()) {
+    const normalized = normalizeBarcode(barcode);
+    if (!allowsCashierBarcodeLogin(normalized)) {
       setError('Cashier barcode is required');
       return;
     }
 
     setLoading(true);
     try {
-      const session = await cashierApi.loginWithBarcode(barcode);
+      const session = await cashierApi.loginWithBarcode(normalized);
       onLogin(session.user);
       navigate('/cashier', { replace: true });
     } catch (err) {
@@ -123,7 +126,7 @@ const CashierLogin = ({ onLogin }) => {
         {/* Heading */}
         <h1 className={styles['login-title']}>Cashier Login</h1>
         <p className={styles['login-subtitle']}>
-          {loginMode === 'barcode' ? 'Scan your cashier barcode to access the POS' : 'Use your cashier email and password'}
+          {loginMode === 'barcode' ? 'Scan your cashier barcode or enter your cashier login code to access the POS' : 'Use your cashier email and password'}
         </p>
 
         <div className={styles['login-mode-toggle']} role="radiogroup" aria-label="Login method">

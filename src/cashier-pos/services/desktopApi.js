@@ -544,7 +544,7 @@ export const desktopCashierApi = {
     await initializeCashierDb()
 
     let account = await cashierDb.quickLoginAccounts
-      .filter((record) => record.role === 'cashier' && !String(record.cashierBarcode || '').startsWith('92') && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
+      .filter((record) => record.role === 'cashier' && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
       .first()
 
     if (!account) {
@@ -553,7 +553,7 @@ export const desktopCashierApi = {
         account = await adminDb.users
           .where('role')
           .equals('cashier')
-          .filter((record) => !String(record.cashierBarcode || record.void_barcode || '').startsWith('92') && record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
+          .filter((record) => record.status === 'active' && String(record.cashierBarcode || record.void_barcode || '').trim() === code)
           .first()
       } catch {
         account = null
@@ -561,10 +561,9 @@ export const desktopCashierApi = {
     }
 
     if (!account && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
-      if (code.startsWith('92')) throw new Error('Manager barcodes are for approvals, not cashier POS login.')
       const activeRuntime = await runtime()
       const record = await activeRuntime.pb.collection('users').getFirstListItem(
-        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier" && status != "inactive"', { code }),
+        activeRuntime.pb.filter('(void_barcode = {:code} || cashierBarcode = {:code}) && role = "cashier" && status != "inactive"', { code }),
         { requestKey: null },
       ).catch((error) => {
         rememberPocketBaseRateLimit(error)
@@ -634,18 +633,24 @@ export const desktopCashierApi = {
     await initializeCashierDb()
     let product = await getProductByBarcode(barcode)
 
-    if (!product) {
-      product = await adminCachedProductByBarcode(barcode)
-      if (product) await cashierDb.products.put(product)
+    const fallbackProduct = product
+      ? await adminCachedProductByBarcode(barcode)
+      : null
+    if (fallbackProduct) {
+      product = fallbackProduct
+      await cashierDb.products.put(product)
     }
 
-    if (!product && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
         rememberPocketBaseRateLimit(error)
         throw error
       })
-      product = await getProductByBarcode(barcode)
+      const refreshedProduct = await getProductByBarcode(barcode)
+      if (refreshedProduct) {
+        product = refreshedProduct
+      }
 
       // Resolve directly from the just-contacted cloud as a final safeguard.
       // This keeps a valid selling-unit barcode usable even if an older local
@@ -672,7 +677,7 @@ export const desktopCashierApi = {
       throw new Error(`${pocketBaseRateLimitMessage()} Product barcode "${barcode}" is not cached on this cashier yet.`)
     }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
-    if (product.quantity <= 0) throw new Error(`"${product.name}" is out of stock.`)
+    if (Number(product.quantity ?? product.qty ?? 0) <= 0) throw new Error(`"${product.name}" is out of stock.`)
 
     const matchingUnit = Array.isArray(product.sellingUnits)
       ? product.sellingUnits.find((unit) => String(unit.barcode || '').trim() === String(barcode || '').trim())

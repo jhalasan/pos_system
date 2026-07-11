@@ -7,9 +7,13 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import { cashierApi, money } from '../services/api';
+import { useApproval } from '../hooks/useApproval';
+import { normalizeBarcode, barcodesMatch } from '../utils/barcodeUtils';
 import { buildShiftCloseReceiptText, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
-import { toBaseStockQuantity } from '../offline/stockUtils';
+import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
+import { getPostChangeFlowStep } from '../utils/paymentFlow';
+import { getCashSalesAmountFromSources } from '../utils/cashSales';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -373,39 +377,28 @@ const Cashier = ({ onLogout, user }) => {
   const receiptPrintJobIdRef = useRef(0);
   const [showVoidAuth, setShowVoidAuth] = useState(false);
   const [managerBarcode, setManagerBarcode] = useState('');
-  const [voidError, setVoidError] = useState('');
+  const voidApproval = useApproval('barcode');
   const [showCompletedVoidModal, setShowCompletedVoidModal] = useState(false);
   const [completedVoidTarget, setCompletedVoidTarget] = useState(null);
-  const [completedVoidApprovalMethod, setCompletedVoidApprovalMethod] = useState('barcode');
-  const [completedVoidCode, setCompletedVoidCode] = useState('');
-  const [completedVoidEmail, setCompletedVoidEmail] = useState('');
-  const [completedVoidPassword, setCompletedVoidPassword] = useState('');
+  const completedVoidApproval = useApproval('barcode');
   const [completedVoidReason, setCompletedVoidReason] = useState('');
-  const [completedVoidError, setCompletedVoidError] = useState('');
   const [completedVoidLoading, setCompletedVoidLoading] = useState(false);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
-  const [discountApprovalMethod, setDiscountApprovalMethod] = useState('barcode');
-  const [discountApprovalCode, setDiscountApprovalCode] = useState('');
-  const [discountApprovalEmail, setDiscountApprovalEmail] = useState('');
-  const [discountApprovalPassword, setDiscountApprovalPassword] = useState('');
+  const discountApproval = useApproval('barcode');
   const [discountAmountInput, setDiscountAmountInput] = useState('');
-  const [discountError, setDiscountError] = useState('');
   const [discountApproved, setDiscountApproved] = useState(false);
   const [showCashFlowModal, setShowCashFlowModal] = useState(false);
   const [cashFlowType, setCashFlowType] = useState('out');
   const [cashFlowAmount, setCashFlowAmount] = useState('');
   const [cashFlowCategory, setCashFlowCategory] = useState(CASH_FLOW_CATEGORIES.out[0]);
   const [cashFlowReason, setCashFlowReason] = useState('');
-  const [cashFlowApprovalMethod, setCashFlowApprovalMethod] = useState('barcode');
-  const [cashFlowApprovalCode, setCashFlowApprovalCode] = useState('');
-  const [cashFlowApprovalEmail, setCashFlowApprovalEmail] = useState('');
-  const [cashFlowApprovalPassword, setCashFlowApprovalPassword] = useState('');
-  const [cashFlowError, setCashFlowError] = useState('');
+  const cashFlowApproval = useApproval('barcode');
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(true);
   const [productsError, setProductsError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const [historyRecords, setHistoryRecords] = useState([]);
+  const [retainedCompletedSales, setRetainedCompletedSales] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -417,10 +410,7 @@ const Cashier = ({ onLogout, user }) => {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState('');
   const [lookupMode, setLookupMode] = useState('verify');
-  const [lookupApprovalMethod, setLookupApprovalMethod] = useState('barcode');
-  const [lookupApprovalCode, setLookupApprovalCode] = useState('');
-  const [lookupApprovalEmail, setLookupApprovalEmail] = useState('');
-  const [lookupApprovalPassword, setLookupApprovalPassword] = useState('');
+  const lookupApproval = useApproval('barcode');
   const [lookupReason, setLookupReason] = useState('');
   const [lookupNote, setLookupNote] = useState('');
   const [lookupReturnQty, setLookupReturnQty] = useState({});
@@ -448,11 +438,7 @@ const Cashier = ({ onLogout, user }) => {
   const [shiftCloseStep, setShiftCloseStep] = useState('count');
   const [shiftCloseDraft, setShiftCloseDraft] = useState(null);
   const [showAdminLogout, setShowAdminLogout] = useState(false);
-  const [adminLogoutApprovalMethod, setAdminLogoutApprovalMethod] = useState('barcode');
-  const [adminLogoutApprovalCode, setAdminLogoutApprovalCode] = useState('');
-  const [adminLogoutApprovalEmail, setAdminLogoutApprovalEmail] = useState('');
-  const [adminLogoutApprovalPassword, setAdminLogoutApprovalPassword] = useState('');
-  const [adminLogoutError, setAdminLogoutError] = useState('');
+  const adminLogoutApproval = useApproval('barcode');
   const [adminLogoutApproved, setAdminLogoutApproved] = useState(false);
   const [adminLogoutBusy, setAdminLogoutBusy] = useState(false);
   const [deviceId] = useState(cashierDeviceId);
@@ -533,13 +519,21 @@ const Cashier = ({ onLogout, user }) => {
     );
   }, [historyRecords, historySearch]);
 
-  const completedCashSales = useMemo(() => transactions.reduce((sum, txn) => {
-    const sale = txn.completedSale;
-    if (!sale || txn.status !== 'completed') return sum;
-    if (sale.paymentMethod === 'cash') return sum + (Number(sale.totalAmount) || 0);
-    if (sale.paymentMethod === 'split') return sum + (Number(sale.splitPayments?.cash ?? sale.cashAmount) || 0);
-    return sum;
-  }, 0), [transactions]);
+  const completedCashSales = useMemo(() => {
+    const transactionSales = transactions
+      .filter((txn) => txn?.status === 'completed')
+      .map((txn) => ({
+        ...(txn?.completedSale || {}),
+        status: txn?.completedSale?.status || 'completed',
+        rawStatus: txn?.completedSale?.rawStatus || 'completed',
+      }))
+      .filter(Boolean);
+    return getCashSalesAmountFromSources({
+      retainedSales: retainedCompletedSales,
+      currentSales: transactionSales,
+      cashierId: user?.id,
+    });
+  }, [historyRecords, retainedCompletedSales, transactions]);
 
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
@@ -1388,37 +1382,17 @@ const Cashier = ({ onLogout, user }) => {
   const resetCompletedVoidState = () => {
     setShowCompletedVoidModal(false);
     setCompletedVoidTarget(null);
-    setCompletedVoidApprovalMethod('barcode');
-    setCompletedVoidCode('');
-    setCompletedVoidEmail('');
-    setCompletedVoidPassword('');
+    completedVoidApproval.reset();
     setCompletedVoidReason('');
-    setCompletedVoidError('');
-    setCompletedVoidLoading(false);
   };
 
   const openDiscountModal = () => {
     if (isLockedTxn) return;
     setShowDiscountModal(true);
-    setDiscountApprovalMethod('barcode');
-    setDiscountApprovalCode('');
-    setDiscountApprovalEmail('');
-    setDiscountApprovalPassword('');
+    discountApproval.reset();
     setDiscountAmountInput('');
-    setDiscountError('');
     setDiscountApproved(false);
   };
-
-  const approvalPayload = ({ method, code, email, password }) => {
-    if (method === 'barcode') return { code: String(code || '').trim() };
-    return { email: String(email || '').trim(), password };
-  };
-
-  const approvalError = (method) => (
-    method === 'barcode'
-      ? 'Scan or enter the manager barcode.'
-      : 'Enter the manager email and password.'
-  );
 
   const submitOnEnter = (handler, valueFromEvent) => (e) => {
     if (e.key !== 'Enter') return;
@@ -1427,33 +1401,22 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const verifyDiscountApproval = async (override = {}) => {
-    const code = Object.hasOwn(override || {}, 'code') ? override.code : discountApprovalCode;
-    const email = Object.hasOwn(override || {}, 'email') ? override.email : discountApprovalEmail;
-    const password = Object.hasOwn(override || {}, 'password') ? override.password : discountApprovalPassword;
+    const payload = override.code ? { code: String(override.code || '').trim() } : override.email ? { email: String(override.email || '').trim(), password: override.password } : discountApproval.getPayload();
     try {
-      const authorization = approvalPayload({
-        method: discountApprovalMethod,
-        code,
-        email,
-        password,
-      });
-      if (!authorization.code && (!authorization.email || !authorization.password)) {
-        setDiscountError(approvalError(discountApprovalMethod));
+      if (!payload.code && (!payload.email || !payload.password)) {
+        discountApproval.setError('Invalid approval method.');
         return;
       }
-      await cashierApi.authorizeVoid(authorization);
+      await cashierApi.authorizeVoid(payload);
       setDiscountApproved(true);
-      setDiscountError('');
+      discountApproval.setError('');
     } catch (err) {
-      setDiscountError(err.message || 'Invalid manager approval code.');
+      discountApproval.setError(err.message || 'Invalid manager approval code.');
     }
   };
 
   const resetLookupApproval = () => {
-    setLookupApprovalMethod('barcode');
-    setLookupApprovalCode('');
-    setLookupApprovalEmail('');
-    setLookupApprovalPassword('');
+    lookupApproval.reset();
     setLookupReason('');
     setLookupNote('');
   };
@@ -1590,39 +1553,34 @@ const Cashier = ({ onLogout, user }) => {
   const handleLookupApprovalAction = async (override = {}) => {
     if (!lookupSale) return;
 
-    const code = Object.hasOwn(override || {}, 'code') ? override.code : lookupApprovalCode;
-    const email = Object.hasOwn(override || {}, 'email') ? override.email : lookupApprovalEmail;
-    const password = Object.hasOwn(override || {}, 'password') ? override.password : lookupApprovalPassword;
-    const authorization = approvalPayload({
-      method: lookupApprovalMethod,
-      code,
-      email,
-      password,
-    });
-    if (!authorization.code && (!authorization.email || !authorization.password)) {
-      setLookupError(approvalError(lookupApprovalMethod));
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : lookupApproval.code;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : lookupApproval.email;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : lookupApproval.password;
+    const payload = code ? { code: String(code || '').trim() } : (email && password ? { email: String(email || '').trim(), password } : lookupApproval.getPayload());
+    if (!payload.code && (!payload.email || !payload.password)) {
+      lookupApproval.setError('Enter manager approval credentials.');
       return;
     }
     if (lookupMode !== 'void' && selectedLookupReturnItems().length === 0) {
-      setLookupError('Select at least one item quantity.');
+      lookupApproval.setError('Select at least one item quantity.');
       return;
     }
 
     setLookupActionLoading(true);
-    setLookupError('');
+    lookupApproval.setError('');
 
     try {
       const result = lookupMode === 'void'
         ? await cashierApi.voidCompletedSale({
             saleId: lookupSale.saleId || lookupSale.id,
             cashierId: user?.id,
-            authorization,
+            authorization: payload,
             reason: lookupReason.trim(),
           })
         : await cashierApi.adjustCompletedSale({
             saleId: lookupSale.saleId || lookupSale.id,
             cashierId: user?.id,
-            authorization,
+            authorization: payload,
             type: lookupMode,
             items: selectedLookupReturnItems().map((item) => ({
               productId: item.productId,
@@ -1679,7 +1637,7 @@ const Cashier = ({ onLogout, user }) => {
           : `${lookupMode === 'exchange' ? 'Exchange' : 'Refund'} recorded for transaction ${lookupSale.transactionNo}.`
       );
     } catch (err) {
-      setLookupError(err.message || `Unable to ${lookupMode} this transaction.`);
+      lookupApproval.setError(err.message || `Unable to ${lookupMode} this transaction.`);
     } finally {
       setLookupActionLoading(false);
     }
@@ -1688,16 +1646,15 @@ const Cashier = ({ onLogout, user }) => {
   const handleVoidTransaction = () => {
     if (isLockedTxn) return;
     setShowVoidAuth(true);
-    setManagerBarcode('');
-    setVoidError('');
+    voidApproval.reset();
   };
 
   const confirmVoidTransaction = async (override = {}) => {
-    const code = Object.hasOwn(override || {}, 'code') ? override.code : managerBarcode;
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : voidApproval.code;
     try {
       await cashierApi.authorizeVoid(code);
     } catch (err) {
-      setVoidError(err.message || 'Manager barcode is not valid.');
+      voidApproval.setError(err.message || 'Manager barcode is not valid.');
       return;
     }
 
@@ -1715,8 +1672,7 @@ const Cashier = ({ onLogout, user }) => {
       // Do not block the cashier flow if audit logging fails.
     }
     setShowVoidAuth(false);
-    setManagerBarcode('');
-    setVoidError('');
+    voidApproval.reset();
     showNotification('Transaction has been voided.');
   };
 
@@ -1743,11 +1699,7 @@ const Cashier = ({ onLogout, user }) => {
     setCashFlowAmount('');
     setCashFlowCategory(CASH_FLOW_CATEGORIES.out[0]);
     setCashFlowReason('');
-    setCashFlowApprovalMethod('barcode');
-    setCashFlowApprovalCode('');
-    setCashFlowApprovalEmail('');
-    setCashFlowApprovalPassword('');
-    setCashFlowError('');
+    cashFlowApproval.reset();
   };
 
   const openCashFlowModal = (type = 'out') => {
@@ -1759,40 +1711,32 @@ const Cashier = ({ onLogout, user }) => {
     setCashFlowType(type);
     setCashFlowCategory(CASH_FLOW_CATEGORIES[type]?.[0] || CASH_FLOW_CATEGORIES.out[0]);
     setShowCashFlowModal(true);
-    setCashFlowError('');
+    cashFlowApproval.setError('');
   };
 
   const confirmCashFlow = async (override = {}) => {
     if (!shiftSession) {
       setShowShiftOpen(true);
-      setCashFlowError('Open a cashier shift before recording cash flow.');
+      cashFlowApproval.setError('Open a cashier shift before recording cash flow.');
       return;
     }
     const amount = Number(cashFlowAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setCashFlowError('Enter a valid cash flow amount.');
+      cashFlowApproval.setError('Enter a valid cash flow amount.');
       return;
     }
     if (cashFlowType === 'out' && amount > expectedShiftCash) {
-      setCashFlowError(`Insufficient drawer cash. Available cash is ${money(Math.max(expectedShiftCash, 0))}.`);
+      cashFlowApproval.setError(`Insufficient drawer cash. Available cash is ${money(Math.max(expectedShiftCash, 0))}. `);
       return;
     }
 
-    const approvalCode = Object.hasOwn(override || {}, 'code') ? override.code : cashFlowApprovalCode;
-    const approvalEmail = Object.hasOwn(override || {}, 'email') ? override.email : cashFlowApprovalEmail;
-    const approvalPassword = Object.hasOwn(override || {}, 'password') ? override.password : cashFlowApprovalPassword;
+    const payload = override.code ? { code: String(override.code || '').trim() } : override.email ? { email: String(override.email || '').trim(), password: override.password } : cashFlowApproval.getPayload();
     try {
-      const authorization = approvalPayload({
-        method: cashFlowApprovalMethod,
-        code: approvalCode,
-        email: approvalEmail,
-        password: approvalPassword,
-      });
-      if (!authorization.code && (!authorization.email || !authorization.password)) {
-        setCashFlowError(approvalError(cashFlowApprovalMethod));
+      if (!payload.code && (!payload.email || !payload.password)) {
+        cashFlowApproval.setError('Enter manager approval credentials.');
         return;
       }
-      const approver = await cashierApi.authorizeVoid(authorization);
+      const approver = await cashierApi.authorizeVoid(payload);
       const label = cashFlowType === 'in' ? 'Cash In' : 'Cash Out';
       const signedAmount = cashFlowType === 'in' ? amount : -amount;
       const opened = await openCashRegisterForActivity(
@@ -1800,7 +1744,7 @@ const Cashier = ({ onLogout, user }) => {
         `Cash register opened for ${label.toLowerCase()} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}.`
       );
       if (!opened) {
-        setCashFlowError('Manager approved, but the cash register did not open. Try again before moving cash.');
+        cashFlowApproval.setError('Manager approved, but the cash register did not open. Try again before moving cash.');
         return;
       }
       const nextSession = shiftSession
@@ -1819,7 +1763,7 @@ const Cashier = ({ onLogout, user }) => {
         category: cashFlowCategory,
         note: cashFlowReason,
         approvedBy: approver?.id,
-        approvalMethod: approver?.method || cashFlowApprovalMethod,
+        approvalMethod: approver?.method || cashFlowApproval.method,
         deviceId,
         createdAt: new Date().toISOString(),
       }).catch(() => {});
@@ -1836,7 +1780,7 @@ const Cashier = ({ onLogout, user }) => {
         action: 'Security Alert',
         detail: withDevice(`Failed cash flow attempt by ${user?.name || user?.email || 'Cashier'} for ${cashFlowType === 'in' ? 'cash in' : 'cash out'} PHP ${amount.toFixed(2)}.`),
       }).catch(() => {});
-      setCashFlowError((typeof err === 'string' ? err : err.message) || 'Unable to record cash flow.');
+      cashFlowApproval.setError((typeof err === 'string' ? err : err.message) || 'Unable to record cash flow.');
     }
   };
 
@@ -1862,43 +1806,36 @@ const Cashier = ({ onLogout, user }) => {
 
   const handleOpenCompletedVoidModal = (sale) => {
     setCompletedVoidTarget(sale);
-    setCompletedVoidCode('');
-    setCompletedVoidEmail('');
-    setCompletedVoidPassword('');
+    completedVoidApproval.reset();
     setCompletedVoidReason('');
-    setCompletedVoidError('');
     setShowCompletedVoidModal(true);
   };
 
   const handleConfirmCompletedVoid = async (override = {}) => {
     if (!completedVoidTarget?.saleId) {
-      setCompletedVoidError('Completed sale reference is missing.');
+      completedVoidApproval.setError('Completed sale reference is missing.');
       return;
     }
 
-    const code = Object.hasOwn(override || {}, 'code') ? override.code : completedVoidCode;
-    const email = Object.hasOwn(override || {}, 'email') ? override.email : completedVoidEmail;
-    const password = Object.hasOwn(override || {}, 'password') ? override.password : completedVoidPassword;
-    const authorization = approvalPayload({
-      method: completedVoidApprovalMethod,
-      code,
-      email,
-      password,
-    });
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : completedVoidApproval.code;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : completedVoidApproval.email;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : completedVoidApproval.password;
+    const payload = code ? { code: String(code || '').trim() } : (email && password ? { email: String(email || '').trim(), password } : completedVoidApproval.getPayload());
 
-    if (!authorization.code && (!authorization.email || !authorization.password)) {
-      setCompletedVoidError(approvalError(completedVoidApprovalMethod));
+    if (!payload.code && (!payload.email || !payload.password)) {
+      completedVoidApproval.setError('Enter manager approval credentials.');
       return;
     }
 
     setCompletedVoidLoading(true);
-    setCompletedVoidError('');
+    completedVoidApproval.setLoading(true);
+    completedVoidApproval.setError('');
 
     try {
       const result = await cashierApi.voidCompletedSale({
         saleId: completedVoidTarget.saleId,
         cashierId: user?.id,
-        authorization,
+        authorization: payload,
         reason: completedVoidReason.trim(),
       });
 
@@ -1924,16 +1861,16 @@ const Cashier = ({ onLogout, user }) => {
       resetCompletedVoidState();
       showNotification(`Transaction ${result.transactionNo} has been voided.`);
     } catch (err) {
-      setCompletedVoidError(err.message || 'Unable to void the completed transaction.');
+      completedVoidApproval.setError(err.message || 'Unable to void the completed transaction.');
     } finally {
+      completedVoidApproval.setLoading(false);
       setCompletedVoidLoading(false);
     }
   };
 
   const openInitialQuantityPrompt = (product, preferredUnit = null) => {
     const selectedUnit = preferredUnit || findSellingUnit(product)
-    const conversion = Number(selectedUnit?.conversion) > 0 ? Number(selectedUnit.conversion) : 1
-    const availableQty = Math.floor(stockForProduct(product) / conversion)
+    const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product) }, selectedUnit)
 
     if (availableQty <= 0) {
       showNotification(`${product.name} is out of stock for ${selectedUnit?.unit || product.unit || 'this unit'}.`);
@@ -1972,7 +1909,7 @@ const Cashier = ({ onLogout, user }) => {
     const unitName = String(selectedUnit?.unit || product.unit || 'Unit').trim() || 'Unit'
     const unitBarcode = String(selectedUnit?.barcode || '').trim()
     const unitPrice = Number(selectedUnit?.price) || Number(product.price) || 0
-    const availableQty = Math.floor(stockForProduct(product) / conversion)
+    const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product) }, selectedUnit)
     const requestedQty = Math.floor(Number(quantity) || 0)
 
     if (requestedQty <= 0) {
@@ -2093,11 +2030,11 @@ const Cashier = ({ onLogout, user }) => {
       showNotification('This transaction is already completed. Start a new transaction to continue selling.');
       return;
     }
-    const code = barcode.trim();
+    const code = normalizeBarcode(barcode);
     if (!code) return;
 
     try {
-      const product = await cashierApi.productByBarcode(code)
+      const product = await cashierApi.productByBarcode(code);
       handleAddToCart(product, findSellingUnit(product, code));
     } catch (err) {
       showNotification(err.message || 'Product not found.');
@@ -2216,6 +2153,8 @@ const Cashier = ({ onLogout, user }) => {
         ...completedPayment,
         saleId: sale.id,
         transactionNo: sale.transactionNo || completedTransactionNo,
+        status: 'completed',
+        rawStatus: 'completed',
         pendingSync: sale.pendingSync,
         discounted: discount > 0,
         receiptPrintStep: 'initial',
@@ -2229,6 +2168,13 @@ const Cashier = ({ onLogout, user }) => {
       updateTransactionById(completingTransactionId, {
         status: 'completed',
         completedSale,
+      });
+      setRetainedCompletedSales((current) => {
+        const key = completedSale.saleId || completedSale.transactionNo || completedSale.id;
+        if (!key || current.some((entry) => String(entry.saleId || entry.transactionNo || entry.id || '') === String(key))) {
+          return current;
+        }
+        return [completedSale, ...current];
       });
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
       setActiveTransaction(completingTransactionId);
@@ -2380,11 +2326,16 @@ const Cashier = ({ onLogout, user }) => {
       setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
       try {
         const txn = paymentFlow.completedTxn;
-        await openCashRegisterForActivity(
+        const drawerOpenSucceeded = await openCashRegisterForActivity(
           'completed transaction',
           `Cash register opened after completed transaction ${txn?.completedSale?.transactionNo || txn?.transactionNo || activeTxn.transactionNo}.`
         );
-        setPaymentFlow((current) => ({ ...current, busy: false, step: 'register' }));
+        const nextStep = getPostChangeFlowStep({
+          method: paymentFlow.method,
+          splitCash: Number(paymentFlow.splitPayments?.cash || 0),
+          drawerOpenSucceeded,
+        });
+        setPaymentFlow((current) => ({ ...current, busy: false, step: nextStep }));
       } catch (err) {
         setPaymentFlow((current) => ({
           ...current,
@@ -2486,13 +2437,13 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const approveAdminLogout = async (override = {}) => {
-    setAdminLogoutError('');
-    setAdminLogoutBusy(true);
-    const code = Object.hasOwn(override || {}, 'code') ? override.code : adminLogoutApprovalCode;
-    const email = Object.hasOwn(override || {}, 'email') ? override.email : adminLogoutApprovalEmail;
-    const password = Object.hasOwn(override || {}, 'password') ? override.password : adminLogoutApprovalPassword;
+    adminLogoutApproval.setError('');
+    adminLogoutApproval.setLoading(true);
+    const code = Object.hasOwn(override || {}, 'code') ? override.code : adminLogoutApproval.code;
+    const email = Object.hasOwn(override || {}, 'email') ? override.email : adminLogoutApproval.email;
+    const password = Object.hasOwn(override || {}, 'password') ? override.password : adminLogoutApproval.password;
     try {
-      if (adminLogoutApprovalMethod === 'barcode') {
+      if (adminLogoutApproval.method === 'barcode') {
         await cashierApi.authorizeVoid(code);
       } else {
         await cashierApi.authorizeVoid({
@@ -2507,20 +2458,20 @@ const Cashier = ({ onLogout, user }) => {
         detail: withDevice(`${user?.name || user?.email || 'Cashier'} requested manager-approved logout.`),
       }).catch(() => {});
     } catch (err) {
-      setAdminLogoutError((typeof err === 'string' ? err : err.message) || 'Invalid credentials.');
+      adminLogoutApproval.setError((typeof err === 'string' ? err : err.message) || 'Invalid credentials.');
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Manager Logout Security Alert',
         detail: withDevice(`Failed manager-approved logout attempt by ${user?.name || user?.email || 'Cashier'}.`),
       }).catch(() => {});
     } finally {
-      setAdminLogoutBusy(false);
+      adminLogoutApproval.setLoading(false);
     }
   };
 
   const confirmAdminLogoutOnly = async () => {
     setAdminLogoutBusy(true);
-    setAdminLogoutError('');
+    adminLogoutApproval.setError('');
     try {
       await cashierApi.logActivity({
         cashierId: user?.id,
@@ -3391,7 +3342,7 @@ const Cashier = ({ onLogout, user }) => {
         isOpen={showVoidAuth}
         onClose={() => {
           setShowVoidAuth(false);
-          setVoidError('');
+          voidApproval.setError('');
           setManagerBarcode('');
         }}
         title="Manager Authorization Required"
@@ -3399,7 +3350,7 @@ const Cashier = ({ onLogout, user }) => {
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn btn-outline" onClick={() => {
               setShowVoidAuth(false);
-              setVoidError('');
+              voidApproval.setError('');
               setManagerBarcode('');
             }}>
               Cancel
@@ -3417,7 +3368,7 @@ const Cashier = ({ onLogout, user }) => {
           onKeyDown={submitOnEnter(confirmVoidTransaction, (e) => ({ code: e.currentTarget.value }))}
           autoFocus
         />
-        {voidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidError}</div>}
+        {voidApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidApproval.error}</div>}
       </Modal>
 
       <Modal
@@ -3425,12 +3376,8 @@ const Cashier = ({ onLogout, user }) => {
         onClose={() => {
           setShowDiscountModal(false);
           setDiscountApproved(false);
-          setDiscountApprovalMethod('barcode');
-          setDiscountApprovalCode('');
-          setDiscountApprovalEmail('');
-          setDiscountApprovalPassword('');
+          discountApproval.reset();
           setDiscountAmountInput('');
-          setDiscountError('');
         }}
         title="Discount Approval"
         footer={
@@ -3438,12 +3385,8 @@ const Cashier = ({ onLogout, user }) => {
             <button className="btn btn-outline" onClick={() => {
               setShowDiscountModal(false);
               setDiscountApproved(false);
-              setDiscountApprovalMethod('barcode');
-              setDiscountApprovalCode('');
-              setDiscountApprovalEmail('');
-              setDiscountApprovalPassword('');
+              discountApproval.reset();
               setDiscountAmountInput('');
-              setDiscountError('');
             }}>
               Cancel
             </button>
@@ -3455,18 +3398,14 @@ const Cashier = ({ onLogout, user }) => {
               <button className="btn btn-success" onClick={() => {
                 const amount = parseFloat(discountAmountInput);
                 if (Number.isNaN(amount) || amount < 0 || amount > 100) {
-                  setDiscountError('Enter a valid discount percentage from 0 to 100.');
+                  discountApproval.setError('Enter a valid discount percentage from 0 to 100.');
                   return;
                 }
                 updateActiveTransaction({ discount: amount });
                 setShowDiscountModal(false);
                 setDiscountApproved(false);
-                setDiscountApprovalMethod('barcode');
-                setDiscountApprovalCode('');
-                setDiscountApprovalEmail('');
-                setDiscountApprovalPassword('');
+                discountApproval.reset();
                 setDiscountAmountInput('');
-                setDiscountError('');
                 showNotification(`Discount applied: ${amount}%`);
               }}>
                 Apply Discount
@@ -3480,14 +3419,14 @@ const Cashier = ({ onLogout, user }) => {
             <p>Select how this discount will be approved.</p>
             {renderApprovalFields({
               name: 'discount',
-              method: discountApprovalMethod,
-              setMethod: setDiscountApprovalMethod,
-              code: discountApprovalCode,
-              setCode: setDiscountApprovalCode,
-              email: discountApprovalEmail,
-              setEmail: setDiscountApprovalEmail,
-              password: discountApprovalPassword,
-              setPassword: setDiscountApprovalPassword,
+              method: discountApproval.method,
+              setMethod: discountApproval.setMethod,
+              code: discountApproval.code,
+              setCode: discountApproval.setCode,
+              email: discountApproval.email,
+              setEmail: discountApproval.setEmail,
+              password: discountApproval.password,
+              setPassword: discountApproval.setPassword,
               onSubmit: verifyDiscountApproval,
             })}
           </>
@@ -3497,13 +3436,17 @@ const Cashier = ({ onLogout, user }) => {
             <Input label="Discount (%)" type="number" placeholder="Enter discount percent" value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
           </>
         )}
-        {discountError && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountError}</div>}
+        {discountApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountApproval.error}</div>}
       </Modal>
 
       <Modal
         isOpen={showShiftOpen}
-        onClose={() => {}}
+        onClose={() => {
+          // Modal cannot be closed without opening a shift
+          // User must open a shift or logout
+        }}
         title="Open Shift"
+        closeButton={false}
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn btn-primary" onClick={openShift} disabled={shiftSaving}>
@@ -3522,6 +3465,7 @@ const Cashier = ({ onLogout, user }) => {
           value={shiftOpeningAmount}
           onChange={(e) => setShiftOpeningAmount(e.target.value)}
           disabled={shiftSaving}
+          autoFocus
         />
         <Input
           label="Note"
@@ -3667,11 +3611,8 @@ const Cashier = ({ onLogout, user }) => {
             type="button"
             onClick={() => {
               setShowAdminLogout(true);
-              setAdminLogoutError('');
+              adminLogoutApproval.reset();
               setAdminLogoutApproved(false);
-              setAdminLogoutApprovalCode('');
-              setAdminLogoutApprovalEmail('');
-              setAdminLogoutApprovalPassword('');
             }}
             disabled={shiftSaving}
             style={{
@@ -3697,11 +3638,8 @@ const Cashier = ({ onLogout, user }) => {
         isOpen={showAdminLogout}
         onClose={() => {
           setShowAdminLogout(false);
-          setAdminLogoutError('');
+          adminLogoutApproval.reset();
           setAdminLogoutApproved(false);
-          setAdminLogoutApprovalCode('');
-          setAdminLogoutApprovalEmail('');
-          setAdminLogoutApprovalPassword('');
         }}
         title="Admin Logout Confirmation"
         footer={
@@ -3710,11 +3648,8 @@ const Cashier = ({ onLogout, user }) => {
               className="btn btn-outline"
               onClick={() => {
                 setShowAdminLogout(false);
-                setAdminLogoutError('');
+                adminLogoutApproval.reset();
                 setAdminLogoutApproved(false);
-                setAdminLogoutApprovalCode('');
-                setAdminLogoutApprovalEmail('');
-                setAdminLogoutApprovalPassword('');
               }}
               disabled={adminLogoutBusy}
             >
@@ -3736,34 +3671,34 @@ const Cashier = ({ onLogout, user }) => {
             <div style={{ marginBottom: '16px' }}>
               <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Approval Method</div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApprovalMethod === 'barcode' ? '#f0fdf4' : '#ffffff' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApproval.method === 'barcode' ? '#f0fdf4' : '#ffffff' }}>
                   <input
                     type="radio"
                     name="adminLogoutMethod"
                     value="barcode"
-                    checked={adminLogoutApprovalMethod === 'barcode'}
-                    onChange={() => setAdminLogoutApprovalMethod('barcode')}
+                    checked={adminLogoutApproval.method === 'barcode'}
+                    onChange={() => adminLogoutApproval.setMethod('barcode')}
                   />
                   <span style={{ fontWeight: '600', fontSize: '13px' }}>Manager Barcode</span>
                 </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApprovalMethod === 'admin' ? '#f0fdf4' : '#ffffff' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px', border: '1px solid #cbd5e1', borderRadius: '8px', cursor: 'pointer', backgroundColor: adminLogoutApproval.method === 'admin' ? '#f0fdf4' : '#ffffff' }}>
                   <input
                     type="radio"
                     name="adminLogoutMethod"
                     value="admin"
-                    checked={adminLogoutApprovalMethod === 'admin'}
-                    onChange={() => setAdminLogoutApprovalMethod('admin')}
+                    checked={adminLogoutApproval.method === 'admin'}
+                    onChange={() => adminLogoutApproval.setMethod('admin')}
                   />
                   <span style={{ fontWeight: '600', fontSize: '13px' }}>Manager Password</span>
                 </label>
               </div>
             </div>
-            {adminLogoutApprovalMethod === 'barcode' ? (
+            {adminLogoutApproval.method === 'barcode' ? (
               <Input
                 label="Manager Barcode"
                 placeholder="Scan or enter manager barcode"
-                value={adminLogoutApprovalCode}
-                onChange={(e) => setAdminLogoutApprovalCode(e.target.value)}
+                value={adminLogoutApproval.code}
+                onChange={(e) => adminLogoutApproval.setCode(e.target.value)}
                 onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ code: e.currentTarget.value }))}
                 autoFocus
                 disabled={adminLogoutBusy}
@@ -3773,8 +3708,8 @@ const Cashier = ({ onLogout, user }) => {
                 <Input
                   label="Manager Email"
                   placeholder="Enter manager email"
-                  value={adminLogoutApprovalEmail}
-                  onChange={(e) => setAdminLogoutApprovalEmail(e.target.value)}
+                  value={adminLogoutApproval.email}
+                  onChange={(e) => adminLogoutApproval.setEmail(e.target.value)}
                   onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ email: e.currentTarget.value }))}
                   autoFocus
                   disabled={adminLogoutBusy}
@@ -3783,14 +3718,14 @@ const Cashier = ({ onLogout, user }) => {
                   label="Manager Password"
                   type="password"
                   placeholder="Enter manager password"
-                  value={adminLogoutApprovalPassword}
-                  onChange={(e) => setAdminLogoutApprovalPassword(e.target.value)}
+                  value={adminLogoutApproval.password}
+                  onChange={(e) => adminLogoutApproval.setPassword(e.target.value)}
                   onKeyDown={submitOnEnter(approveAdminLogout, (e) => ({ password: e.currentTarget.value }))}
                   disabled={adminLogoutBusy}
                 />
               </>
             )}
-            {adminLogoutError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{adminLogoutError}</div>}
+            {adminLogoutApproval.error && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{adminLogoutApproval.error}</div>}
           </>
         ) : (
           <p style={{ color: '#166534', fontWeight: '600' }}>Manager approval verified. Click "Confirm Logout" to logout without closing the shift.</p>
@@ -3868,17 +3803,17 @@ const Cashier = ({ onLogout, user }) => {
         <Input label="Note" placeholder="Optional detail for audit review" value={cashFlowReason} onChange={(e) => setCashFlowReason(e.target.value)} />
         {renderApprovalFields({
           name: 'cash-flow',
-          method: cashFlowApprovalMethod,
-          setMethod: setCashFlowApprovalMethod,
-          code: cashFlowApprovalCode,
-          setCode: setCashFlowApprovalCode,
-          email: cashFlowApprovalEmail,
-          setEmail: setCashFlowApprovalEmail,
-          password: cashFlowApprovalPassword,
-          setPassword: setCashFlowApprovalPassword,
+          method: cashFlowApproval.method,
+          setMethod: cashFlowApproval.setMethod,
+          code: cashFlowApproval.code,
+          setCode: cashFlowApproval.setCode,
+          email: cashFlowApproval.email,
+          setEmail: cashFlowApproval.setEmail,
+          password: cashFlowApproval.password,
+          setPassword: cashFlowApproval.setPassword,
           onSubmit: confirmCashFlow,
         })}
-        {cashFlowError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashFlowError}</div>}
+        {cashFlowApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{cashFlowApproval.error}</div>}
       </Modal>
 
       <Modal
@@ -4152,14 +4087,14 @@ const Cashier = ({ onLogout, user }) => {
                 )}
                 {renderApprovalFields({
                   name: 'lookup',
-                  method: lookupApprovalMethod,
-                  setMethod: setLookupApprovalMethod,
-                  code: lookupApprovalCode,
-                  setCode: setLookupApprovalCode,
-                  email: lookupApprovalEmail,
-                  setEmail: setLookupApprovalEmail,
-                  password: lookupApprovalPassword,
-                  setPassword: setLookupApprovalPassword,
+                  method: lookupApproval.method,
+                  setMethod: lookupApproval.setMethod,
+                  code: lookupApproval.code,
+                  setCode: lookupApproval.setCode,
+                  email: lookupApproval.email,
+                  setEmail: lookupApproval.setEmail,
+                  password: lookupApproval.password,
+                  setPassword: lookupApproval.setPassword,
                   onSubmit: handleLookupApprovalAction,
                   disabled: lookupActionLoading,
                 })}
@@ -4589,14 +4524,14 @@ const Cashier = ({ onLogout, user }) => {
         </p>
         {renderApprovalFields({
           name: 'completed-void',
-          method: completedVoidApprovalMethod,
-          setMethod: setCompletedVoidApprovalMethod,
-          code: completedVoidCode,
-          setCode: setCompletedVoidCode,
-          email: completedVoidEmail,
-          setEmail: setCompletedVoidEmail,
-          password: completedVoidPassword,
-          setPassword: setCompletedVoidPassword,
+          method: completedVoidApproval.method,
+          setMethod: completedVoidApproval.setMethod,
+          code: completedVoidApproval.code,
+          setCode: completedVoidApproval.setCode,
+          email: completedVoidApproval.email,
+          setEmail: completedVoidApproval.setEmail,
+          password: completedVoidApproval.password,
+          setPassword: completedVoidApproval.setPassword,
           onSubmit: handleConfirmCompletedVoid,
           disabled: completedVoidLoading,
         })}
@@ -4607,7 +4542,7 @@ const Cashier = ({ onLogout, user }) => {
           onChange={(e) => setCompletedVoidReason(e.target.value)}
           disabled={completedVoidLoading}
         />
-        {completedVoidError && <div style={{ color: '#dc2626', marginTop: 10 }}>{completedVoidError}</div>}
+        {completedVoidApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{completedVoidApproval.error}</div>}
       </Modal>
 
       <Modal
