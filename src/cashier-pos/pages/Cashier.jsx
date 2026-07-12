@@ -6,9 +6,10 @@ import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
+import SupportContactModal from '../../components/SupportContactModal';
 import { cashierApi, money } from '../services/api';
 import { useApproval } from '../hooks/useApproval';
-import { normalizeBarcode, barcodesMatch } from '../utils/barcodeUtils';
+import { normalizeBarcode } from '../utils/barcodeUtils';
 import { buildShiftCloseReceiptText, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
@@ -437,6 +438,7 @@ const Cashier = ({ onLogout, user }) => {
   const [historySearch, setHistorySearch] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [supportOpen, setSupportOpen] = useState(false);
   const [showReceiptLookup, setShowReceiptLookup] = useState(false);
   const [lookupQuery, setLookupQuery] = useState('');
   const [lookupSale, setLookupSale] = useState(null);
@@ -1070,6 +1072,21 @@ const Cashier = ({ onLogout, user }) => {
   const handleCloseShiftAndLogout = async (skipCashCount = false) => {
     const closedSuccessfully = await closeShift(skipCashCount);
     if (!closedSuccessfully) return false;
+
+    try {
+      const syncResult = await cashierApi.syncNow();
+      if ((syncResult?.pending || 0) > 0) {
+        const leaveWithPendingSales = confirm(
+          `${syncResult.pending} transaction(s) are still waiting for cloud sync. The other computer may not have the latest stock. Log out anyway?`
+        );
+        if (!leaveWithPendingSales) return false;
+      }
+    } catch (error) {
+      const leaveWithoutSync = confirm(
+        `Shift closed locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}. Log out anyway?`
+      );
+      if (!leaveWithoutSync) return false;
+    }
 
     if (onLogout) {
       onLogout();
@@ -1872,7 +1889,7 @@ const Cashier = ({ onLogout, user }) => {
       const result = await cashierApi.syncNow();
       await loadProducts();
       if (showHistory) await loadTransactionHistory();
-      showNotification(`Sync finished: ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed.`);
+      showNotification(`Sync finished: ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed, ${result?.pending || 0} pending.`);
     } catch (err) {
       showNotification(err.message || 'Unable to sync right now.');
     } finally {
@@ -2768,6 +2785,14 @@ const Cashier = ({ onLogout, user }) => {
           >
             <Gear size={16} />
             {withShortcut('Settings', 'settings')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles['history-button']}
+            onClick={() => setSupportOpen(true)}
+          >
+            Need help? Contact us
           </Button>
           <Button
             variant="outline"
@@ -4699,6 +4724,7 @@ const Cashier = ({ onLogout, user }) => {
       </Modal>
 
       <SyncStatusIndicator scope="cashier" />
+      <SupportContactModal open={supportOpen} onClose={() => setSupportOpen(false)} source="Cashier POS" />
       {notification && <div className={styles['notification-toast']}>{notification}</div>}
     </div>
   );

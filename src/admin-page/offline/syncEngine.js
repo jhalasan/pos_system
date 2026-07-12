@@ -7,8 +7,10 @@ import {
   pocketBaseRateLimitRemainingMs,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
+import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
 
 const DEFAULT_INTERVAL_MS = 60_000
+const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
 
@@ -46,6 +48,15 @@ function errorMessage(error) {
 function retryDelay(attempts) {
   const exponential = Math.min(MAX_BACKOFF_MS, 1_000 * (2 ** Math.min(attempts, 8)))
   return exponential + Math.floor(Math.random() * 500)
+}
+
+function queuedStaffBody(payload = {}) {
+  const { profileImage, profileImageName, ...fields } = payload
+  if (!profileImage) return fields
+  const formData = new FormData()
+  for (const [key, value] of Object.entries(fields)) formData.append(key, value ?? '')
+  formData.append('profile_img', profileImage, profileImageName || profileImage.name || 'staff-profile.webp')
+  return formData
 }
 
 async function getOrCreateCategoryId(pb, name) {
@@ -167,6 +178,7 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
   if (!product?.id || delta === 0) return
 
   const movementType = delta > 0 ? 'stock_in' : 'stock_out'
+  if (await findStockMovement(pb, product.id, op.id)) return
   await pb.collection('stock_movements').create({
     product_id: product.id,
     movement_type: movementType,
@@ -179,7 +191,8 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
     created_at: new Date().toISOString(),
   }, {
     requestKey: `stock-movement:${op.id}`,
-  }).catch(() => null)
+  })
+  await reconcileProductStock(pb, product.id)
 }
 
 async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, options = {}) {
@@ -236,6 +249,7 @@ export class AdminSyncEngine extends EventTarget {
     this.timer = null
     this.syncPromise = null
     this.stopped = true
+    this.lastCloudPullAt = 0
   }
 
   start() {
@@ -298,15 +312,16 @@ export class AdminSyncEngine extends EventTarget {
     const queuedLogs = await adminDb.activityLogs
       .filter((log) => !log.cloudId)
       .toArray()
+    const shouldPullCloud = now - this.lastCloudPullAt >= CLOUD_PULL_INTERVAL_MS
 
-    if (queuedOps.length === 0 && queuedLogs.length === 0) {
-      return { uploaded: 0, failed: 0 }
+    if (queuedOps.length === 0 && queuedLogs.length === 0 && !shouldPullCloud) {
+      return { uploaded: 0, failed: 0, pending: await adminDb.pendingOps.count() }
     }
 
     if (!(await this.isCloudReachable())) {
-      emitSyncStatus('offline', 'Auto-Sync Waiting for Connection')
+      emitSyncStatus('offline', `Offline — ${queuedOps.length} change(s) waiting to sync`)
       this.dispatchEvent(new CustomEvent('offline'))
-      return { uploaded: 0, failed: 0 }
+      return { uploaded: 0, failed: 0, pending: await adminDb.pendingOps.count() }
     }
 
     emitSyncStatus('running', 'Auto-Sync Running')
@@ -350,11 +365,14 @@ export class AdminSyncEngine extends EventTarget {
       }
     }
 
-    if (uploaded > 0) {
-      await refreshAdminLocalCache({ pb: this.pb }).catch((error) => {
+    let pulled = false
+    if (uploaded > 0 || shouldPullCloud) {
+      pulled = await refreshAdminLocalCache({ pb: this.pb }).then(() => true).catch((error) => {
         rememberPocketBaseRateLimit(error)
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { error } }))
+        return false
       })
+      if (pulled) this.lastCloudPullAt = Date.now()
     }
 
     this.dispatchEvent(new CustomEvent('synccomplete', { detail: { uploaded, failed, errors } }))
@@ -362,12 +380,123 @@ export class AdminSyncEngine extends EventTarget {
       failed > 0 ? 'failed' : 'succeeded',
       failed > 0
         ? `Auto-Sync Finished with ${failed} Failed: ${errors[0] || 'Unknown error'}`
-        : 'Auto-Sync Succeeded',
+        : `Auto-Sync Succeeded — ${await adminDb.pendingOps.count()} pending`,
     )
-    return { uploaded, failed, errors }
+    return { uploaded, failed, errors, pulled, pending: await adminDb.pendingOps.count() }
   }
 
   async uploadOperation(op) {
+    if (op.type === 'createCategory') {
+      const existing = await this.pb.collection('categories').getFirstListItem(
+        this.pb.filter('name = {:name}', { name: op.payload.name }),
+        { requestKey: null },
+      ).catch((error) => error?.status === 404 ? null : Promise.reject(error))
+      const saved = existing || await this.pb.collection('categories').create({ name: op.payload.name }, { requestKey: op.id })
+      await adminDb.transaction('rw', adminDb.categories, adminDb.pendingOps, async () => {
+        await adminDb.categories.delete(op.productId)
+        await adminDb.categories.put({ id: saved.id, name: saved.name, updated: saved.updated })
+        await adminDb.pendingOps.delete(op.id)
+      })
+      return
+    }
+
+    if (op.type === 'updateUserSettings') {
+      const saved = await this.pb.collection('users').update(op.productId, op.payload, { requestKey: op.id })
+      await adminDb.users.update(op.productId, { ...op.payload, updated: saved.updated })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'markAuditReviewed') {
+      await this.pb.collection('audit_reviews').create(op.payload, { requestKey: op.id })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'createStaff') {
+      const saved = await this.pb.collection('users').create(queuedStaffBody(op.payload), { requestKey: op.id })
+      await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
+        await adminDb.users.delete(op.productId)
+        await adminDb.users.put({
+          id: saved.id,
+          email: saved.email,
+          name: saved.name || saved.email,
+          role: saved.role,
+          shift: saved.shift || '',
+          status: saved.status || 'active',
+          cashierBarcode: saved.void_barcode || '',
+          void_barcode: saved.void_barcode || '',
+          pendingSync: false,
+          updated: saved.updated,
+        })
+        const laterOps = await adminDb.pendingOps.where('productId').equals(op.productId).toArray()
+        for (const laterOp of laterOps) await adminDb.pendingOps.update(laterOp.id, { productId: saved.id })
+        await adminDb.pendingOps.delete(op.id)
+      })
+      return
+    }
+
+    if (op.type === 'updateStaff') {
+      await this.pb.collection('users').update(op.productId, queuedStaffBody(op.payload), { requestKey: op.id })
+      await adminDb.users.update(op.productId, { pendingSync: false })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'deleteStaff') {
+      await this.pb.collection('users').delete(op.productId, { requestKey: op.id }).catch((error) => {
+        if (error?.status !== 404) throw error
+      })
+      await adminDb.users.delete(op.productId)
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'createAuthorizationBarcode') {
+      const saved = await this.pb.collection('authorization_barcodes').create({
+        code: op.payload.barcode,
+        label: op.payload.label,
+        purpose: 'void_discount',
+        status: op.payload.status || 'active',
+        generated_by: op.payload.generatedById,
+      }, { expand: 'generated_by', requestKey: op.id })
+      const generatedBy = Array.isArray(saved.expand?.generated_by) ? saved.expand.generated_by[0] : saved.expand?.generated_by
+      await adminDb.transaction('rw', adminDb.authorizationBarcodes, adminDb.pendingOps, async () => {
+        await adminDb.authorizationBarcodes.delete(op.productId)
+        await adminDb.authorizationBarcodes.put({
+          id: saved.id,
+          barcode: saved.code,
+          label: saved.label,
+          status: saved.status,
+          generatedBy: generatedBy?.name || generatedBy?.email || op.payload.generatedBy,
+          generatedById: generatedBy?.id || op.payload.generatedById,
+          generatedByEmail: generatedBy?.email || op.payload.generatedByEmail,
+          createdAt: saved.created,
+          pendingSync: false,
+        })
+        const laterOps = await adminDb.pendingOps.where('productId').equals(op.productId).toArray()
+        for (const laterOp of laterOps) await adminDb.pendingOps.update(laterOp.id, { productId: saved.id })
+        await adminDb.pendingOps.delete(op.id)
+      })
+      return
+    }
+
+    if (op.type === 'updateAuthorizationBarcode') {
+      await this.pb.collection('authorization_barcodes').update(op.productId, op.payload, { requestKey: op.id })
+      await adminDb.authorizationBarcodes.update(op.productId, { ...op.payload, pendingSync: false })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'deleteAuthorizationBarcode') {
+      await this.pb.collection('authorization_barcodes').delete(op.productId, { requestKey: op.id }).catch((error) => {
+        if (error?.status !== 404) throw error
+      })
+      await adminDb.authorizationBarcodes.delete(op.productId)
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
     if (op.type === 'createProduct') {
       const existing = await findCloudProductByBarcode(this.pb, op.payload?.barcode)
       const saved = existing

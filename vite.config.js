@@ -25,6 +25,8 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_RECEIPT_COPIES': JSON.stringify(
         process.env.VITE_RECEIPT_COPIES || DEFAULT_RECEIPT_COPIES,
       ),
+      'import.meta.env.VITE_SUPPORT_EMAIL': JSON.stringify(process.env.VITE_SUPPORT_EMAIL || ''),
+      'import.meta.env.VITE_SUPPORT_PHONE': JSON.stringify(process.env.VITE_SUPPORT_PHONE || ''),
     },
     server: {
       port: 1420,

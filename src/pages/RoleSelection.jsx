@@ -1,10 +1,12 @@
-import React from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Person, PersonWorkspace } from 'react-bootstrap-icons';
 import styles from './RoleSelection.module.css';
+import SupportContactModal from '../components/SupportContactModal';
 
 const RoleSelection = () => {
   const navigate = useNavigate();
+  const [supportOpen, setSupportOpen] = useState(false);
 
   return (
     <div className={styles['role-selection-container']}>
@@ -56,10 +58,12 @@ const RoleSelection = () => {
         </div>
 
         {/* Footer */}
-        <p className={styles['footer-text']}>
-          Need help? Contact your system administrator
-        </p>
+        <button className={styles['support-link']} onClick={() => setSupportOpen(true)}>
+          Need help? Contact us
+        </button>
       </div>
+
+      <SupportContactModal open={supportOpen} onClose={() => setSupportOpen(false)} source="Role Selection" />
     </div>
   );
 };

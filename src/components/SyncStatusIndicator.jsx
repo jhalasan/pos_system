@@ -8,17 +8,26 @@ const defaultMessages = {
 }
 
 export default function SyncStatusIndicator({ scope }) {
-  const [status, setStatus] = useState(null)
+  const [status, setStatus] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`nexa_sync_status_${scope}`) || 'null')
+    } catch {
+      return null
+    }
+  })
 
   useEffect(() => {
     function handleStatus(event) {
       const detail = event.detail || {}
       if (detail.scope !== scope) return
 
-      setStatus({
+      const nextStatus = {
         state: detail.state || 'running',
         message: detail.message || defaultMessages[detail.state] || 'Auto-Sync Running',
-      })
+        updatedAt: new Date().toISOString(),
+      }
+      setStatus(nextStatus)
+      localStorage.setItem(`nexa_sync_status_${scope}`, JSON.stringify(nextStatus))
     }
 
     globalThis.addEventListener?.('nexa-sync-status', handleStatus)
@@ -26,9 +35,9 @@ export default function SyncStatusIndicator({ scope }) {
   }, [scope])
 
   useEffect(() => {
-    if (!status || status.state === 'running') return undefined
+    if (!status || status.state === 'running' || ['offline', 'failed'].includes(status.state)) return undefined
 
-    const timeoutId = window.setTimeout(() => setStatus(null), 2600)
+    const timeoutId = window.setTimeout(() => setStatus(null), 5000)
     return () => window.clearTimeout(timeoutId)
   }, [status])
 

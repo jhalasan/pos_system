@@ -21,6 +21,8 @@ import {
   pocketBaseRateLimitMessage,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
+import { getTerminalId } from '../../utils/terminalIdentity'
+import { reconcileProductStock } from '../../utils/stockMovementReconciler'
 
 let runtimePromise
 
@@ -158,6 +160,17 @@ async function cachedManagerApprovalByBarcode(code) {
 
   try {
     await initializeAdminDb()
+    const authorizationRecord = await adminDb.authorizationBarcodes
+      .filter((record) => record.barcode === barcode && record.status === 'active' && !record.deleted)
+      .first()
+    if (authorizationRecord) {
+      return {
+        id: authorizationRecord.generatedById || '',
+        name: authorizationRecord.generatedBy || 'Manager',
+        email: authorizationRecord.generatedByEmail || '',
+        method: 'barcode',
+      }
+    }
     const adminRecord = await adminDb.users
       .filter((record) => cachedApprover(record, barcode))
       .first()
@@ -382,11 +395,73 @@ function localTransactionNumber() {
     String(now.getMonth() + 1).padStart(2, '0'),
     String(now.getDate()).padStart(2, '0'),
   ].join('')
-  return `${day}${String(Date.now()).slice(-6)}`
+  const terminalCode = [...getTerminalId()].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 100
+  return `${day}${String(terminalCode).padStart(2, '0')}${String(Date.now()).slice(-4)}`
+}
+
+async function refreshAuthorizationBarcodeCache(activeRuntime) {
+  const records = await activeRuntime.pb.collection('authorization_barcodes').getFullList({
+    expand: 'generated_by',
+    requestKey: null,
+  })
+  await initializeAdminDb()
+  const normalized = records.map((record) => {
+    const generatedBy = Array.isArray(record.expand?.generated_by) ? record.expand.generated_by[0] : record.expand?.generated_by
+    return {
+      id: record.id,
+      barcode: record.code || '',
+      label: record.label || 'Void and Discount Approval',
+      status: record.status || 'active',
+      generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
+      generatedById: generatedBy?.id || '',
+      generatedByEmail: generatedBy?.email || '',
+      createdAt: record.created || new Date().toISOString(),
+      pendingSync: false,
+    }
+  })
+  await adminDb.transaction('rw', adminDb.authorizationBarcodes, async () => {
+    const pending = await adminDb.authorizationBarcodes.filter((record) => record.pendingSync).toArray()
+    await adminDb.authorizationBarcodes.clear()
+    await adminDb.authorizationBarcodes.bulkPut([...normalized, ...pending])
+  })
+}
+
+async function managerPasswordHash(email, password) {
+  const bytes = new TextEncoder().encode(`manager-approval:${String(email).toLowerCase()}:${password}`)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function cachedManagerApprovalByPassword(email, password) {
+  await initializeCashierDb()
+  const credential = await cashierDb.settings.get(`managerApproval:${String(email).toLowerCase()}`)
+  if (!credential?.value?.hash) return null
+  const hash = await managerPasswordHash(email, password)
+  return hash === credential.value.hash ? credential.value.manager : null
+}
+
+async function cashierPasswordHash(email, password) {
+  const bytes = new TextEncoder().encode(`cashier-login:${String(email).toLowerCase()}:${password}`)
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function cachedCashierLogin(email, password) {
+  await initializeCashierDb()
+  const credential = await cashierDb.settings.get(`cashierLogin:${String(email).toLowerCase()}`)
+  if (!credential?.value?.hash) return null
+  return await cashierPasswordHash(email, password) === credential.value.hash ? credential.value.user : null
 }
 
 async function createCloudActivityLog({ cashierId, action, detail }) {
-  if (globalThis.navigator && !globalThis.navigator.onLine) return null
+  if (globalThis.navigator && !globalThis.navigator.onLine) {
+    return queueCashierOperation('activityLog', {
+      user_id: cashierId,
+      action_type: action,
+      description: detail,
+      timestamp: new Date().toISOString(),
+    })
+  }
 
   const activeRuntime = await runtime()
   return activeRuntime.pb.collection('activity_logs').create({
@@ -397,20 +472,23 @@ async function createCloudActivityLog({ cashierId, action, detail }) {
   }, { requestKey: `activity:${cashierId}:${action}:${Date.now()}` }).catch(() => null)
 }
 
-async function createCloudRecord(collection, payload, requestKey) {
-  if (globalThis.navigator && !globalThis.navigator.onLine) return null
-
+async function queueCashierOperation(type, payload, entityId = '') {
+  await initializeCashierDb()
+  const id = globalThis.crypto?.randomUUID?.() || `${type}_${Date.now()}`
+  await cashierDb.pendingOps.put({
+    id,
+    type,
+    entityId: entityId || id,
+    payload,
+    status: 'pending',
+    attempts: 0,
+    lastError: '',
+    nextAttemptAt: 0,
+    createdAt: Date.now(),
+  })
   const activeRuntime = await runtime()
-  return activeRuntime.pb.collection(collection).create(payload, { requestKey }).catch(() => null)
-}
-
-async function updateCloudRecord(collection, id, payload, requestKey) {
-  const recordId = String(id || '').trim()
-  if (!recordId || recordId.startsWith('shift_')) return null
-  if (globalThis.navigator && !globalThis.navigator.onLine) return null
-
-  const activeRuntime = await runtime()
-  return activeRuntime.pb.collection(collection).update(recordId, payload, { requestKey }).catch(() => null)
+  activeRuntime.syncEngine.schedule(0)
+  return { id: entityId || id, pendingSync: true }
 }
 
 function optionalRelation(value) {
@@ -431,6 +509,20 @@ async function authorizeManagerApproval(authorization = {}) {
   const password = String(payload?.password || '')
   const activeRuntime = await runtime()
 
+  if (globalThis.navigator && !globalThis.navigator.onLine) {
+    if ((method === 'barcode' || (!method && code)) && code) {
+      const cachedManager = await cachedManagerApprovalByBarcode(code)
+      if (cachedManager) return cachedManager
+      throw new Error('Manager barcode is not cached on this terminal or is inactive.')
+    }
+    if ((method === 'password' || (!method && email && password)) && email && password) {
+      const cachedManager = await cachedManagerApprovalByPassword(email, password)
+      if (cachedManager) return { ...cachedManager, method: 'password' }
+      throw new Error('These manager credentials have not been verified and cached on this terminal yet.')
+    }
+    throw new Error('Offline manager approval requires a cached barcode or previously verified manager credentials.')
+  }
+
   if ((method === 'barcode' || (!method && code)) && code) {
     const authorizationRecord = await activeRuntime.pb.collection('authorization_barcodes').getFirstListItem(
       activeRuntime.pb.filter('code = {:code} && status = "active"', { code }),
@@ -442,6 +534,17 @@ async function authorizeManagerApproval(authorization = {}) {
         ? authorizationRecord.expand.generated_by[0]
         : authorizationRecord.expand?.generated_by
 
+      await initializeAdminDb().then(() => adminDb.authorizationBarcodes.put({
+        id: authorizationRecord.id,
+        barcode: authorizationRecord.code,
+        label: authorizationRecord.label || 'Void and Discount Approval',
+        status: authorizationRecord.status,
+        generatedBy: generatedBy?.name || generatedBy?.email || 'Manager',
+        generatedById: generatedBy?.id || '',
+        generatedByEmail: generatedBy?.email || '',
+        createdAt: authorizationRecord.created,
+        pendingSync: false,
+      })).catch(() => {})
       return {
         id: generatedBy?.id || '',
         name: generatedBy?.name || generatedBy?.email || 'Manager',
@@ -469,9 +572,16 @@ async function authorizeManagerApproval(authorization = {}) {
   }
 
   if ((method === 'password' || (!method && email && password)) && email && password) {
+    if (globalThis.navigator && !globalThis.navigator.onLine) {
+      throw new Error('Offline manager approval currently supports cached barcodes. Use a manager or authorization barcode.')
+    }
     const adminClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL)
     adminClient.autoCancellation(false)
-    const auth = await adminClient.collection('users').authWithPassword(email, password)
+    const auth = await adminClient.collection('users').authWithPassword(email, password).catch(async (error) => {
+      const cachedManager = await cachedManagerApprovalByPassword(email, password)
+      if (cachedManager) return { record: { ...cachedManager, role: 'manager', status: 'active' } }
+      throw error
+    })
     const manager = auth.record
 
     if (!['manager', 'admin'].includes(manager?.role) && !(manager?.role === 'cashier' && String(manager?.void_barcode || '').startsWith('92'))) {
@@ -479,12 +589,18 @@ async function authorizeManagerApproval(authorization = {}) {
     }
     if (manager?.status === 'inactive') throw new Error('This manager account is inactive.')
 
-    return {
+    const approver = {
       id: manager.id,
       name: manager.name || manager.email || 'Manager',
       email: manager.email || '',
       method: 'password',
     }
+    await initializeCashierDb()
+    await cashierDb.settings.put({
+      key: `managerApproval:${email.toLowerCase()}`,
+      value: { hash: await managerPasswordHash(email, password), manager: approver },
+    })
+    return approver
   }
 
   throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
@@ -521,7 +637,9 @@ export const desktopCashierApi = {
 
   async login(email, password) {
     const activeRuntime = await runtime()
-    const auth = await activeRuntime.login(email, password).catch((error) => {
+    const auth = await activeRuntime.login(email, password).catch(async (error) => {
+      const cachedUser = await cachedCashierLogin(email, password)
+      if (cachedUser) return { record: cachedUser, offline: true }
       rememberPocketBaseRateLimit(error)
       throw new Error(loginErrorMessage(error))
     })
@@ -536,6 +654,13 @@ export const desktopCashierApi = {
     if (auth.record?.status === 'inactive') {
       activeRuntime.logout()
       throw new Error('This account is inactive.')
+    }
+    if (!auth.offline) {
+      await initializeCashierDb()
+      await cashierDb.settings.put({
+        key: `cashierLogin:${String(email).toLowerCase()}`,
+        value: { hash: await cashierPasswordHash(email, password), user: auth.record },
+      })
     }
     await createCloudActivityLog({
       cashierId: auth.record.id,
@@ -553,6 +678,7 @@ export const desktopCashierApi = {
         rememberPocketBaseRateLimit(error)
         console.warn('Product catalog refresh failed after cashier login:', error)
       })
+      refreshAuthorizationBarcodeCache(activeRuntime).catch(() => {})
     }
     return { user: auth.record }
   },
@@ -748,10 +874,14 @@ export const desktopCashierApi = {
     const localSales = (completedSales.length ? completedSales : pendingSales)
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .map((sale) => toCashierSale(sale, pendingIds))
+    const cachedCloudSales = await cashierDb.receiptCache
+      .filter((sale) => !cashierId || sale.cashierId === cashierId)
+      .toArray()
     const cloudSales = await cloudSalesHistory({ cashierId })
+    if (cloudSales.length) await cashierDb.receiptCache.bulkPut(cloudSales.map((sale) => ({ ...sale, id: sale.id || sale.saleId || sale.transactionNo })))
     const merged = new Map()
 
-    for (const sale of [...cloudSales, ...localSales]) {
+    for (const sale of [...cachedCloudSales, ...cloudSales, ...localSales]) {
       merged.set(sale.transactionNo || sale.id, sale)
     }
 
@@ -763,7 +893,12 @@ export const desktopCashierApi = {
     const sale = await findLocalSaleByTransactionNo(transactionNo)
     if (!sale) {
       const cloudSale = await cloudSaleLookup(transactionNo)
-      if (cloudSale) return cloudSale
+      if (cloudSale) {
+        await cashierDb.receiptCache.put({ ...cloudSale, id: cloudSale.id || cloudSale.saleId || cloudSale.transactionNo })
+        return cloudSale
+      }
+      const cachedCloudSale = await cashierDb.receiptCache.filter((record) => record.transactionNo === transactionNo).first()
+      if (cachedCloudSale) return cachedCloudSale
       throw new Error(`No completed transaction found for "${transactionNo}".`)
     }
     const pendingSales = await getPendingSales()
@@ -787,13 +922,12 @@ export const desktopCashierApi = {
 
   async syncNow() {
     const activeRuntime = await runtime()
+    await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
     return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
   },
 
   async authorizeVoid(code) {
-    if (globalThis.navigator && !globalThis.navigator.onLine) {
-      throw new Error('Manager approval requires a network connection.')
-    }
     return authorizeManagerApproval(code)
   },
 
@@ -805,7 +939,8 @@ export const desktopCashierApi = {
     const cashierId = String(session.cashierId || '').trim()
     if (!cashierId) return null
 
-    return createCloudRecord('cash_register_sessions', {
+    const localId = session.id || `shift_${globalThis.crypto?.randomUUID?.() || Date.now()}`
+    return queueCashierOperation('openCashRegisterSession', {
       cashier_id: cashierId,
       opening_amount: numberPayload(session.openingAmount),
       closing_amount: 0,
@@ -818,11 +953,12 @@ export const desktopCashierApi = {
       opened_at: session.openedAt || new Date().toISOString(),
       notes: String(session.note || '').trim(),
       device_id: String(session.deviceId || '').trim(),
-    }, `cash-session:${session.id || cashierId}:${session.openedAt || Date.now()}`)
+    }, localId)
   },
 
   async closeCashRegisterSession(session = {}) {
-    return updateCloudRecord('cash_register_sessions', session.id, {
+    return queueCashierOperation('closeCashRegisterSession', {
+      sessionId: session.id,
       closing_amount: numberPayload(session.closingAmount),
       expected_closing_amount: numberPayload(session.expectedClosingAmount),
       actual_closing_amount: numberPayload(session.closingAmount),
@@ -833,7 +969,7 @@ export const desktopCashierApi = {
       closed_at: session.closedAt || new Date().toISOString(),
       notes: String(session.closeNote || session.note || '').trim(),
       device_id: String(session.deviceId || '').trim(),
-    }, `cash-session-close:${session.id}:${session.closedAt || Date.now()}`)
+    }, session.id)
   },
 
   async recordCashMovement(movement = {}) {
@@ -849,13 +985,14 @@ export const desktopCashierApi = {
       approval_method: movement.approvalMethod === 'password' ? 'password' : movement.approvalMethod === 'barcode' ? 'barcode' : 'manual',
       device_id: String(movement.deviceId || '').trim(),
       created_at: movement.createdAt || new Date().toISOString(),
+      localSessionId: String(movement.sessionId || '').trim(),
     }
     const sessionId = optionalRelation(movement.sessionId)
     const approvedBy = optionalRelation(movement.approvedBy)
     if (sessionId) payload.session_id = sessionId
     if (approvedBy) payload.approved_by = approvedBy
 
-    return createCloudRecord('cash_movements', payload, `cash-movement:${movement.id || cashierId}:${payload.created_at}`)
+    return queueCashierOperation('recordCashMovement', payload, movement.id)
   },
 
   async recordCashAudit(audit = {}) {
@@ -879,11 +1016,12 @@ export const desktopCashierApi = {
       note: String(audit.note || '').trim(),
       device_id: String(audit.deviceId || '').trim(),
       created_at: audit.createdAt || new Date().toISOString(),
+      localSessionId: String(audit.sessionId || '').trim(),
     }
     const sessionId = optionalRelation(audit.sessionId)
     if (sessionId) payload.session_id = sessionId
 
-    return createCloudRecord('cash_audits', payload, `cash-audit:${audit.id || cashierId}:${payload.created_at}`)
+    return queueCashierOperation('recordCashAudit', payload, audit.id)
   },
 
   async voidCompletedSale({ saleId, cashierId, authorization, reason }) {
@@ -932,6 +1070,7 @@ export const desktopCashierApi = {
               user_id: cashierId || localSale.cashierId,
               created_at: new Date().toISOString(),
             }, { requestKey: `stock-movement:void:${cloudSale.id}:${product.id}` }).catch(() => null)
+            await reconcileProductStock(activeRuntime.pb, product.id)
           }
 
           await activeRuntime.pb.collection('sales').update(cloudSale.id, {
@@ -946,7 +1085,14 @@ export const desktopCashierApi = {
         throw error
       }
     } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
-      throw new Error('Internet is required to void a synced transaction.')
+      await queueCashierOperation('voidCompletedSale', {
+        transactionNo: localSale.transactionNo,
+        cashierId: cashierId || localSale.cashierId,
+        approverId: approver.id || '',
+        reason: String(reason || ''),
+        items: localSale.items || [],
+        createdAt: new Date().toISOString(),
+      }, saleId)
     }
 
     const voidedSale = await voidLocalSale(saleId, {
@@ -1010,6 +1156,7 @@ export const desktopCashierApi = {
             user_id: cashierId || localSale.cashierId,
             created_at: new Date().toISOString(),
           }, { requestKey: `stock-movement:${type}:${cloudSale.id}:${product.id}:${quantity}` }).catch(() => null)
+          await reconcileProductStock(activeRuntime.pb, product.id)
         }
 
         await activeRuntime.pb.collection('sales').update(cloudSale.id, {
@@ -1017,7 +1164,16 @@ export const desktopCashierApi = {
         }, { requestKey: null }).catch(() => null)
       }
     } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
-      throw new Error('Internet is required to refund or exchange a synced transaction.')
+      await queueCashierOperation('adjustCompletedSale', {
+        transactionNo: localSale.transactionNo,
+        cashierId: cashierId || localSale.cashierId,
+        approverId: approver.id || '',
+        type: type === 'exchange' ? 'exchange' : 'refund',
+        items: items || [],
+        reason: String(reason || ''),
+        note: String(note || ''),
+        createdAt: new Date().toISOString(),
+      }, saleId)
     }
 
     const adjustedSale = await adjustLocalSale(saleId, {

@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { logout } from '../auth'
 import { api } from '../services/api'
+import { getTerminalName, setTerminalName } from '../../utils/terminalIdentity'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
   IconCloud, IconLogout, IconSettings, IconBarcode,
@@ -23,6 +24,7 @@ const navItems = [
 export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
   const nav = useNavigate()
   const [toast, setToast] = useState('')
+  const [terminalName, updateTerminalName] = useState(getTerminalName)
 
   function handleLogout() {
     logout()
@@ -38,7 +40,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     try {
       const result = await api.syncNow()
       if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
-        flash('Cloud sync complete. Nothing pending.')
+        flash(`Cloud sync complete. ${result.pending || 0} pending.`)
       } else if ((result.failed || 0) > 0 && result.errors?.[0]) {
         flash(`Cloud sync failed: ${result.errors[0]}`)
       } else {
@@ -49,6 +51,12 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     }
   }
 
+  function renameTerminal() {
+    const value = prompt('Terminal name (for example COUNTER-A):', terminalName)
+    if (value === null) return
+    updateTerminalName(setTerminalName(value))
+  }
+
   return (
     <aside className={'sidebar' + (open ? ' active' : '') + (collapsed ? ' collapsed' : '')}>
       <div className="sidebar-brand">
@@ -56,6 +64,9 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
         <div>
           <div className="nm">NEXA POS</div>
           <div className="sb">Admin Control Panel</div>
+          <button type="button" className="terminal-name" onClick={renameTerminal} title="Rename this terminal">
+            {terminalName}
+          </button>
         </div>
       </div>
 

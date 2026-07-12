@@ -40,9 +40,23 @@ export function normalizeProduct(record, pb) {
 export async function replaceProductsFromCloud(records, pb) {
   const products = records.map((record) => normalizeProduct(record, pb))
 
-  await cashierDb.transaction('rw', cashierDb.products, async () => {
+  await cashierDb.transaction('rw', cashierDb.products, cashierDb.pendingSales, async () => {
+    const pendingSales = await cashierDb.pendingSales.toArray()
+    const pendingDeductions = new Map()
+    for (const sale of pendingSales) {
+      for (const item of sale.items || []) {
+        const productId = String(item.productId || '')
+        if (!productId) continue
+        const baseQuantity = (Number(item.quantity) || 0) * (Number(item.conversion) > 0 ? Number(item.conversion) : 1)
+        pendingDeductions.set(productId, (pendingDeductions.get(productId) || 0) + baseQuantity)
+      }
+    }
+    const mergedProducts = products.map((product) => ({
+      ...product,
+      quantity: Math.max(0, product.quantity - (pendingDeductions.get(product.id) || 0)),
+    }))
     await cashierDb.products.clear()
-    await cashierDb.products.bulkPut(products)
+    await cashierDb.products.bulkPut(mergedProducts)
   })
 
   return products

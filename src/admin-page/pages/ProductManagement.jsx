@@ -99,59 +99,15 @@ function pluralizeUnit(unit, quantity) {
 }
 
 function primaryInventoryLabel(product) {
-  const hasMultipleUnits = Boolean((product.hasMultipleUnits ?? product.has_multiple_units) || getInventoryBreakdown(product).length > 1)
-  if (!hasMultipleUnits) {
-    return {
-      main: formatQty(product.qty),
-      detail: '',
-    }
-  }
-
-  const breakdown = getInventoryRemainderBreakdown(product)
-  const visibleBreakdown = breakdown.filter((unit) => Number(unit.count) > 0)
-  if (breakdown.length === 0) {
-    return {
-      main: formatQty(product.qty),
-      detail: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total`,
-    }
-  }
-
-  const summary = (visibleBreakdown.length ? visibleBreakdown : [breakdown[breakdown.length - 1]])
-    .map((unit) => `${formatQty(unit.count)} ${pluralizeUnit(unit.unit, unit.count)}`)
-    .join(' + ')
-
   return {
-    main: `${formatQty(product.qty)} ${pluralizeUnit(product.unit, product.qty)} total stock`,
-    detail: `Breakdown: ${summary}`,
+    main: formatQty(product.qty),
+    detail: '',
   }
 }
 
-function unitRowLabel(product, unit) {
-  const conversion = Number(unit.conversion) || 1
-  if (conversion === 1) return `1 ${unit.unit} = 1 ${product.unit}`
-  return `1 ${unit.unit} = ${formatQty(conversion)} ${pluralizeUnit(product.unit, conversion)}`
-}
-
-function unitStockLabel(product, unit) {
-  const conversion = Number(unit.conversion) || 1
-  const count = Number(unit.count) || 0
-  const total = Number(unit.total) || 0
-  const unitName = pluralizeUnit(unit.unit, count)
-  const totalUnitName = pluralizeUnit(unit.unit, total)
-  const baseQty = Number(product.qty) || 0
-  const baseUnitName = pluralizeUnit(product.unit, baseQty)
-
-  if (conversion === 1) {
-    return {
-      main: `${formatQty(count)} loose ${unitName}`,
-      detail: `${formatQty(baseQty)} ${baseUnitName} total stock`,
-    }
-  }
-
-  return {
-    main: `${formatQty(count)} full ${unitName} in breakdown`,
-    detail: `Total equivalent: ${formatQty(total)} ${totalUnitName}`,
-  }
+function breakdownUnitLabel(product, unit) {
+  if (Number(unit.conversion) > 1) return `${unit.unit} (F)`
+  return `${pluralizeUnit(product.unit, unit.count)} (L)`
 }
 
 export default function ProductManagement() {
@@ -399,22 +355,14 @@ export default function ProductManagement() {
                 const hasMultipleUnits = Boolean((p.hasMultipleUnits ?? p.has_multiple_units) || breakdown.length > 1)
                 const inventoryLabel = primaryInventoryLabel(p)
                 const isExpanded = expandedProducts.has(p.id)
+                const stockToneClass = isOutOfStock || p.status === 'critical'
+                  ? 'product-row-critical'
+                  : p.status === 'low' ? 'product-row-low' : ''
                 return (
                   <Fragment key={p.id}>
-                    <tr className={`product-group-row ${isOutOfStock ? 'product-row-out' : ''}`}>
+                    <tr className={`product-group-row ${stockToneClass} ${isOutOfStock ? 'product-row-out' : ''}`}>
                       <td>
                         <div className="prod-cell">
-                          {hasMultipleUnits ? (
-                            <button
-                              type="button"
-                              className="group-toggle"
-                              title={isExpanded ? 'Hide unit rows' : 'Show unit rows'}
-                              onClick={() => toggleProductBreakdown(p.id)}
-                              aria-expanded={isExpanded}
-                            >
-                              {isExpanded ? '▾' : '▸'}
-                            </button>
-                          ) : null}
                           <div className="prod-thumb">
                             {p.imageUrl ? (
                               <img src={p.imageUrl} alt={p.name} />
@@ -473,42 +421,23 @@ export default function ProductManagement() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded ? remainderBreakdown.map((unit) => {
-                      const unitLabel = unitStockLabel(p, unit)
-                      return (
-                      <tr className="product-unit-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
+                    {isExpanded ? remainderBreakdown.map((unit, index) => (
+                      <tr className="product-unit-row product-breakdown-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
                         <td>
-                          <div className="prod-cell product-unit-cell">
+                          <div className="breakdown-row-label">
                             <span className="unit-branch">↳</span>
-                            <div>
-                              <div className="prod-name">{p.name} - {unit.unit}</div>
-                              <div className="prod-id">{unitRowLabel(p, unit)}</div>
-                            </div>
+                            <span>{index === 0 ? 'Unit breakdown' : ''}</span>
                           </div>
                         </td>
-                        <td className="mono">{unit.barcode || 'No barcode'}</td>
-                        <td>{p.category}</td>
-                        <td className="t-center">
-                          <div className="stock-stack">
-                            <strong>{unitLabel.main}</strong>
-                            <small>{unitLabel.detail}</small>
-                          </div>
-                        </td>
-                        <td>{unit.unit}</td>
-                        <td>{peso(unit.price)}</td>
-                        <td><span className="badge badge-neutral">Sub Unit</span></td>
-                        <td className="t-center">
-                          <button
-                            className="icon-btn"
-                            title="Edit product units"
-                            onClick={() => setModal({ mode: 'edit', product: p })}
-                          >
-                            <IconEdit size={15} />
-                          </button>
-                        </td>
+                        <td className="mono">{unit.barcode || '—'}</td>
+                        <td aria-label="Same category as product" />
+                        <td className="t-center"><strong>{formatQty(unit.count)}</strong></td>
+                        <td><strong>{breakdownUnitLabel(p, unit)}</strong></td>
+                        <td />
+                        <td />
+                        <td />
                       </tr>
-                      )
-                    }) : null}
+                    )) : null}
                   </Fragment>
                 )
               })}

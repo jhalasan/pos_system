@@ -151,12 +151,24 @@
 }
 
 /* Footer */
-.footer-text {
+.footer-text,
+.support-link {
   font-size: 12px;
   color: #9ca3af;
   text-align: center;
   margin: 0;
 }
+
+.support-link {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.support-link:hover { color: #2563eb; }
+
 
 /* Responsive */
 @media (max-width: 768px) {

@@ -16,6 +16,7 @@ import {
   pocketBaseRateLimitMessage,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
+import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -502,7 +503,11 @@ function filterReceiptRecords(records, filters = {}) {
 async function fetchReceiptRecords(filters = {}) {
   await startAdminRuntime()
   const localRecords = (await localCashierCompletedSales()).map(receiptRecordFromLocalSale)
-  if (!(await isCloudReachable())) return filterReceiptRecords(localRecords, filters)
+  await initializeCashierDb()
+  const cachedRecords = cashierDb.tables.some((table) => table.name === 'receiptCache')
+    ? await cashierDb.receiptCache.toArray()
+    : []
+  if (!(await isCloudReachable())) return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
 
   const sales = await pb.collection('sales').getFullList({
     sort: '-created_at,-created',
@@ -510,9 +515,12 @@ async function fetchReceiptRecords(filters = {}) {
     requestKey: null,
   }).catch(() => [])
   const cloudRecords = await Promise.all(sales.map(receiptRecordFromCloudSale))
+  if (cloudRecords.length && cashierDb.tables.some((table) => table.name === 'receiptCache')) {
+    await cashierDb.receiptCache.bulkPut(cloudRecords.map((record) => ({ ...record, id: record.id || record.saleId || record.transactionNo })))
+  }
   const merged = new Map()
 
-  for (const record of cloudRecords) {
+  for (const record of [...cachedRecords, ...cloudRecords]) {
     merged.set(record.transactionNo || record.id, record)
   }
   for (const record of localRecords) {
@@ -1048,21 +1056,6 @@ async function queueOperation(type, productId, payload) {
   return op
 }
 
-async function flushProductOperations(productId) {
-  // syncNow can return an already-running sync whose operation snapshot was
-  // taken before this product was queued. Run once more when this product is
-  // still pending so "saved" also means visible to connected cashiers.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    await syncEngine?.syncNow()
-    const stillPending = await adminDb.pendingOps
-      .where('productId')
-      .equals(productId)
-      .filter((op) => ['pending', 'failed'].includes(op.status))
-      .first()
-    if (!stillPending) break
-  }
-}
-
 function enqueueInventoryScan(task) {
   const queued = inventoryScanQueue.then(task, task)
   inventoryScanQueue = queued.catch(() => {})
@@ -1164,7 +1157,7 @@ async function listDesktopStaff(role = 'cashier') {
     return records.map((record) => toCashierUser(record, salesTotals.get(record.id)))
   }
 
-  const localUsers = await adminDb.users.where('role').equals('cashier').toArray()
+  const localUsers = (await adminDb.users.where('role').equals('cashier').toArray()).filter((user) => !user.deleted)
   const filtered = staffRole === 'manager'
     ? localUsers.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92'))
     : localUsers.filter((user) => !String(user.void_barcode || user.cashierBarcode || '').startsWith('92'))
@@ -1279,7 +1272,10 @@ export const desktopAdminApi = {
     }
 
     const local = { id: `category_${categoryName.toLowerCase()}`, name: categoryName, updated: new Date().toISOString() }
-    await adminDb.categories.put(local)
+    await adminDb.transaction('rw', adminDb.categories, adminDb.pendingOps, async () => {
+      await adminDb.categories.put(local)
+      await queueOperation('createCategory', local.id, { name: categoryName })
+    })
     await recordActivity('Settings', `Created local category "${categoryName}".`)
     return local
   },
@@ -1299,10 +1295,7 @@ export const desktopAdminApi = {
       await queueOperation('createProduct', product.id, product)
     })
     await recordActivity('Product', `Created product "${product.name}".`)
-    if (await isCloudReachable()) {
-      await flushProductOperations(product.id).catch(rememberPocketBaseRateLimit)
-      return (await getProductByBarcode(product.barcode)) || product
-    }
+    syncEngine?.syncNow().catch(rememberPocketBaseRateLimit)
     return product
   },
 
@@ -1321,10 +1314,7 @@ export const desktopAdminApi = {
       await queueOperation('updateProduct', id, product)
     })
     await recordActivity('Product', `Updated product "${product.name}".`)
-    if (await isCloudReachable()) {
-      await flushProductOperations(product.id).catch(rememberPocketBaseRateLimit)
-      return (await getProductByBarcode(product.barcode)) || product
-    }
+    syncEngine?.syncNow().catch(rememberPocketBaseRateLimit)
     return product
   },
 
@@ -1341,6 +1331,7 @@ export const desktopAdminApi = {
       await queueOperation('deleteProduct', id, { id })
     })
     if (deletedName) await recordActivity('Product', `Deleted product "${deletedName}".`)
+    syncEngine?.syncNow().catch(rememberPocketBaseRateLimit)
     return null
   },
 
@@ -1561,6 +1552,50 @@ export const desktopAdminApi = {
     await adminDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     return syncEngine?.syncNow() || { uploaded: 0, failed: 0 }
   },
+  async offlineReadiness() {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const [products, categories, users, authorizationBarcodes, adminPending, adminFailed, pendingSales, cashierPending, cashierFailed, receipts, cashierSettings] = await Promise.all([
+      adminDb.products.filter((product) => !product.deleted).count(),
+      adminDb.categories.count(),
+      adminDb.users.filter((user) => !user.deleted && user.status !== 'inactive').count(),
+      adminDb.authorizationBarcodes.filter((record) => !record.deleted && record.status === 'active').count(),
+      adminDb.pendingOps.where('status').equals('pending').count(),
+      adminDb.pendingOps.where('status').equals('failed').count(),
+      cashierDb.pendingSales.count(),
+      cashierDb.pendingOps.where('status').equals('pending').count(),
+      cashierDb.pendingOps.where('status').equals('failed').count(),
+      cashierDb.receiptCache.count(),
+      cashierDb.settings.toArray(),
+    ])
+    const offlineCashierLogins = cashierSettings.filter((item) => String(item.key).startsWith('cashierLogin:')).length
+    const offlineManagerPasswords = cashierSettings.filter((item) => String(item.key).startsWith('managerApproval:')).length
+    const managerBarcodes = await adminDb.users.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92') && user.status !== 'inactive').count()
+    const pending = adminPending + pendingSales + cashierPending
+    const failed = adminFailed + cashierFailed
+    const lastAdminSync = JSON.parse(localStorage.getItem('nexa_sync_status_admin') || 'null')
+    const lastCashierSync = JSON.parse(localStorage.getItem('nexa_sync_status_cashier') || 'null')
+    return {
+      ready: products > 0 && categories > 0 && users > 0 && offlineCashierLogins > 0 && (authorizationBarcodes + managerBarcodes + offlineManagerPasswords) > 0 && failed === 0,
+      terminalId: getTerminalId(),
+      terminalName: getTerminalName(),
+      products,
+      categories,
+      users,
+      authorizationBarcodes,
+      managerApprovals: authorizationBarcodes + managerBarcodes + offlineManagerPasswords,
+      offlineCashierLogins,
+      receipts,
+      pending,
+      failed,
+      lastDownloadAt: [lastAdminSync?.updatedAt, lastCashierSync?.updatedAt].filter(Boolean).sort().at(-1) || '',
+    }
+  },
+  async downloadOfflineData() {
+    await this.syncNow()
+    await refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
+    return this.offlineReadiness()
+  },
   async latestAuthorizationBarcode() {
     await startAdminRuntime()
     if (!(await isCloudReachable())) return null
@@ -1576,7 +1611,9 @@ export const desktopAdminApi = {
   },
   async authorizationBarcodes() {
     await startAdminRuntime()
-    if (!(await isCloudReachable())) return []
+    if (!(await isCloudReachable())) {
+      return adminDb.authorizationBarcodes.filter((record) => !record.deleted).reverse().sortBy('createdAt')
+    }
 
     const records = await pb.collection('authorization_barcodes').getFullList({
       sort: '-created',
@@ -1584,15 +1621,31 @@ export const desktopAdminApi = {
       requestKey: null,
     }).catch(() => [])
 
-    return records.map(toAuthorizationBarcode)
+    const normalized = records.map((record) => ({
+      ...toAuthorizationBarcode(record),
+      generatedById: firstRelation(record.generated_by) || '',
+      generatedByEmail: record.expand?.generated_by?.email || '',
+      pendingSync: false,
+    }))
+    await adminDb.transaction('rw', adminDb.authorizationBarcodes, async () => {
+      const pending = await adminDb.authorizationBarcodes.filter((record) => record.pendingSync).toArray()
+      await adminDb.authorizationBarcodes.clear()
+      await adminDb.authorizationBarcodes.bulkPut([...normalized, ...pending])
+    })
+    return normalized
   },
   async updateAuthorizationBarcodeStatus(id, status) {
     await startAdminRuntime()
-    if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to update authorization barcodes.')
-    }
-
     const nextStatus = status === 'revoked' ? 'revoked' : 'active'
+    if (!(await isCloudReachable())) {
+      const existing = await adminDb.authorizationBarcodes.get(id)
+      const updated = { ...existing, status: nextStatus, pendingSync: true }
+      await adminDb.transaction('rw', adminDb.authorizationBarcodes, adminDb.pendingOps, async () => {
+        await adminDb.authorizationBarcodes.put(updated)
+        await queueOperation('updateAuthorizationBarcode', id, { status: nextStatus })
+      })
+      return updated
+    }
     const updated = await pb.collection('authorization_barcodes').update(id, {
       status: nextStatus,
     }, {
@@ -1602,18 +1655,30 @@ export const desktopAdminApi = {
       throw new Error(pocketBaseErrorMessage(error, 'Unable to update authorization barcode.'))
     })
 
+    await adminDb.authorizationBarcodes.put({
+      ...toAuthorizationBarcode(updated),
+      generatedById: firstRelation(updated.generated_by) || '',
+      generatedByEmail: updated.expand?.generated_by?.email || '',
+      pendingSync: false,
+    })
     await recordActivity('Settings', `${nextStatus === 'active' ? 'Enabled' : 'Disabled'} authorization barcode ${updated.code}.`)
     return toAuthorizationBarcode(updated)
   },
   async deleteAuthorizationBarcode(id) {
     await startAdminRuntime()
     if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to delete authorization barcodes.')
+      const existing = await adminDb.authorizationBarcodes.get(id)
+      await adminDb.transaction('rw', adminDb.authorizationBarcodes, adminDb.pendingOps, async () => {
+        if (existing) await adminDb.authorizationBarcodes.put({ ...existing, deleted: true, pendingSync: true })
+        await queueOperation('deleteAuthorizationBarcode', id, {})
+      })
+      return null
     }
 
     await pb.collection('authorization_barcodes').delete(id, { requestKey: null }).catch((error) => {
       throw new Error(pocketBaseErrorMessage(error, 'Unable to delete authorization barcode.'))
     })
+    await adminDb.authorizationBarcodes.delete(id)
     await recordActivity('Settings', `Deleted authorization barcode ${id}.`)
     return null
   },
@@ -1628,7 +1693,24 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
-      throw new Error(`Internet is required to create ${roleLabel} accounts.`)
+      const payload = cashierPayload(data)
+      if (data.imageFile) {
+        payload.profileImage = data.imageFile
+        payload.profileImageName = data.imageFile.name
+      }
+      const local = {
+        id: newId('staff'),
+        ...payload,
+        cashierBarcode: payload.void_barcode || '',
+        pendingSync: true,
+        updated: new Date().toISOString(),
+      }
+      await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
+        await adminDb.users.put(local)
+        await queueOperation('createStaff', local.id, payload)
+      })
+      await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Created ${roleLabel} "${local.name || local.email}" offline.`)
+      return toCashierUser(local)
     }
     const created = await pb.collection('users').create(cashierBody(data), { requestKey: null }).catch((error) => {
       throw new Error(pocketBaseErrorMessage(error, `Unable to create ${roleLabel}.`))
@@ -1644,7 +1726,22 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
-      throw new Error(`Internet is required to update ${roleLabel} accounts.`)
+      const existing = await adminDb.users.get(id)
+      const payload = cashierPayload(data)
+      delete payload.email
+      delete payload.password
+      delete payload.passwordConfirm
+      if (data.imageFile) {
+        payload.profileImage = data.imageFile
+        payload.profileImageName = data.imageFile.name
+      }
+      const local = { ...existing, ...payload, cashierBarcode: payload.void_barcode || existing?.cashierBarcode || '', pendingSync: true, updated: new Date().toISOString() }
+      await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
+        await adminDb.users.put(local)
+        await queueOperation('updateStaff', id, payload)
+      })
+      await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Updated ${roleLabel} "${local.name || local.email}" offline.`)
+      return toCashierUser(local)
     }
     const body = cashierUpdateBody(data)
     const updated = await pb.collection('users').update(id, body, { requestKey: null }).catch((error) => {
@@ -1660,7 +1757,13 @@ export const desktopAdminApi = {
   async deleteCashier(id) {
     await startAdminRuntime()
     if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to delete cashier accounts.')
+      const existing = await adminDb.users.get(id)
+      await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
+        if (existing) await adminDb.users.put({ ...existing, deleted: true, pendingSync: true })
+        await queueOperation('deleteStaff', id, {})
+      })
+      await recordActivity('Cashier', 'Deleted cashier account offline.')
+      return null
     }
     await pb.collection('users').delete(id, { requestKey: null })
     await adminDb.users.delete(id)
@@ -1700,18 +1803,22 @@ export const desktopAdminApi = {
   },
   async markAuditReviewed(data = {}) {
     await startAdminRuntime()
-    if (!(await isCloudReachable())) return null
     const reviewedBy = adminSession?.id || pb.authStore.record?.id || ''
     if (!reviewedBy) return null
-
-    return pb.collection('audit_reviews').create({
+    const payload = {
       reviewed_by: reviewedBy,
       date_from: data.fromDate ? `${data.fromDate}T00:00:00.000Z` : new Date().toISOString(),
       date_to: data.toDate ? `${data.toDate}T23:59:59.999Z` : new Date().toISOString(),
       row_count: Math.max(0, Math.floor(Number(data.rowCount) || 0)),
       note: String(data.note || '').trim(),
       reviewed_at: new Date().toISOString(),
-    }, { requestKey: `audit-review:${reviewedBy}:${data.fromDate || 'all'}:${data.toDate || 'all'}:${Date.now()}` }).catch(() => null)
+    }
+    if (!(await isCloudReachable())) {
+      await queueOperation('markAuditReviewed', newId('audit_review'), payload)
+      await recordActivity('Audit', `Reviewed ${payload.row_count} audit row(s) offline.`)
+      return { ...payload, pendingSync: true }
+    }
+    return pb.collection('audit_reviews').create(payload, { requestKey: `audit-review:${reviewedBy}:${data.fromDate || 'all'}:${data.toDate || 'all'}:${Date.now()}` }).catch(() => null)
   },
   gcashPayments: fetchGcashPayments,
   async settingsAdmins() {
@@ -1742,6 +1849,7 @@ export const desktopAdminApi = {
     }
 
     await adminDb.users.update(id, { quick_login_enabled: Boolean(enabled) })
+    await queueOperation('updateUserSettings', id, { quick_login_enabled: Boolean(enabled), ...(enabled ? { emailVisibility: true } : {}) })
     const updated = await adminDb.users.get(id)
     await recordActivity('Settings', `${enabled ? 'Enabled' : 'Disabled'} admin quick login for "${updated.name || updated.email}".`)
     return toSettingsUser(updated)
@@ -1749,14 +1857,32 @@ export const desktopAdminApi = {
   updateAdminAuthorizationBarcode: async () => null,
   async generateAuthorizationBarcode(email, password) {
     await startAdminRuntime()
-    if (!(await isCloudReachable())) {
-      throw new Error('Internet is required to generate authorization barcodes.')
-    }
-
     const managerEmail = String(email || '').trim()
     const managerPassword = String(password || '')
     if (!managerEmail || !managerPassword) {
       throw new Error('Admin password is required.')
+    }
+
+    if (!(await isCloudReachable())) {
+      const auth = await offlineLogin(managerEmail, managerPassword)
+      const admin = auth.user
+      const barcode = `90${String(Date.now()).slice(-10)}${String(Math.floor(Math.random() * 100)).padStart(2, '0')}`
+      const local = {
+        id: newId('auth'),
+        barcode,
+        label: 'Void and Discount Approval',
+        status: 'active',
+        generatedBy: admin.name || admin.email || 'Admin',
+        generatedById: admin.id,
+        generatedByEmail: admin.email || '',
+        createdAt: new Date().toISOString(),
+        pendingSync: true,
+      }
+      await adminDb.transaction('rw', adminDb.authorizationBarcodes, adminDb.pendingOps, async () => {
+        await adminDb.authorizationBarcodes.put(local)
+        await queueOperation('createAuthorizationBarcode', local.id, local)
+      })
+      return local
     }
 
     const authClient = new PocketBase(baseUrl)
@@ -1788,7 +1914,14 @@ export const desktopAdminApi = {
     })
 
     await recordActivity('Settings', 'Generated authorization barcode for void and discount approvals.')
-    return toAuthorizationBarcode(created)
+    const normalized = {
+      ...toAuthorizationBarcode(created),
+      generatedById: admin.id,
+      generatedByEmail: admin.email || '',
+      pendingSync: false,
+    }
+    await adminDb.authorizationBarcodes.put(normalized)
+    return normalized
   },
   async settingsCashiers() {
     return listDesktopCashiers()
@@ -1806,6 +1939,7 @@ export const desktopAdminApi = {
     }
 
     await adminDb.users.update(id, { quick_login_enabled: Boolean(enabled) })
+    await queueOperation('updateUserSettings', id, { quick_login_enabled: Boolean(enabled), ...(enabled ? { emailVisibility: true } : {}) })
     const updated = await adminDb.users.get(id)
     await recordActivity('Settings', `${enabled ? 'Enabled' : 'Disabled'} cashier quick login for "${updated.name || updated.email}".`)
     return toSettingsUser(updated)

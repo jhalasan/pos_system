@@ -16,6 +16,8 @@ import {
 } from '../utils/barcodePrinter'
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 
+const emptyReadiness = { ready: false, products: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
+
 export default function Settings() {
   const {
     data: admins,
@@ -28,6 +30,9 @@ export default function Settings() {
   const [exportLocations, setExportLocations] = useState(getExportLocations)
   const [barcodePrintSettings, setBarcodePrintSettings] = useState(savedBarcodePrintSettings)
   const [theme, setTheme] = useState(getStoredTheme)
+  const [activeTab, setActiveTab] = useState('general')
+  const { data: readiness, setData: setReadiness, loading: readinessLoading } = useApi(api.offlineReadiness, emptyReadiness)
+  const [downloadingOfflineData, setDownloadingOfflineData] = useState(false)
 
   function flash(message) {
     setToast(message)
@@ -100,6 +105,19 @@ export default function Settings() {
     }
   }
 
+  async function downloadOfflineData() {
+    setDownloadingOfflineData(true)
+    try {
+      const result = await api.downloadOfflineData()
+      setReadiness(result)
+      flash(result.ready ? 'Offline data is ready on this terminal.' : 'Download finished, but some offline requirements are still incomplete.')
+    } catch (err) {
+      flash(err.message || 'Unable to download offline data.')
+    } finally {
+      setDownloadingOfflineData(false)
+    }
+  }
+
   if (loading || adminsLoading) {
     return (
       <>
@@ -125,7 +143,12 @@ export default function Settings() {
         subtitle="Configure cashier access, quick login, and account behavior."
       />
 
-      <div className="grid-gap">
+      <div className="staff-tabs settings-tabs">
+        <button className={activeTab === 'general' ? 'active' : ''} onClick={() => setActiveTab('general')}>General</button>
+        <button className={activeTab === 'offline' ? 'active' : ''} onClick={() => setActiveTab('offline')}>Offline Readiness</button>
+      </div>
+
+      {activeTab === 'general' ? <div className="grid-gap">
         <div className="card">
           <div className="panel-head">
             <div>
@@ -334,7 +357,52 @@ export default function Settings() {
             </div>
           )}
         </div>
-      </div>
+      </div> : (
+        <div className="card offline-readiness-card">
+          <div className="panel-head">
+            <div>
+              <h3>Offline Readiness</h3>
+              <span className="sub">Confirm that this terminal has enough local data to continue during a network failure.</span>
+            </div>
+            <span className={`offline-ready-badge ${readiness.ready ? 'ready' : 'incomplete'}`}>
+              {readinessLoading ? 'Checking…' : readiness.ready ? 'Ready for Offline Use' : 'Offline Data Incomplete'}
+            </span>
+          </div>
+          <div className="panel-body">
+            <div className="offline-terminal-summary">
+              <div><span>Terminal</span><strong>{readiness.terminalName || 'This terminal'}</strong><small>{readiness.terminalId || ''}</small></div>
+              <div><span>Last successful sync</span><strong>{readiness.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</strong></div>
+              <div><span>Pending uploads</span><strong>{readiness.pending || 0}</strong></div>
+              <div><span>Failed operations</span><strong className={readiness.failed ? 'readiness-danger' : ''}>{readiness.failed || 0}</strong></div>
+            </div>
+
+            <div className="offline-readiness-grid">
+              {[
+                ['Product catalog', readiness.products, readiness.products > 0],
+                ['Categories', readiness.categories, readiness.categories > 0],
+                ['Staff accounts', readiness.users, readiness.users > 0],
+                ['Cashier offline logins', readiness.offlineCashierLogins, readiness.offlineCashierLogins > 0],
+                ['Manager approvals', readiness.managerApprovals, readiness.managerApprovals > 0],
+                ['Authorization barcodes', readiness.authorizationBarcodes, true],
+                ['Cached transactions', readiness.receipts, true],
+                ['Sync queue health', readiness.failed ? `${readiness.failed} failed` : 'Healthy', readiness.failed === 0],
+              ].map(([label, value, passed]) => (
+                <div className={`offline-check ${passed ? 'passed' : 'missing'}`} key={label}>
+                  <span className="offline-check-icon">{passed ? '✓' : '!'}</span>
+                  <div><strong>{label}</strong><small>{value}</small></div>
+                </div>
+              ))}
+            </div>
+
+            <div className="offline-readiness-actions">
+              <button className="btn btn-primary" onClick={downloadOfflineData} disabled={downloadingOfflineData}>
+                <IconDownload size={16} /> {downloadingOfflineData ? 'Downloading…' : 'Download Latest Data for Offline Use'}
+              </button>
+              <button className="btn btn-outline" onClick={async () => setReadiness(await api.offlineReadiness())}>Test Offline Readiness</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && <div className="toast"><IconSettings size={15} /> {toast}</div>}
     </>

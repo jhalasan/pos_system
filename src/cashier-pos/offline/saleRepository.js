@@ -3,6 +3,7 @@ import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
 import { barcodesMatch } from '../utils/barcodeUtils'
 import { normalizeProduct } from './productRepository'
 import { toBaseStockQuantity } from './stockUtils'
+import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -54,6 +55,8 @@ export async function finalizeSaleLocally(sale) {
 
   const pendingSale = {
     clientSaleId,
+    terminalId: getTerminalId(),
+    terminalName: getTerminalName(),
     cashierId: sale.cashierId,
     cashierName: String(sale.cashierName || ''),
     transactionNo: sale.transactionNo || `OFFLINE-${clientSaleId.slice(0, 8).toUpperCase()}`,

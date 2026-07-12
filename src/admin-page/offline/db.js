@@ -27,6 +27,27 @@ adminDb.version(3).stores({
   activityLogs: '&id, cloudId, userType, action, time',
 })
 
+adminDb.version(4).stores({
+  products: '&id, &barcode, name, category, updated, pendingSync',
+  categories: '&id, &name',
+  pendingOps: '&id, productId, status, createdAt, nextAttemptAt, [status+nextAttemptAt]',
+  users: '&id, &email, role, status',
+  settings: '&key',
+  activityLogs: '&id, cloudId, userType, action, time',
+  authorizationBarcodes: '&id, &barcode, status, createdAt, pendingSync',
+})
+
+adminDb.version(5).stores({
+  products: '&id, &barcode, name, category, updated, pendingSync',
+  categories: '&id, &name',
+  pendingOps: '&id, productId, status, createdAt, nextAttemptAt, [status+nextAttemptAt]',
+  users: '&id, &email, role, status',
+  settings: '&key',
+  activityLogs: '&id, cloudId, userType, action, time',
+  authorizationBarcodes: '&id, &barcode, status, createdAt, pendingSync',
+  supportTickets: '&id, status, createdAt',
+})
+
 adminDb.on('blocked', () => {
   console.warn('Admin offline database upgrade is blocked by another open window.')
 })

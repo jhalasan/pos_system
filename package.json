@@ -19,6 +19,7 @@
     "pb:seed:sample": "node scripts/seed-sample-data.mjs",
     "pb:migrate": "node scripts/backfill-base-quantity.mjs",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
+    "test:offline": "node --test tests/offline-restart-persistence.test.js tests/offline-two-terminal-sync.test.js tests/product-delete-sync.test.js tests/stock-availability.test.js tests/stock-conversion.test.js",
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
@@ -46,6 +47,7 @@
     "eslint": "^10.3.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^17.6.0",
     "vite": "^8.0.12"
   }

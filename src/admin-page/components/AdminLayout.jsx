@@ -4,6 +4,7 @@ import Sidebar from './Sidebar'
 import { IconBell, IconMenu } from './Icons'
 import SyncStatusIndicator from '../../components/SyncStatusIndicator'
 import { api } from '../services/api'
+import SupportContactModal from '../../components/SupportContactModal'
 
 const titles = {
   dashboard: 'Dashboard',
@@ -27,6 +28,7 @@ export default function AdminLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState([])
+  const [supportOpen, setSupportOpen] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -126,6 +128,9 @@ export default function AdminLayout() {
             Admin <span>/</span> <b>{titles[section] || 'Dashboard'}</b>
           </div>
           <div className="topbar-right">
+            <button type="button" className="btn btn-outline btn-sm topbar-support" onClick={() => setSupportOpen(true)}>
+              Need help? Contact us
+            </button>
             <span className="clock">
               {now.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
               {' - '}
@@ -171,6 +176,7 @@ export default function AdminLayout() {
         </main>
       </div>
       <SyncStatusIndicator scope="admin" />
+      <SupportContactModal open={supportOpen} onClose={() => setSupportOpen(false)} source="Admin Control Panel" />
     </div>
   )
 }
