@@ -7,6 +7,7 @@ pub fn run() {
             save_print_file,
             print_receipt,
             printer_status,
+            cancel_printer_job,
             list_printers
         ])
         .run(tauri::generate_context!())
@@ -133,6 +134,43 @@ struct PrinterJobInfo {
 #[tauri::command]
 fn printer_status(printer_name: String) -> Result<PrinterStatusResult, String> {
     printer_status_impl(printer_name)
+}
+
+#[tauri::command]
+fn cancel_printer_job(printer_name: String, job_id: u32) -> Result<bool, String> {
+    cancel_printer_job_impl(printer_name, job_id)
+}
+
+#[cfg(windows)]
+fn cancel_printer_job_impl(printer_name: String, job_id: u32) -> Result<bool, String> {
+    use std::iter::once;
+    use std::ptr::{null, null_mut};
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Graphics::Printing::{ClosePrinter, OpenPrinterW, SetJobW, JOB_CONTROL_DELETE};
+
+    let selected_printer = printer_name.trim();
+    if selected_printer.is_empty() {
+        return Err("A printer name is required to cancel a print job.".to_string());
+    }
+
+    let mut printer_name_w: Vec<u16> = selected_printer.encode_utf16().chain(once(0)).collect();
+    let mut handle: HANDLE = null_mut();
+    let opened = unsafe { OpenPrinterW(printer_name_w.as_mut_ptr(), &mut handle, null()) };
+    if opened == 0 {
+        return Err(format!("Unable to open printer \"{}\" to cancel the job.", selected_printer));
+    }
+
+    let canceled = unsafe { SetJobW(handle, job_id, 0, null_mut(), JOB_CONTROL_DELETE) };
+    unsafe { ClosePrinter(handle) };
+    if canceled == 0 {
+        return Err(format!("Unable to cancel Windows print job {}.", job_id));
+    }
+    Ok(true)
+}
+
+#[cfg(not(windows))]
+fn cancel_printer_job_impl(_printer_name: String, _job_id: u32) -> Result<bool, String> {
+    Err("Canceling printer jobs is currently supported only on Windows.".to_string())
 }
 
 #[derive(serde::Serialize)]

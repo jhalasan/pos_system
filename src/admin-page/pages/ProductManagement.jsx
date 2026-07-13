@@ -110,6 +110,28 @@ function breakdownUnitLabel(product, unit) {
   return `${pluralizeUnit(product.unit, unit.count)} (L)`
 }
 
+function formatProductPrice(product) {
+  const units = normalizeSellingUnits(product)
+    .map((unit) => ({
+      unit: String(unit.unit || '').trim(),
+      conversion: Number(unit.conversion) || 1,
+      price: Number(unit.price) || 0,
+    }))
+    .filter((unit) => unit.unit)
+    .sort((a, b) => a.conversion - b.conversion)
+    .reduce((acc, unit) => {
+      if (acc.some((item) => item.unit === unit.unit)) return acc
+      return [...acc, unit]
+    }, [])
+
+  if (units.length === 0) {
+    return peso(product.price)
+  }
+
+  const baseUnit = units.find((unit) => unit.conversion === 1) || units[0]
+  return peso(baseUnit.price)
+}
+
 export default function ProductManagement() {
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
   const { data: categoryRecords, setData: setCategoryRecords } = useApi(api.categories, [])
@@ -400,7 +422,7 @@ export default function ProductManagement() {
                         </div>
                       </td>
                       <td>{p.unit}</td>
-                      <td>{hasMultipleUnits ? 'Grouped' : peso(p.price)}</td>
+                      <td>{formatProductPrice(p)}</td>
                       <td><span className={`badge ${st.badge}`}>{st.text}</span></td>
                       <td className="t-center">
                         <div className="row-actions row-actions-center">
@@ -433,7 +455,7 @@ export default function ProductManagement() {
                         <td aria-label="Same category as product" />
                         <td className="t-center"><strong>{formatQty(unit.count)}</strong></td>
                         <td><strong>{breakdownUnitLabel(p, unit)}</strong></td>
-                        <td />
+                        <td>{peso(Number(unit.price) || 0)}</td>
                         <td />
                         <td />
                       </tr>

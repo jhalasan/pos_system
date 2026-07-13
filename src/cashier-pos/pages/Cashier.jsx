@@ -10,8 +10,9 @@ import SupportContactModal from '../../components/SupportContactModal';
 import { cashierApi, money } from '../services/api';
 import { useApproval } from '../hooks/useApproval';
 import { normalizeBarcode } from '../utils/barcodeUtils';
-import { buildShiftCloseReceiptText, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
+import { buildShiftCloseReceiptText, cancelReceiptPrinterJob, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
+import { getDeveloperModeSettings } from '../../utils/developerMode';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
@@ -202,6 +203,7 @@ const DEFAULT_SHORTCUT_SETTINGS = {
 };
 const CASHIER_AUDIT_ENTRY_KEY = 'nexa_cashier_audit_entry';
 const CASHIER_SHIFT_KEY = 'nexa_cashier_shift_session';
+const CASHIER_SESSION_END_EVENTS_KEY = 'nexa_cashier_session_end_events';
 const CASHIER_TRANSACTIONS_KEY = 'nexa_cashier_transactions';
 const CASHIER_DEVICE_KEY = 'nexa_cashier_device_id';
 const IDLE_LOCK_MS = 5 * 60 * 1000;
@@ -407,7 +409,10 @@ const Cashier = ({ onLogout, user }) => {
   const [notification, setNotification] = useState('');
   const [receiptPrintQueue, setReceiptPrintQueue] = useState([]);
   const [printerQueueJobs, setPrinterQueueJobs] = useState([]);
+  const [developerModeSettings] = useState(getDeveloperModeSettings);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const receiptPrintLocksRef = useRef(new Set());
+  const cancelledReceiptPrintJobsRef = useRef(new Set());
   const receiptPrintJobIdRef = useRef(0);
   const [showVoidAuth, setShowVoidAuth] = useState(false);
   const [managerBarcode, setManagerBarcode] = useState('');
@@ -463,6 +468,7 @@ const Cashier = ({ onLogout, user }) => {
   const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
+  const [logoutTab, setLogoutTab] = useState('session');
   const [shiftOpeningAmount, setShiftOpeningAmount] = useState('');
   const [shiftClosingAmount, setShiftClosingAmount] = useState('');
   const [shiftCloseCountMode, setShiftCloseCountMode] = useState('denomination');
@@ -726,6 +732,11 @@ const Cashier = ({ onLogout, user }) => {
     }, 6000);
   };
 
+  const cancelQueuedReceiptPrint = (jobId) => {
+    cancelledReceiptPrintJobsRef.current.add(jobId);
+    setReceiptPrintQueue((current) => current.filter((job) => job.id !== jobId));
+  };
+
   const refreshPrinterQueue = async () => {
     try {
       const status = await getReceiptPrinterStatus();
@@ -734,6 +745,16 @@ const Cashier = ({ onLogout, user }) => {
     } catch {
       setPrinterQueueJobs([]);
       return null;
+    }
+  };
+
+  const cancelWindowsReceiptPrint = async (jobId) => {
+    try {
+      await cancelReceiptPrinterJob(jobId);
+      await refreshPrinterQueue();
+      showNotification('Print job canceled.');
+    } catch (err) {
+      showNotification((typeof err === 'string' ? err : err.message) || 'Unable to cancel the Windows print job.');
     }
   };
 
@@ -1028,7 +1049,26 @@ const Cashier = ({ onLogout, user }) => {
     setShiftError('');
     try {
       const { closed, variance, denominationBreakdown, countModeUsed, closingAmount } = draft;
-      await cashierApi.closeCashRegisterSession?.(closed).catch(() => {});
+      await cashierApi.closeCashRegisterSession?.(closed);
+      await cashierApi.recordCashAudit?.({
+        cashierId: closed.cashierId || user?.id || '',
+        sessionId: closed.id,
+        cashBeginning: shiftOpeningCash,
+        cashSales: completedCashSales,
+        cashIn: shiftCashIn,
+        cashOut: shiftCashOut,
+        expectedCash: expectedShiftCash,
+        cashEnding: closingAmount,
+        actualCash: closingAmount,
+        cashOnHand: closingAmount,
+        denominationTotal: countModeUsed === 'denomination' ? closingAmount : 0,
+        variance,
+        countMode: countModeUsed,
+        denominations: denominationBreakdown,
+        note: closed.closeNote,
+        deviceId,
+        createdAt: closed.closedAt,
+      });
       const denominationSummary = denominationBreakdown.length > 0
         ? `; denominations: ${denominationBreakdown.map(d => `${d.count}x${d.denomination}`).join(', ')}`
         : '';
@@ -1062,7 +1102,7 @@ const Cashier = ({ onLogout, user }) => {
       setShowShiftClose(false);
       setShowAdminLogout(false);
       resetShiftCloseForm();
-      showNotification(`Shift closed${shouldSkipCashCount ? ' (admin override)' : ''}. Variance: ${money(variance)}.`);
+      showNotification(`End of day completed${shouldSkipCashCount ? ' (admin override)' : ''}. Shared drawer reconciled with a variance of ${money(variance)}.`);
       return true;
     } finally {
       setShiftSaving(false);
@@ -1083,7 +1123,7 @@ const Cashier = ({ onLogout, user }) => {
       }
     } catch (error) {
       const leaveWithoutSync = confirm(
-        `Shift closed locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}. Log out anyway?`
+        `End of day was saved locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}. Log out anyway?`
       );
       if (!leaveWithoutSync) return false;
     }
@@ -1129,7 +1169,7 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const opened = await openCashRegisterForActivity(
         'cash audit',
-        `Cash register opened for cash audit by ${user?.name || user?.email || 'Cashier'}.`
+        `Cash drawer open command sent for cash audit by ${user?.name || user?.email || 'Cashier'}; physical status is not detectable.`
       );
       if (!opened) {
         setCashierAuditMessage('Unable to open cash register for audit.');
@@ -1176,8 +1216,8 @@ const Cashier = ({ onLogout, user }) => {
         denominations: denominationBreakdown,
         deviceId,
       });
-      setCashierAuditMessage('Cash audit saved to activity logs. Register opened for count verification.');
-      showNotification('Cash audit saved and register opened.');
+      setCashierAuditMessage('Cash audit saved. Drawer open command sent for count verification; physical status is not detectable.');
+      showNotification('Cash audit saved and drawer open command sent.');
     } catch (err) {
       setCashierAuditMessage((typeof err === 'string' ? err : err.message) || 'Unable to save cash audit.');
     } finally {
@@ -1193,9 +1233,9 @@ const Cashier = ({ onLogout, user }) => {
     }
     const opened = await openCashRegisterForActivity(
       'cash audit',
-      `Cash register opened for cash audit by ${user?.name || user?.email || 'Cashier'}.`
+      `Cash drawer open command sent for cash audit by ${user?.name || user?.email || 'Cashier'}; physical status is not detectable.`
     );
-    if (opened) setCashierAuditMessage('Register opened for cash audit.');
+    if (opened) setCashierAuditMessage('Drawer open command sent. Physical status is not detectable.');
   };
 
   const ShortcutHint = ({ action }) => {
@@ -1260,8 +1300,10 @@ const Cashier = ({ onLogout, user }) => {
 
   const printReceiptCopy = async (txn, step, options = {}) => {
     const copyStep = step === 'reprint' ? 'reprint' : 'initial';
-    const openDrawerBeforePrint = options.openDrawerBeforePrint ?? copyStep === 'initial';
-    const confirmDrawerClosed = options.confirmDrawerClosed ?? copyStep === 'initial';
+    const developerSettings = getDeveloperModeSettings();
+    const openDrawerBeforePrint = options.openDrawerBeforePrint ?? (developerSettings.enabled && developerSettings.requireCashDrawer ? true : copyStep === 'initial');
+    const confirmDrawerClosed = options.confirmDrawerClosed ?? (developerSettings.enabled && developerSettings.requireCashDrawer ? true : copyStep === 'initial');
+    const requireReceiptPrint = Boolean(developerSettings.enabled && developerSettings.requireReceiptPrint);
     const copyLabel = receiptStepLabel(copyStep);
     const transactionNo = txn.completedSale.transactionNo || txn.transactionNo;
     const jobKey = receiptPrintKey(txn, copyStep);
@@ -1279,11 +1321,17 @@ const Cashier = ({ onLogout, user }) => {
         key: jobKey,
         transactionNo,
         label: copyLabel,
-        status: 'Checking printer',
+        status: 'Printing in 5 seconds',
       },
     ]);
 
     try {
+      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      if (cancelledReceiptPrintJobsRef.current.has(jobId)) {
+        throw new Error('Receipt printing was canceled.');
+      }
+
+      updateReceiptPrintJob(jobId, { status: 'Checking printer' });
       const status = await refreshPrinterQueue();
       if (status && !status.isReady) {
         throw new Error((status.messages || []).join(' ') || 'Printer is not ready.');
@@ -1295,8 +1343,9 @@ const Cashier = ({ onLogout, user }) => {
       }
       if (confirmDrawerClosed) {
         updateReceiptPrintJob(jobId, { status: 'Waiting for drawer close' });
-        const drawerClosed = window.confirm('Close the cash drawer, then click OK to print the receipt.');
-        if (!drawerClosed) throw new Error('Receipt printing paused until the cash drawer is closed.');
+        const drawerClosed = window.confirm('Physically close the cash drawer, then click OK to confirm. The drawer has no status sensor.');
+        if (!drawerClosed) throw new Error('Receipt printing paused until drawer closure is manually confirmed.');
+        await recordDrawerClosureConfirmation(`receipt ${transactionNo}`);
       }
 
       updateReceiptPrintJob(jobId, { status: 'Printing' });
@@ -1304,6 +1353,9 @@ const Cashier = ({ onLogout, user }) => {
         documentName: `Receipt ${transactionNo}`,
         copies: 1,
       });
+      if (requireReceiptPrint) {
+        updateReceiptPrintJob(jobId, { status: 'Receipt confirmed' });
+      }
       updateReceiptPrintJob(jobId, { status: 'Waiting for printer' });
       await waitForPrinterQueueToClear(transactionNo);
       updateReceiptPrintState(txn.id, copyStep);
@@ -1311,12 +1363,15 @@ const Cashier = ({ onLogout, user }) => {
       removeReceiptPrintJobLater(jobId);
       return copyLabel;
     } catch (error) {
-      updateReceiptPrintJob(jobId, {
-        status: 'Needs attention',
-        error: (typeof error === 'string' ? error : error.message) || 'Unable to print receipt.',
-      });
+      if (!cancelledReceiptPrintJobsRef.current.has(jobId)) {
+        updateReceiptPrintJob(jobId, {
+          status: 'Needs attention',
+          error: (typeof error === 'string' ? error : error.message) || 'Unable to print receipt.',
+        });
+      }
       throw error;
     } finally {
+      cancelledReceiptPrintJobsRef.current.delete(jobId);
       receiptPrintLocksRef.current.delete(jobKey);
     }
   };
@@ -1775,8 +1830,8 @@ const Cashier = ({ onLogout, user }) => {
       setCashRegisterOpen(true);
       await cashierApi.logActivity({
         cashierId: user?.id,
-        action: 'Cash Register Opened',
-        detail: withDevice(detail || `Cash register opened by ${user?.name || user?.email || 'Cashier'} for ${reason}.`),
+        action: 'Cash Drawer Open Command Sent',
+        detail: withDevice(detail || `Cash drawer open command sent by ${user?.name || user?.email || 'Cashier'} for ${reason}; physical drawer status is not detectable.`),
       }).catch(() => {});
       return true;
     } catch (err) {
@@ -1834,7 +1889,7 @@ const Cashier = ({ onLogout, user }) => {
       const signedAmount = cashFlowType === 'in' ? amount : -amount;
       const opened = await openCashRegisterForActivity(
         label.toLowerCase(),
-        `Cash register opened for ${label.toLowerCase()} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}.`
+        `Cash drawer open command sent for ${label.toLowerCase()} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'}; physical status is not detectable.`
       );
       if (!opened) {
         cashFlowApproval.setError('Manager approved, but the cash register did not open. Try again before moving cash.');
@@ -2305,6 +2360,25 @@ const Cashier = ({ onLogout, user }) => {
     window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
   };
 
+  const recordDrawerClosureConfirmation = async (context) => {
+    setCashRegisterOpen(false);
+    await cashierApi.logActivity({
+      cashierId: user?.id,
+      action: 'Cash Drawer Closure Confirmed',
+      detail: withDevice(`${user?.name || user?.email || 'Cashier'} manually confirmed the physical drawer was closed${context ? ` for ${context}` : ''}; confirmation was not sensor verified.`),
+    });
+  };
+
+  const skipReceiptPrinting = () => {
+    const developerSettings = getDeveloperModeSettings();
+    if (!developerSettings.enabled || paymentFlow.busy || !paymentFlow.completedTxn) return;
+
+    const transactionNo = paymentFlow.completedTxn.completedSale?.transactionNo
+      || paymentFlow.completedTxn.transactionNo;
+    closePaymentFlow();
+    showNotification(`Receipt printing skipped for transaction ${transactionNo}. You can print it later from History.`);
+  };
+
   const openPaymentFlow = () => {
     if (!shiftSession) {
       setShowShiftOpen(true);
@@ -2427,7 +2501,7 @@ const Cashier = ({ onLogout, user }) => {
         const txn = paymentFlow.completedTxn;
         const drawerOpenSucceeded = await openCashRegisterForActivity(
           'completed transaction',
-          `Cash register opened after completed transaction ${txn?.completedSale?.transactionNo || txn?.transactionNo || activeTxn.transactionNo}.`
+          `Cash drawer open command sent after completed transaction ${txn?.completedSale?.transactionNo || txn?.transactionNo || activeTxn.transactionNo}; physical status is not detectable.`
         );
         const nextStep = getPostChangeFlowStep({
           method: paymentFlow.method,
@@ -2453,6 +2527,9 @@ const Cashier = ({ onLogout, user }) => {
       }
       setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
       try {
+        if (paymentFlow.step === 'register') {
+          await recordDrawerClosureConfirmation(`transaction ${txn.completedSale.transactionNo || txn.transactionNo}`);
+        }
         await printReceiptCopy(txn, 'initial', {
           openDrawerBeforePrint: false,
           confirmDrawerClosed: false,
@@ -2582,15 +2659,32 @@ const Cashier = ({ onLogout, user }) => {
       setShowShiftClose(false);
       setAdminLogoutApproved(false);
       adminLogoutApproval.reset();
+      const endedAt = new Date().toISOString();
+      const sessionEndEvents = (() => {
+        try {
+          const saved = JSON.parse(localStorage.getItem(CASHIER_SESSION_END_EVENTS_KEY) || '[]');
+          return Array.isArray(saved) ? saved : [];
+        } catch {
+          return [];
+        }
+      })();
+      localStorage.setItem(CASHIER_SESSION_END_EVENTS_KEY, JSON.stringify([{
+        id: `${Date.now()}`,
+        cashierId: user?.id || '',
+        cashierName: user?.name || user?.email || 'Cashier',
+        endedAt,
+        drawerSessionId: shiftSession?.id || '',
+        deviceId,
+      }, ...sessionEndEvents].slice(0, 100)));
+      await cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Cashier Work Session Ended',
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} ended their work session while keeping the shared drawer open.`),
+      });
       if (onLogout) {
         onLogout();
         navigate('/login');
       }
-      await cashierApi.logActivity({
-        cashierId: user?.id,
-        action: 'Manager Approved Logout',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} logged out with manager approval while keeping the shift open.`),
-      }).catch(() => {});
     } finally {
       setAdminLogoutBusy(false);
     }
@@ -2605,6 +2699,7 @@ const Cashier = ({ onLogout, user }) => {
 
     if (shiftSession) {
       resetShiftCloseForm();
+      setLogoutTab('session');
       setShowShiftClose(true);
       return;
     }
@@ -2749,70 +2844,30 @@ const Cashier = ({ onLogout, user }) => {
         <div className={styles['header-left']}>
           <h2 className={styles['header-title']}>Cashier POS</h2>
           {user && <span className={styles['cashier-name']}>({user.name || user.email})</span>}
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['history-button']}
-            onClick={handleOpenHistory}
-          >
-            <ClockHistory size={16} />
-            {withShortcut('History', 'history')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['history-button']}
-            onClick={handleOpenReceiptLookup}
-          >
-            <Receipt size={16} />
-            {withShortcut('Receipt Lookup', 'receiptLookup')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['history-button']}
-            onClick={handleSyncNow}
-            disabled={syncing}
-          >
-            <ArrowRepeat size={16} className={syncing ? styles['spin-icon'] : ''} />
-            {withShortcut(syncing ? 'Syncing' : 'Sync', 'sync')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['history-button']}
-            onClick={() => setShowReceiptSettings(true)}
-          >
-            <Gear size={16} />
-            {withShortcut('Settings', 'settings')}
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['history-button']}
-            onClick={() => setSupportOpen(true)}
-          >
-            Need help? Contact us
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            className={styles['cash-out-header-button']}
-            onClick={() => openCashFlowModal('out')}
-          >
-            <Dash size={16} />
-            Cash Flow
-          </Button>
-        </div>
-        <div className={styles['header-actions']}>
-          <button className={styles['logout-button']} onClick={handleLogout}>
-            <XLg size={18} />
-            Logout
-          </button>
+          {developerModeSettings.enabled && (
+            <span className={styles['developer-mode-badge']}>
+              Developer Mode
+            </span>
+          )}
+          {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Session Active</span>}
         </div>
       </div>
 
-      <div className={styles['transaction-tabs-bar']}>
+      <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
+        <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>
+          <span className={styles['sidebar-symbol']}>☰</span><strong>Menu</strong>
+        </button>
+        <button type="button" onClick={handleNewTransaction}><Plus size={18} /><span>New Transaction</span></button>
+        <button type="button" className={showHistory ? styles.active : ''} onClick={handleOpenHistory}><ClockHistory size={18} /><span>{withShortcut('History', 'history')}</span></button>
+        <button type="button" className={showReceiptLookup ? styles.active : ''} onClick={handleOpenReceiptLookup}><Receipt size={18} /><span>{withShortcut('Receipt Lookup', 'receiptLookup')}</span></button>
+        <button type="button" className={showCashFlowModal ? styles.active : ''} onClick={() => openCashFlowModal('out')}><Dash size={18} /><span>Cash Flow</span></button>
+        <button type="button" onClick={handleSyncNow} disabled={syncing}><ArrowRepeat size={18} className={syncing ? styles['spin-icon'] : ''} /><span>{withShortcut(syncing ? 'Syncing' : 'Sync', 'sync')}</span></button>
+        <button type="button" className={showReceiptSettings ? styles.active : ''} onClick={() => setShowReceiptSettings(true)}><Gear size={18} /><span>{withShortcut('Settings', 'settings')}</span></button>
+        <button type="button" className={supportOpen ? styles.active : ''} onClick={() => setSupportOpen(true)}><span className={styles['sidebar-symbol']}>?</span><span>Help & Support</span></button>
+        <button type="button" className={styles['sidebar-logout']} onClick={handleLogout}><XLg size={18} /><span>Logout</span></button>
+      </aside>
+
+      <div className={`${styles['transaction-tabs-bar']} ${sidebarCollapsed ? styles['sidebar-collapsed-offset'] : styles['sidebar-offset']}`}>
         <div className={styles['transaction-tabs']}>
           {transactions.map((txn) => (
             <button
@@ -2841,15 +2896,9 @@ const Cashier = ({ onLogout, user }) => {
             </button>
           ))}
         </div>
-        <div className={styles['transaction-actions']}>
-          <button className={styles['transaction-new']} onClick={handleNewTransaction}>
-            <Plus size={14} />
-            {withShortcut('New Transaction', 'newTransaction')}
-          </button>
-        </div>
       </div>
 
-      <div className={styles['cashier-content']}>
+      <div className={`${styles['cashier-content']} ${sidebarCollapsed ? styles['sidebar-collapsed-offset'] : styles['sidebar-offset']}`}>
         <div className={styles['cashier-left']}>
           <div className={styles['transaction-summary-strip']}>
             <div>
@@ -3076,8 +3125,17 @@ const Cashier = ({ onLogout, user }) => {
               <h3 className={styles['section-title']}>Payment</h3>
               <div className={styles['register-tools']}>
                 <span className={styles['register-status']}>
-                  {cashRegisterOpen ? 'Register Open' : 'Register Closed'}
+                  {cashRegisterOpen ? 'Open Command Sent · Awaiting Confirmation' : 'Physical Status Unavailable'}
                 </span>
+                {cashRegisterOpen && (
+                  <button
+                    type="button"
+                    className={styles['drawer-confirm-button']}
+                    onClick={() => recordDrawerClosureConfirmation('manual drawer check')}
+                  >
+                    I Confirm Drawer Is Closed
+                  </button>
+                )}
               </div>
             </div>
 
@@ -3210,14 +3268,20 @@ const Cashier = ({ onLogout, user }) => {
                 {receiptPrintQueue.map((job) => (
                   <div className={styles['receipt-queue-row']} key={job.id}>
                     <span>{job.transactionNo}</span>
-                    <strong>{job.status}</strong>
+                    <div className={styles['receipt-queue-actions']}>
+                      <strong>{job.status}</strong>
+                      <button type="button" onClick={() => cancelQueuedReceiptPrint(job.id)}>Cancel</button>
+                    </div>
                     {job.error && <small>{job.error}</small>}
                   </div>
                 ))}
                 {printerQueueJobs.map((job) => (
                   <div className={styles['receipt-queue-row']} key={`windows-${job.id}`}>
                     <span>{job.document || `Windows job ${job.id}`}</span>
-                    <strong>{job.statusText}</strong>
+                    <div className={styles['receipt-queue-actions']}>
+                      <strong>{job.statusText}</strong>
+                      <button type="button" onClick={() => cancelWindowsReceiptPrint(job.id)}>Cancel</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -3245,6 +3309,11 @@ const Cashier = ({ onLogout, user }) => {
             <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || (paymentFlow.step !== 'amount' && !paymentFlow.completedTxn)}>
               {paymentFlow.step === 'amount' ? 'Cancel' : 'Close'}
             </button>
+            {developerModeSettings.enabled && (paymentFlow.step === 'register' || paymentFlow.step === 'receipt') && (
+              <button className="btn btn-outline" onClick={skipReceiptPrinting} disabled={paymentFlow.busy}>
+                Skip Printing
+              </button>
+            )}
             <button className="btn btn-primary" onClick={advancePaymentFlow} disabled={paymentFlow.busy}>
               {paymentFlow.busy
                 ? 'Processing...'
@@ -3380,7 +3449,7 @@ const Cashier = ({ onLogout, user }) => {
           )}
 
           {paymentFlow.step === 'register' && (
-            <p className={styles['payment-flow-instruction']}>Close the cash register, then press Enter to print the receipt.</p>
+            <p className={styles['payment-flow-instruction']}>Physically close the drawer, then press Enter to confirm closure and print the receipt. The drawer has no status sensor.</p>
           )}
 
           {paymentFlow.step === 'receipt' && (
@@ -3605,17 +3674,24 @@ const Cashier = ({ onLogout, user }) => {
           setShowShiftClose(false);
           resetShiftCloseForm();
         }}
-        title="Close Shift"
+        title="Logout"
         footer={
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-            {shiftCloseStep === 'count' ? (
+            {logoutTab === 'session' ? (
+              <>
+                <button className="btn btn-outline" onClick={() => setShowShiftClose(false)} disabled={adminLogoutBusy}>Cancel</button>
+                <button className="btn btn-primary" onClick={confirmAdminLogoutOnly} disabled={adminLogoutBusy}>
+                  {adminLogoutBusy ? 'Ending Session...' : 'End My Session'}
+                </button>
+              </>
+            ) : shiftCloseStep === 'count' ? (
               <>
                 <button className="btn btn-outline" onClick={() => {
                   setShowShiftClose(false);
                   resetShiftCloseForm();
                 }} disabled={shiftSaving}>Cancel</button>
                 <button className="btn btn-primary" onClick={prepareShiftClosePreview} disabled={shiftSaving}>
-                  Preview Z-Read
+                  Preview End-of-Day Report
                 </button>
               </>
             ) : (
@@ -3628,7 +3704,7 @@ const Cashier = ({ onLogout, user }) => {
                 </button>
                 {shiftCloseStep === 'printed' && (
                   <button className="btn btn-primary" onClick={() => handleCloseShiftAndLogout(false)} disabled={shiftSaving}>
-                    {shiftSaving ? 'Closing...' : 'Close Shift & Logout'}
+                    {shiftSaving ? 'Completing...' : 'Complete End of Day'}
                   </button>
                 )}
               </>
@@ -3636,8 +3712,32 @@ const Cashier = ({ onLogout, user }) => {
           </div>
         }
       >
+        <div className={styles['logout-tabs']}>
+          <button type="button" className={logoutTab === 'session' ? styles.active : ''} onClick={() => setLogoutTab('session')}>
+            End My Session
+          </button>
+          <button type="button" className={logoutTab === 'drawer' ? styles.active : ''} onClick={() => setLogoutTab('drawer')}>
+            End of Day
+          </button>
+        </div>
+        {logoutTab === 'session' ? (
+          <div className={styles['end-session-panel']}>
+            <h3>End cashier work session</h3>
+            <p>You will be logged out, but the shared drawer session will remain active for the next cashier.</p>
+            <div className={styles['shared-drawer-summary']}>
+              <span>Shared drawer</span>
+              <strong>Open</strong>
+              <small>Opened by {shiftSession?.cashierName || 'Cashier'} at {shiftSession?.openedAt ? new Date(shiftSession.openedAt).toLocaleString('en-PH') : 'the start of this shift'}</small>
+            </div>
+            <div className={styles['end-session-warning']}>No cash count or Z-read will be created. Select “End of Day” only at closing time when the shared drawer is ready for final reconciliation.</div>
+          </div>
+        ) : <>
+        <div className={styles['end-of-day-heading']}>
+          <h3>End-of-Day Reconciliation</h3>
+          <p>Count the shared drawer, print the Z-read, and close the business day.</p>
+        </div>
         <div style={{ marginBottom: '18px' }}>
-          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>Shift Summary</div>
+          <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>End-of-Day Summary</div>
           <div className={styles['audit-summary-grid']}>
             <div><span>Cash Beginning</span><strong>{money(shiftOpeningCash)}</strong></div>
             <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
@@ -3712,7 +3812,7 @@ const Cashier = ({ onLogout, user }) => {
           )}
         </div>
         <Input
-          label="Closing Note"
+          label="End-of-Day Note"
           placeholder="Optional note for shortage, overage, or correction"
           value={shiftNote}
           onChange={(e) => setShiftNote(e.target.value)}
@@ -3728,32 +3828,7 @@ const Cashier = ({ onLogout, user }) => {
           </div>
         )}
         {shiftError && <div style={{ color: '#991b1b', marginTop: 14, padding: '12px 14px', backgroundColor: '#fee2e2', borderRadius: '8px', fontSize: '14px', fontWeight: '600', border: '1px solid #fecaca' }}>{shiftError}</div>}
-        <div style={{ marginTop: '18px', paddingTop: '18px', borderTop: '1px solid #e2e8f0' }}>
-          <button
-            type="button"
-            onClick={() => {
-              setShowAdminLogout(true);
-              adminLogoutApproval.reset();
-              setAdminLogoutApproved(false);
-            }}
-            disabled={shiftSaving}
-            style={{
-              width: '100%',
-              padding: '10px 14px',
-              minHeight: '40px',
-              borderRadius: '8px',
-              border: '1px solid #fca5a5',
-              backgroundColor: '#fee2e2',
-              color: '#991b1b',
-              fontWeight: '600',
-              fontSize: '14px',
-              cursor: 'pointer',
-              opacity: shiftSaving ? 0.6 : 1,
-            }}
-          >
-            Admin Logout
-          </button>
-        </div>
+        </>}
       </Modal>
 
       <Modal

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import Modal from '../components/Modal'
 import { IconDownload, IconSettings, IconUsers } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
@@ -15,6 +16,7 @@ import {
   selectBarcodePdfDirectory,
 } from '../utils/barcodePrinter'
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
+import { getDeveloperModeSettings, isDeveloperPinValid, saveDeveloperModeSettings } from '../../utils/developerMode'
 
 const emptyReadiness = { ready: false, products: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
@@ -30,6 +32,10 @@ export default function Settings() {
   const [exportLocations, setExportLocations] = useState(getExportLocations)
   const [barcodePrintSettings, setBarcodePrintSettings] = useState(savedBarcodePrintSettings)
   const [theme, setTheme] = useState(getStoredTheme)
+  const [developerModeSettings, setDeveloperModeSettings] = useState(getDeveloperModeSettings)
+  const [developerPinInput, setDeveloperPinInput] = useState('')
+  const [developerPinModalOpen, setDeveloperPinModalOpen] = useState(false)
+  const [developerPinError, setDeveloperPinError] = useState('')
   const [activeTab, setActiveTab] = useState('general')
   const { data: readiness, setData: setReadiness, loading: readinessLoading } = useApi(api.offlineReadiness, emptyReadiness)
   const [downloadingOfflineData, setDownloadingOfflineData] = useState(false)
@@ -75,6 +81,49 @@ export default function Settings() {
     const nextTheme = saveTheme(enabled ? THEMES.dark : THEMES.light)
     setTheme(nextTheme)
     flash(`${nextTheme === THEMES.dark ? 'Dark' : 'Light'} mode enabled.`)
+  }
+
+  function updateDeveloperModeSettings(patch) {
+    if (patch.enabled === true) {
+      if (!isDeveloperPinValid(developerPinInput, developerModeSettings)) {
+        flash('Incorrect developer PIN.')
+        return developerModeSettings
+      }
+    }
+
+    const nextSettings = saveDeveloperModeSettings(patch)
+    setDeveloperModeSettings(nextSettings)
+    return nextSettings
+  }
+
+  function closeDeveloperPinModal() {
+    setDeveloperPinModalOpen(false)
+    setDeveloperPinInput('')
+    setDeveloperPinError('')
+  }
+
+  function requestDeveloperModeChange(enabled) {
+    if (!enabled) {
+      updateDeveloperModeSettings({ enabled: false })
+      return
+    }
+
+    setDeveloperPinInput('')
+    setDeveloperPinError('')
+    setDeveloperPinModalOpen(true)
+  }
+
+  function confirmDeveloperMode(event) {
+    event.preventDefault()
+    if (!isDeveloperPinValid(developerPinInput, developerModeSettings)) {
+      setDeveloperPinError('Incorrect developer PIN. Please try again.')
+      return
+    }
+
+    const nextSettings = saveDeveloperModeSettings({ enabled: true })
+    setDeveloperModeSettings(nextSettings)
+    closeDeveloperPinModal()
+    flash('Developer mode enabled.')
   }
 
   async function chooseExportFolder(type) {
@@ -127,15 +176,6 @@ export default function Settings() {
     )
   }
 
-  if (error || adminsError) {
-    return (
-      <>
-        <PageHeader title="Settings" subtitle="Configure cashier access and POS behavior." />
-        <div className="card"><div className="empty"><h4>Unable to load settings</h4><p>{error || adminsError}</p></div></div>
-      </>
-    )
-  }
-
   return (
     <>
       <PageHeader
@@ -145,10 +185,14 @@ export default function Settings() {
 
       <div className="staff-tabs settings-tabs">
         <button className={activeTab === 'general' ? 'active' : ''} onClick={() => setActiveTab('general')}>General</button>
+        <button className={activeTab === 'developer' ? 'active' : ''} onClick={() => setActiveTab('developer')}>Developer Mode</button>
         <button className={activeTab === 'offline' ? 'active' : ''} onClick={() => setActiveTab('offline')}>Offline Readiness</button>
       </div>
 
       {activeTab === 'general' ? <div className="grid-gap">
+        {(error || adminsError) && (
+          <div className="alert error">Staff account settings could not be loaded: {error || adminsError}. Local appearance and export settings remain available.</div>
+        )}
         <div className="card">
           <div className="panel-head">
             <div>
@@ -357,7 +401,121 @@ export default function Settings() {
             </div>
           )}
         </div>
-      </div> : (
+      </div> : activeTab === 'developer' ? (
+        <div className="grid-gap">
+          <div className={`card developer-mode-card${developerModeSettings.enabled ? ' enabled' : ''}`}>
+            <div className="panel-head">
+              <div>
+                <h3>Developer Mode</h3>
+                <span className="sub">Toggle developer-only cashier behavior and configure a special developer barcode.</span>
+              </div>
+              {developerModeSettings.enabled
+                ? <span className="developer-mode-status">Developer Mode Enabled</span>
+                : <span className="stat-icon ic-indigo"><IconSettings size={18} /></span>}
+            </div>
+
+            <div className="panel-body">
+              <label className="settings-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={developerModeSettings.enabled}
+                  onChange={(event) => requestDeveloperModeChange(event.target.checked)}
+                />
+                <span>
+                  <strong>Enable developer mode</strong>
+                  <small>Turns on the developer-only behavior below for this device.</small>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="panel-head">
+              <div>
+                <h3>Developer Behaviors</h3>
+                <span className="sub">Control which cashier actions become required when developer mode is enabled.</span>
+              </div>
+              <span className="stat-icon ic-indigo"><IconSettings size={18} /></span>
+            </div>
+
+            <div className="panel-body">
+              <label className="settings-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={Boolean(developerModeSettings.requireCashDrawer)}
+                  onChange={(event) => updateDeveloperModeSettings({ requireCashDrawer: event.target.checked })}
+                  disabled={!developerModeSettings.enabled}
+                />
+                <span>
+                  <strong>Require cash drawer opening</strong>
+                  <small>Requires the drawer to be opened and closed before the receipt print step continues.</small>
+                </span>
+              </label>
+
+              <label className="settings-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={Boolean(developerModeSettings.requireReceiptPrint)}
+                  onChange={(event) => updateDeveloperModeSettings({ requireReceiptPrint: event.target.checked })}
+                  disabled={!developerModeSettings.enabled}
+                />
+                <span>
+                  <strong>Require receipt printing</strong>
+                  <small>Blocks the final receipt step until a receipt print succeeds when enabled.</small>
+                </span>
+              </label>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="panel-head">
+              <div>
+                <h3>Developer Barcode</h3>
+                <span className="sub">Set a special barcode and PIN for developer access on this device.</span>
+              </div>
+              <span className="stat-icon ic-indigo"><IconSettings size={18} /></span>
+            </div>
+
+            <div className="panel-body">
+              <label className="settings-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={Boolean(developerModeSettings.developerBarcodeEnabled)}
+                  onChange={(event) => updateDeveloperModeSettings({ developerBarcodeEnabled: event.target.checked })}
+                  disabled={!developerModeSettings.enabled}
+                />
+                <span>
+                  <strong>Enable developer barcode</strong>
+                  <small>Activates a special barcode and PIN combination for developer access.</small>
+                </span>
+              </label>
+
+              <label className="field">
+                <span>Developer Barcode</span>
+                <input
+                  className="input"
+                  value={developerModeSettings.developerBarcode}
+                  onChange={(event) => updateDeveloperModeSettings({ developerBarcode: event.target.value })}
+                  placeholder="0067"
+                  disabled={!developerModeSettings.enabled}
+                />
+              </label>
+
+              <label className="field">
+                <span>Developer PIN</span>
+                <input
+                  className="input"
+                  type="password"
+                  value={developerModeSettings.developerPin}
+                  onChange={(event) => updateDeveloperModeSettings({ developerPin: event.target.value })}
+                  placeholder="0067"
+                  disabled={!developerModeSettings.enabled}
+                />
+              </label>
+            </div>
+          </div>
+        </div>
+      ) : (
         <div className="card offline-readiness-card">
           <div className="panel-head">
             <div>
@@ -400,8 +558,51 @@ export default function Settings() {
               </button>
               <button className="btn btn-outline" onClick={async () => setReadiness(await api.offlineReadiness())}>Test Offline Readiness</button>
             </div>
+            {Array.isArray(readiness.failedDetails) && readiness.failedDetails.length > 0 && (
+              <div className="offline-failure-list">
+                <h4>Failed Operations</h4>
+                {readiness.failedDetails.map((failure) => (
+                  <div className="offline-failure-row" key={failure.id}>
+                    <div><strong>{failure.record}</strong><small>{failure.source} · {failure.type}</small></div>
+                    <p>{failure.error}</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
+      )}
+
+      {developerPinModalOpen && (
+        <Modal
+          title="Enable Developer Mode"
+          onClose={closeDeveloperPinModal}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline" onClick={closeDeveloperPinModal}>Cancel</button>
+              <button type="submit" className="btn btn-primary" form="developer-pin-form">Enable Developer Mode</button>
+            </>
+          )}
+        >
+          <form id="developer-pin-form" onSubmit={confirmDeveloperMode}>
+            <label className="field">
+              <span>Developer PIN</span>
+              <input
+                className="input"
+                type="password"
+                value={developerPinInput}
+                placeholder="Enter developer PIN"
+                onChange={(event) => {
+                  setDeveloperPinInput(event.target.value)
+                  setDeveloperPinError('')
+                }}
+                autoFocus
+                autoComplete="off"
+              />
+            </label>
+            {developerPinError && <div className="alert error" role="alert">{developerPinError}</div>}
+          </form>
+        </Modal>
       )}
 
       {toast && <div className="toast"><IconSettings size={15} /> {toast}</div>}

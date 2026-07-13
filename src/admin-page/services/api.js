@@ -162,6 +162,8 @@ const webApi = {
     body: JSON.stringify({ enabled }),
   }),
   syncNow: async () => ({ uploaded: 0, failed: 0 }),
+  syncQueueDetails: async () => [],
+  resolveSyncConflict: async () => ({ resolved: false }),
   offlineReadiness: async () => ({ ready: false, products: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }),
   downloadOfflineData: async () => ({ ready: false }),
 }

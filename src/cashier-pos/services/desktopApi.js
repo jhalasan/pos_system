@@ -22,14 +22,9 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { getTerminalId } from '../../utils/terminalIdentity'
-import { reconcileProductStock } from '../../utils/stockMovementReconciler'
+import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
 
 let runtimePromise
-
-function numberFieldValue(value) {
-  const number = Number(value)
-  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
-}
 
 function pocketBaseErrorMessage(error, fallback = 'Unable to login right now.') {
   const fieldErrors = error?.response?.data || error?.data?.data || {}
@@ -380,7 +375,6 @@ async function ensureProducts() {
     const activeRuntime = await runtime()
     await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
       rememberPocketBaseRateLimit(error)
-      throw error
     })
     products = await getAllProducts()
   }
@@ -454,22 +448,16 @@ async function cachedCashierLogin(email, password) {
 }
 
 async function createCloudActivityLog({ cashierId, action, detail }) {
-  if (globalThis.navigator && !globalThis.navigator.onLine) {
-    return queueCashierOperation('activityLog', {
-      user_id: cashierId,
-      action_type: action,
-      description: detail,
-      timestamp: new Date().toISOString(),
-    })
-  }
-
-  const activeRuntime = await runtime()
-  return activeRuntime.pb.collection('activity_logs').create({
+  const queued = await queueCashierOperation('activityLog', {
     user_id: cashierId,
     action_type: action,
     description: detail,
     timestamp: new Date().toISOString(),
-  }, { requestKey: `activity:${cashierId}:${action}:${Date.now()}` }).catch(() => null)
+  })
+  if (globalThis.navigator && !globalThis.navigator.onLine) return queued
+  const activeRuntime = await runtime()
+  void activeRuntime.syncEngine.syncNow()
+  return queued
 }
 
 async function queueCashierOperation(type, payload, entityId = '') {
@@ -493,7 +481,10 @@ async function queueCashierOperation(type, payload, entityId = '') {
 
 function optionalRelation(value) {
   const normalized = String(value || '').trim()
-  return normalized && !normalized.startsWith('shift_') ? normalized : undefined
+  // PocketBase record relations only accept 15-character record IDs. Local
+  // session IDs and synthetic approvers (for example Developer Mode) must not
+  // be sent as relation values or the entire queued operation is rejected.
+  return /^[a-z0-9]{15}$/.test(normalized) ? normalized : undefined
 }
 
 function numberPayload(value) {
@@ -507,6 +498,14 @@ async function authorizeManagerApproval(authorization = {}) {
   const code = String(payload?.code || '').trim()
   const email = String(payload?.email || '').trim()
   const password = String(payload?.password || '')
+  if (isDeveloperApprovalBarcode(code)) {
+    return {
+      id: 'developer-mode',
+      name: 'Developer Mode',
+      email: '',
+      method: 'developer-barcode',
+    }
+  }
   const activeRuntime = await runtime()
 
   if (globalThis.navigator && !globalThis.navigator.onLine) {
@@ -637,12 +636,19 @@ export const desktopCashierApi = {
 
   async login(email, password) {
     const activeRuntime = await runtime()
-    const auth = await activeRuntime.login(email, password).catch(async (error) => {
+    let auth
+    if (globalThis.navigator && !globalThis.navigator.onLine) {
       const cachedUser = await cachedCashierLogin(email, password)
-      if (cachedUser) return { record: cachedUser, offline: true }
-      rememberPocketBaseRateLimit(error)
-      throw new Error(loginErrorMessage(error))
-    })
+      if (!cachedUser) throw new Error('Cashier login requires a previously verified account on this terminal.')
+      auth = { record: cachedUser, offline: true }
+    } else {
+      auth = await activeRuntime.login(email, password).catch(async (error) => {
+        const cachedUser = await cachedCashierLogin(email, password)
+        if (cachedUser) return { record: cachedUser, offline: true }
+        rememberPocketBaseRateLimit(error)
+        throw new Error(loginErrorMessage(error))
+      })
+    }
     if (auth.record?.role !== 'cashier') {
       activeRuntime.logout()
       throw new Error('Only cashier accounts can access this area.')
@@ -673,7 +679,7 @@ export const desktopCashierApi = {
       sort: 'name',
       requestKey: null,
     }).then(cacheQuickLoginAccounts).catch(() => {})
-    if (!isPocketBaseRateLimited()) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       activeRuntime.refreshProducts().catch((error) => {
         rememberPocketBaseRateLimit(error)
         console.warn('Product catalog refresh failed after cashier login:', error)
@@ -1031,60 +1037,7 @@ export const desktopCashierApi = {
 
     const approver = await authorizeManagerApproval(authorization)
 
-    if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
-      try {
-        const activeRuntime = await runtime()
-        const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
-          activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
-            transactionNo: localSale.transactionNo,
-            cashierId: localSale.cashierId,
-          }),
-          { requestKey: null },
-        ).catch(() => null)
-
-        if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
-          const saleItems = await activeRuntime.pb.collection('sale_items').getFullList({
-            filter: activeRuntime.pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
-            requestKey: null,
-          })
-
-          for (const item of saleItems) {
-            const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
-            if (!productId) continue
-            const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
-            const previousQuantity = Number(product.quantity) || 0
-            const returnedQuantity = Number(item.quantity_sold) || 0
-            const nextQuantity = previousQuantity + returnedQuantity
-            await activeRuntime.pb.collection('products').update(product.id, {
-              quantity: numberFieldValue(nextQuantity),
-            }, { requestKey: null })
-            await activeRuntime.pb.collection('stock_movements').create({
-              product_id: product.id,
-              movement_type: 'void_return',
-              quantity: returnedQuantity,
-              previous_quantity: previousQuantity,
-              new_quantity: nextQuantity,
-              reference_type: 'void',
-              reference_id: cloudSale.id,
-              notes: `Voided sale ${localSale.transactionNo}`,
-              user_id: cashierId || localSale.cashierId,
-              created_at: new Date().toISOString(),
-            }, { requestKey: `stock-movement:void:${cloudSale.id}:${product.id}` }).catch(() => null)
-            await reconcileProductStock(activeRuntime.pb, product.id)
-          }
-
-          await activeRuntime.pb.collection('sales').update(cloudSale.id, {
-            status: 'voided',
-            voided_by: approver.id || '',
-          }, { requestKey: null })
-        }
-      } catch (error) {
-        if (/superusers?/i.test(error?.message || '')) {
-          throw new Error('PocketHost rules still require a superuser to void completed sales. Run npm run pb:rules, then try again.', { cause: error })
-        }
-        throw error
-      }
-    } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
+    if (localSale.syncStatus === 'synced') {
       await queueCashierOperation('voidCompletedSale', {
         transactionNo: localSale.transactionNo,
         cashierId: cashierId || localSale.cashierId,
@@ -1123,48 +1076,7 @@ export const desktopCashierApi = {
 
     const approver = await authorizeManagerApproval(authorization)
 
-    if (localSale.syncStatus === 'synced' && (!globalThis.navigator || globalThis.navigator.onLine)) {
-      const activeRuntime = await runtime()
-      const cloudSale = await activeRuntime.pb.collection('sales').getFirstListItem(
-        activeRuntime.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
-          transactionNo: localSale.transactionNo,
-          cashierId: localSale.cashierId,
-        }),
-        { requestKey: null },
-      ).catch(() => null)
-
-      if (cloudSale && (cloudSale.status || 'completed') !== 'voided') {
-        for (const item of items || []) {
-          const productId = String(item.productId || item.id || '')
-          const quantity = Math.max(0, Number(item.quantity) || 0)
-          if (!productId || quantity <= 0) continue
-          const product = await activeRuntime.pb.collection('products').getOne(productId, { requestKey: null })
-          const previousQuantity = Number(product.quantity) || 0
-          const nextQuantity = previousQuantity + quantity
-          await activeRuntime.pb.collection('products').update(product.id, {
-            quantity: numberFieldValue(nextQuantity),
-          }, { requestKey: null })
-          await activeRuntime.pb.collection('stock_movements').create({
-            product_id: product.id,
-            movement_type: type === 'exchange' ? 'exchange_return' : 'refund_return',
-            quantity,
-            previous_quantity: previousQuantity,
-            new_quantity: nextQuantity,
-            reference_type: type === 'exchange' ? 'exchange' : 'refund',
-            reference_id: cloudSale.id,
-            notes: `${type === 'exchange' ? 'Exchange' : 'Refund'} ${localSale.transactionNo}${reason ? `: ${reason}` : ''}`,
-            user_id: cashierId || localSale.cashierId,
-            created_at: new Date().toISOString(),
-          }, { requestKey: `stock-movement:${type}:${cloudSale.id}:${product.id}:${quantity}` }).catch(() => null)
-          await reconcileProductStock(activeRuntime.pb, product.id)
-        }
-
-        await activeRuntime.pb.collection('sales').update(cloudSale.id, {
-          status: 'adjusted',
-        }, { requestKey: null }).catch(() => null)
-      }
-    } else if (localSale.syncStatus === 'synced' && globalThis.navigator && !globalThis.navigator.onLine) {
-      await queueCashierOperation('adjustCompletedSale', {
+    await queueCashierOperation('adjustCompletedSale', {
         transactionNo: localSale.transactionNo,
         cashierId: cashierId || localSale.cashierId,
         approverId: approver.id || '',
@@ -1173,8 +1085,7 @@ export const desktopCashierApi = {
         reason: String(reason || ''),
         note: String(note || ''),
         createdAt: new Date().toISOString(),
-      }, saleId)
-    }
+    }, saleId)
 
     const adjustedSale = await adjustLocalSale(saleId, {
       type,

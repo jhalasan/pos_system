@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { Component, lazy, Suspense, useState } from 'react'
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
 import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
@@ -25,14 +25,49 @@ function RequireAdminAuth({ children }) {
   return isAuthed() ? children : <Navigate to="/admin-login" replace />
 }
 
-export default function DesktopApp() {
-  const [cashierUser, setCashierUser] = useState(null)
+class DesktopErrorBoundary extends Component {
+  constructor(props) {
+    super(props)
+    this.state = { error: null }
+  }
 
-  useEffect(() => {
+  static getDerivedStateFromError(error) {
+    return { error }
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Desktop application render failed.', error, info)
+  }
+
+  recover = () => {
     logoutAdminSession()
     sessionStorage.removeItem(CASHIER_AUTH_KEY)
-    cashierApi.logout?.()
-  }, [])
+    window.location.hash = '#/'
+    window.location.reload()
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children
+    return (
+      <div className="desktop-error-screen">
+        <div>
+          <h2>Unable to open the POS screen</h2>
+          <p>{this.state.error?.message || 'An unexpected application error occurred.'}</p>
+          <button type="button" className="btn btn-primary" onClick={this.recover}>Return to Login</button>
+        </div>
+      </div>
+    )
+  }
+}
+
+export default function DesktopApp() {
+  const [cashierUser, setCashierUser] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(CASHIER_AUTH_KEY) || 'null')
+    } catch {
+      return null
+    }
+  })
 
   const handleLogin = (user) => {
     sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(user))
@@ -46,6 +81,7 @@ export default function DesktopApp() {
   }
 
   return (
+    <DesktopErrorBoundary>
     <Router>
       <Suspense fallback={<div className="app-loading">Loading...</div>}>
       <Routes>
@@ -92,5 +128,6 @@ export default function DesktopApp() {
       </Routes>
       </Suspense>
     </Router>
+    </DesktopErrorBoundary>
   )
 }

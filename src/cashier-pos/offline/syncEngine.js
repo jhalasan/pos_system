@@ -30,7 +30,18 @@ function emitSyncStatus(state, message) {
 }
 
 function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error)
+  const base = error instanceof Error ? error.message : String(error)
+  const response = error?.response || error?.data || {}
+  const fields = response?.data || {}
+  const details = Object.entries(fields)
+    .map(([field, value]) => `${field}: ${value?.message || value?.code || String(value)}`)
+  const responseMessage = typeof response?.message === 'string' ? response.message.trim() : ''
+  const message = responseMessage && responseMessage !== base ? `${base}: ${responseMessage}` : base
+  return details.length ? `${message} (${details.join('; ')})` : message
+}
+
+function isPocketBaseRecordId(value) {
+  return /^[a-z0-9]{15}$/.test(String(value || '').trim())
 }
 
 function retryDelay(attempts) {
@@ -361,6 +372,43 @@ export class CashierSyncEngine extends EventTarget {
     return mapping?.value || (String(localId).startsWith('shift_') ? '' : localId)
   }
 
+  async existingRelationId(collection, value) {
+    if (!isPocketBaseRecordId(value)) return ''
+    const record = await this.pb.collection(collection).getOne(value, {
+      fields: 'id',
+      requestKey: null,
+    }).catch(() => null)
+    return record?.id || ''
+  }
+
+  async resolveCashMovementCashier(payload, sessionId) {
+    const directCashier = await this.existingRelationId('users', payload.cashier_id)
+    if (directCashier) return directCashier
+
+    if (sessionId) {
+      const session = await this.pb.collection('cash_register_sessions').getOne(sessionId, {
+        fields: 'cashier_id',
+        requestKey: null,
+      }).catch(() => null)
+      const sessionCashier = await this.existingRelationId('users', session?.cashier_id)
+      if (sessionCashier) return sessionCashier
+    }
+
+    const deviceId = String(payload.device_id || '').trim()
+    if (deviceId) {
+      const sessions = await this.pb.collection('cash_register_sessions').getList(1, 1, {
+        filter: this.pb.filter('device_id = {:deviceId}', { deviceId }),
+        sort: '-opened_at',
+        fields: 'cashier_id',
+        requestKey: null,
+      }).catch(() => null)
+      const terminalCashier = await this.existingRelationId('users', sessions?.items?.[0]?.cashier_id)
+      if (terminalCashier) return terminalCashier
+    }
+
+    throw new Error('The cashier account for this cash movement no longer exists, and no matching drawer session could be found.')
+  }
+
   async uploadOperation(op) {
     const payload = { ...(op.payload || {}) }
     const localSessionId = payload.localSessionId || payload.sessionId || ''
@@ -376,7 +424,35 @@ export class CashierSyncEngine extends EventTarget {
       if (!cloudSessionId) throw new Error('Opening cash session has not synchronized yet.')
       await this.pb.collection('cash_register_sessions').update(cloudSessionId, payload, { requestKey: op.id })
     } else if (op.type === 'recordCashMovement') {
-      await this.pb.collection('cash_movements').create(payload, { requestKey: op.id })
+      // Older queued movements may contain a synthetic developer approver ID
+      // or a stale/deleted cloud relation. Both relations are optional, so
+      // retain them only when the referenced cloud record still exists.
+      const [approvedBy, sessionId] = await Promise.all([
+        this.existingRelationId('users', payload.approved_by),
+        this.existingRelationId('cash_register_sessions', payload.session_id),
+      ])
+      payload.cashier_id = await this.resolveCashMovementCashier(payload, sessionId)
+      if (approvedBy) payload.approved_by = approvedBy
+      else delete payload.approved_by
+      if (sessionId) payload.session_id = sessionId
+      else delete payload.session_id
+      payload.category = String(payload.category || '').slice(0, 120)
+      payload.device_id = String(payload.device_id || '').slice(0, 80)
+      try {
+        await this.pb.collection('cash_movements').create(payload, { requestKey: op.id })
+      } catch (error) {
+        // Older app versions could queue metadata that no longer matches the
+        // deployed collection. Retry validation failures with the immutable
+        // audit essentials so a valid cash movement is never blocked forever
+        // by optional legacy fields.
+        if (error?.status !== 400) throw error
+        await this.pb.collection('cash_movements').create({
+          cashier_id: payload.cashier_id,
+          type: payload.type === 'in' ? 'in' : 'out',
+          amount: numberFieldValue(payload.amount),
+          created_at: payload.created_at || new Date().toISOString(),
+        }, { requestKey: `${op.id}:minimal` })
+      }
     } else if (op.type === 'recordCashAudit') {
       await this.pb.collection('cash_audits').create(payload, { requestKey: op.id })
     } else if (op.type === 'activityLog') {
@@ -441,10 +517,12 @@ export class CashierSyncEngine extends EventTarget {
       if (!cloudSale) throw error
     }
 
-    const { items: cloudSaleItems, createdNow } = await ensureCloudSaleItems(this.pb, sale, cloudSale)
-    if (createdNow) {
-      await ensureCloudStockDeduction(this.pb, sale, cloudSaleItems)
-    }
+    const { items: cloudSaleItems } = await ensureCloudSaleItems(this.pb, sale, cloudSale)
+    // Always verify the stock movement. A previous attempt may have created
+    // the sale and line items but failed before deducting inventory. The
+    // movement reference check inside ensureCloudStockDeduction keeps retries
+    // idempotent and applies the converted base-unit quantity exactly once.
+    await ensureCloudStockDeduction(this.pb, sale, cloudSaleItems)
 
     const detail = saleActivityDetail(sale)
     const existingLog = await this.pb.collection('activity_logs').getFirstListItem(

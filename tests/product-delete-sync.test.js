@@ -24,7 +24,7 @@ test('keeps a locally deleted product hidden when cloud data is synced back in',
   assert.equal(merged.pendingSync, true);
 });
 
-test('projects pending stock-outs from the most recent local quantity when the cloud record is stale', () => {
+test('preserves an already-projected local stock-out when the cloud record is stale', () => {
   const merged = mergeProductWithCloudRecord(
     {
       id: 'cloud-1',
@@ -37,7 +37,7 @@ test('projects pending stock-outs from the most recent local quantity when the c
       id: 'local-1',
       name: 'Coffee 3-in-1',
       barcode: '123',
-      qty: 10,
+      qty: 7,
       pendingSync: true,
     },
     [{
@@ -49,5 +49,21 @@ test('projects pending stock-outs from the most recent local quantity when the c
   );
 
   assert.equal(merged.qty, 7);
+  assert.equal(merged.pendingSync, true);
+});
+
+test('preserves an offline restock when the cloud still reports zero', () => {
+  const merged = mergeProductWithCloudRecord(
+    { id: 'cloud-1', name: 'Marlboro Red', barcode: '493943', qty: 0, lowStock: 2 },
+    { id: 'cloud-1', name: 'Marlboro Red', barcode: '493943', qty: 200, pendingSync: true },
+    [{
+      id: 'restock-1',
+      type: 'scanInventory',
+      productId: 'cloud-1',
+      payload: { qty: 200, barcode: '493943' },
+    }],
+  );
+
+  assert.equal(merged.qty, 200);
   assert.equal(merged.pendingSync, true);
 });

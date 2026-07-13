@@ -1,10 +1,3 @@
-function stockDeltaForOp(op) {
-  const qty = Math.max(0, Number(op?.payload?.qty) || 0)
-  if (op?.type === 'scanInventory') return qty
-  if (op?.type === 'stockOutInventory') return -qty
-  return 0
-}
-
 function matchesStockOp(op, cloudProduct, localProduct) {
   if (!['scanInventory', 'stockOutInventory'].includes(op?.type)) return false
   return op.productId === cloudProduct.id
@@ -24,17 +17,14 @@ export function mergeProductWithCloudRecord(cloudProduct, localProduct, pendingO
   }
 
   const stockOps = pendingOps.filter((op) => matchesStockOp(op, cloudProduct, localProduct))
-  const stockDelta = stockOps.reduce((sum, op) => sum + stockDeltaForOp(op), 0)
   const shouldPreserveLocal = localProduct?.pendingSync || stockOps.length > 0
   if (!shouldPreserveLocal) return cloudProduct
 
   const fallbackQty = Number(localProduct?.qty ?? localProduct?.quantity ?? cloudProduct?.qty ?? cloudProduct?.quantity) || 0
-  const baseQty = localProduct?.pendingSync || stockOps.length > 0
-    ? fallbackQty
-    : Number(cloudProduct?.qty ?? cloudProduct?.quantity) || 0
-  const qty = stockOps.length > 0
-    ? Math.max(0, baseQty + stockDelta)
-    : Math.max(0, baseQty)
+  // Inventory mutations update the local product and enqueue their operation in
+  // one IndexedDB transaction. The local quantity therefore already includes
+  // every pending delta and must not have those deltas applied a second time.
+  const qty = Math.max(0, fallbackQty)
   return {
     ...cloudProduct,
     qty,

@@ -78,6 +78,15 @@ export async function getReceiptPrinterStatus(options = {}) {
   return invoke('printer_status', { printerName })
 }
 
+export async function cancelReceiptPrinterJob(jobId, options = {}) {
+  const invoke = tauriInvoke()
+  if (!invoke) return false
+  return invoke('cancel_printer_job', {
+    printerName: receiptPrinterName(options),
+    jobId: Number(jobId),
+  })
+}
+
 async function assertReceiptPrinterReady(options = {}) {
   if (options.skipStatusCheck) return null
   const status = await getReceiptPrinterStatus(options)

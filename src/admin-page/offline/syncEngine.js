@@ -340,6 +340,15 @@ export class AdminSyncEngine extends EventTarget {
         rememberPocketBaseRateLimit(error)
         failed += 1
         errors.push(errorMessage(error))
+        if (error?.syncConflict) {
+          await adminDb.pendingOps.update(op.id, {
+            status: 'conflict',
+            lastError: 'Newer cloud product data requires review.',
+            conflict: error.syncConflict,
+            nextAttemptAt: 0,
+          })
+          continue
+        }
         const attempts = op.attempts + 1
         await adminDb.pendingOps.update(op.id, {
           attempts,
@@ -520,6 +529,22 @@ export class AdminSyncEngine extends EventTarget {
       const target = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
         || await createCloudProductFromLocal(this.pb, op.productId, op.payload, `${op.id}:create-missing`)
       if (!target) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+
+      const cloudProduct = normalizeProduct(target, this.pb)
+      const conflictFields = ['name', 'barcode', 'categoryId', 'unit', 'purchaseUnit', 'conversionQuantity', 'lowStock', 'price', 'cost', 'sellingUnits']
+        .filter((field) => JSON.stringify(op.payload?.[field] ?? null) !== JSON.stringify(cloudProduct?.[field] ?? null))
+      if (!op.payload?.forceConflictResolution && conflictFields.length > 0 && new Date(target.updated).getTime() > new Date(op.createdAt).getTime()) {
+        const conflictError = new Error('Newer cloud product data requires review.')
+        conflictError.syncConflict = {
+          type: 'product',
+          fields: conflictFields,
+          local: op.payload,
+          cloud: cloudProduct,
+          cloudUpdated: target.updated,
+          localUpdated: op.createdAt,
+        }
+        throw conflictError
+      }
 
       const updated = await this.pb.collection('products').update(target.id, await productBody(this.pb, op.payload), {
         expand: 'category',

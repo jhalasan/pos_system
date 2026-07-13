@@ -35,6 +35,7 @@ const actionBadge = {
   'Cash Register Opened': 'badge-warning',
   'Session Locked': 'badge-neutral',
   'Session Unlocked': 'badge-info',
+  'Cashier Work Session Ended': 'badge-info',
   'Security Alert': 'badge-danger',
 }
 
@@ -58,6 +59,7 @@ const baseActionTypes = [
   'Cash Register Opened',
   'Session Locked',
   'Session Unlocked',
+  'Cashier Work Session Ended',
   'Security Alert',
   'Login',
   'Logout',

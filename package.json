@@ -28,6 +28,7 @@
   "dependencies": {
     "cors": "^2.8.6",
     "dexie": "^4.4.3",
+    "docx": "^8.4.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "http-proxy-middleware": "^4.0.0",

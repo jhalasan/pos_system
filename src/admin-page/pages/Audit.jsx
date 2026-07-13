@@ -13,6 +13,52 @@ import { buildShiftCloseReceiptText } from '../../cashier-pos/services/receiptPr
 
 const AUDIT_REVIEW_KEY = 'nexa_reviewed_cash_audits'
 const PAGE_SIZE = 10
+const CASH_COUNT_HISTORY_KEY = 'nexa_cashier_cash_count_history'
+const ACTIVE_DRAWER_SESSION_KEY = 'nexa_cashier_shift_session'
+const CASHIER_SESSION_END_EVENTS_KEY = 'nexa_cashier_session_end_events'
+
+function localSessionEndLogs() {
+  try {
+    const entries = JSON.parse(localStorage.getItem(CASHIER_SESSION_END_EVENTS_KEY) || '[]')
+    if (!Array.isArray(entries)) return []
+    return entries.map((entry) => ({
+      id: `local-session-end-${entry.id}`,
+      action: 'Cashier Work Session Ended',
+      time: entry.endedAt,
+      user: entry.cashierName,
+      localFallback: true,
+      detail: `${entry.cashierName || 'Cashier'} ended their work session while keeping the shared drawer active. Device ${entry.deviceId || 'This terminal'}.`,
+    }))
+  } catch {
+    return []
+  }
+}
+
+function activeLocalDrawerSession() {
+  try {
+    const session = JSON.parse(localStorage.getItem(ACTIVE_DRAWER_SESSION_KEY) || 'null')
+    return session?.status === 'open' ? session : null
+  } catch {
+    return null
+  }
+}
+
+function localCashCountLogs() {
+  try {
+    const entries = JSON.parse(localStorage.getItem(CASH_COUNT_HISTORY_KEY) || '[]')
+    if (!Array.isArray(entries)) return []
+    return entries.map((entry) => ({
+      id: `local-cash-count-${entry.id}`,
+      action: entry.type === 'cash-audit' ? 'Cash Audit' : 'Shift Close',
+      time: entry.countedAt,
+      user: entry.cashierName,
+      localFallback: true,
+      detail: `Shift closed by ${entry.cashierName}: beginning PHP ${Number(entry.openingAmount || 0).toFixed(2)}, cash sales PHP ${Number(entry.cashSales || 0).toFixed(2)}, cash in PHP ${Number(entry.cashIn || 0).toFixed(2)}, cash out PHP ${Number(entry.cashOut || 0).toFixed(2)}, expected PHP ${Number(entry.expectedCash || 0).toFixed(2)}, actual PHP ${Number(entry.actualCash || 0).toFixed(2)}, variance PHP ${Number(entry.variance || 0).toFixed(2)}, count mode: ${entry.countMode || 'manual'}${entry.denominations?.length ? `; denominations: ${entry.denominations.map((item) => `${item.count}x${item.denomination}`).join(', ')}` : ''}. Device ${entry.deviceId || 'This terminal'}.`,
+    }))
+  } catch {
+    return []
+  }
+}
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10)
@@ -206,6 +252,17 @@ function loadReviewedAudits() {
 export default function Audit() {
   const { data: receipts, loading: receiptsLoading } = useApi(api.receipts, [])
   const { data: logs, loading: logsLoading } = useApi(api.activityLogs, [])
+  const effectiveLogs = useMemo(() => {
+    const cloudLogs = logs || []
+    const fallbackLogs = [...localCashCountLogs(), ...localSessionEndLogs()]
+    const localLogs = fallbackLogs.filter((localLog) => !cloudLogs.some((cloudLog) => (
+      cloudLog.action === localLog.action
+      && Math.abs(new Date(cloudLog.time) - new Date(localLog.time)) < 60000
+      && parseCashCountLog(cloudLog)?.cashierName === parseCashCountLog(localLog)?.cashierName
+      && parseCashCountLog(cloudLog)?.actual === parseCashCountLog(localLog)?.actual
+    )))
+    return [...cloudLogs, ...localLogs]
+  }, [logs])
   const [subTab, setSubTab] = useState('summary')
   const [dateRange, setDateRange] = useState('today')
   const [query, setQuery] = useState('')
@@ -262,6 +319,7 @@ export default function Audit() {
           registerOpens: 0,
           cashFlowEntries: 0,
           securityAlerts: 0,
+          sessionEnded: false,
           entries: [],
           latestShiftAuditTime: 0,
           latestShiftOpenTime: 0,
@@ -286,7 +344,7 @@ export default function Audit() {
       if (method === 'split') row.cashSales += Number(receipt.splitPayments?.cash || receipt.cashAmount || receipt?.completedSale?.splitPayments?.cash || receipt?.completedSale?.cashAmount) || 0
     }
 
-    for (const log of logs || []) {
+    for (const log of effectiveLogs) {
       if (!inRange(log.time)) continue
       if (log.action === 'Cash In' || log.action === 'Cash Out') {
         const amount = cashFlowAmount(log)
@@ -337,7 +395,7 @@ export default function Audit() {
         }
         row.entries.push({ ...log, amount: beginning, device: deviceFromDetail(log.detail) })
       }
-      if (log.action === 'Cash Register Opened') {
+      if (log.action === 'Cash Register Opened' || log.action === 'Cash Drawer Open Command Sent') {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
         row.registerOpens += 1
         row.entries.push({
@@ -347,15 +405,33 @@ export default function Audit() {
           device: deviceFromDetail(log.detail),
         })
       }
-      if (log.action === 'Security Alert' || log.action === 'Session Locked' || log.action === 'Session Unlocked') {
+      if (log.action === 'Security Alert' || log.action === 'Session Locked' || log.action === 'Session Unlocked' || log.action === 'Cashier Work Session Ended') {
         const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
         if (log.action === 'Security Alert') row.securityAlerts += 1
+        if (log.action === 'Cashier Work Session Ended') row.sessionEnded = true
         row.entries.push({
           ...log,
           amount: 0,
           category: log.action,
           device: deviceFromDetail(log.detail),
         })
+      }
+    }
+
+    const activeDrawer = activeLocalDrawerSession()
+    if (activeDrawer && inRange(activeDrawer.openedAt)) {
+      const row = ensure(activeDrawer.cashierName || 'Shared Drawer')
+      row.cashBeginning = Number(activeDrawer.openingAmount) || 0
+      row.cashIn = Number(activeDrawer.cashIn) || row.cashIn
+      row.cashOut = Number(activeDrawer.cashOut) || row.cashOut
+      row.latestShiftOpenTime = new Date(activeDrawer.openedAt).getTime() || row.latestShiftOpenTime
+      if (row.latestShiftOpenTime > row.latestShiftAuditTime) {
+        row.hasManualAudit = false
+        row.actualCashEnding = 0
+        row.variance = 0
+        row.countMode = ''
+        row.breakdown = ''
+        row.isAdminOverride = false
       }
     }
 
@@ -367,7 +443,7 @@ export default function Audit() {
         : 0
       const flags = []
       if (row.isAdminOverride) flags.push('Admin Override')
-      if (!row.hasManualAudit) flags.push('Missing closing count')
+      if (!row.hasManualAudit && !row.sessionEnded) flags.push('Missing closing count')
       if (Math.abs(variance) >= 1) flags.push(variance < 0 ? 'Cash shortage' : 'Cash overage')
       if (row.registerOpens >= 5) flags.push('Many drawer opens')
       if (row.registerOpens > row.cashFlowEntries + 3) flags.push('Drawer opens need review')
@@ -380,11 +456,13 @@ export default function Audit() {
         expectedCashEnding: expected,
         actualCashEnding: actual,
         variance,
-        status: varianceStatus(actual, expected, row.hasManualAudit),
+        status: row.sessionEnded && !row.hasManualAudit
+          ? { text: 'Ended Session', badge: 'badge-info' }
+          : varianceStatus(actual, expected, row.hasManualAudit),
         flags,
       }
     }).sort((a, b) => a.cashierName.localeCompare(b.cashierName))
-  }, [logs, receipts, inRange])
+  }, [effectiveLogs, receipts, inRange])
 
   const auditLogRows = useMemo(() => {
     const auditActions = new Set([
@@ -392,13 +470,16 @@ export default function Audit() {
       'Shift Close',
       'Cash Audit',
       'Cash Register Opened',
+      'Cash Drawer Open Command Sent',
+      'Cash Drawer Closure Confirmed',
       'Cash In',
       'Cash Out',
       'Security Alert',
       'Session Locked',
       'Session Unlocked',
+      'Cashier Work Session Ended',
     ])
-    return (logs || [])
+    return effectiveLogs
       .filter((log) => auditActions.has(log.action) && inLogRange(log.time))
       .map((log) => {
         const cashCount = parseCashCountLog(log)
@@ -424,15 +505,15 @@ export default function Audit() {
         }
       })
       .sort((a, b) => new Date(b.time) - new Date(a.time))
-  }, [logs, inLogRange])
+  }, [effectiveLogs, inLogRange])
 
   const cashCountRows = useMemo(() => (
-    (logs || [])
+    effectiveLogs
       .filter((log) => (log.action === 'Cash Audit' || log.action === 'Shift Close') && inRange(log.time))
       .map(parseCashCountLog)
       .filter(Boolean)
       .sort((a, b) => new Date(b.time) - new Date(a.time))
-  ), [logs, inRange])
+  ), [effectiveLogs, inRange])
 
   const search = query.trim().toLowerCase()
   const filteredAuditRows = useMemo(() => {

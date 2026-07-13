@@ -3,6 +3,7 @@ import { initializeAdminDb, adminDb } from '../offline/db'
 import { cashierDb, initializeCashierDb } from '../../cashier-pos/offline/db'
 import { refreshAdminLocalCache } from '../offline/cloudBootstrap'
 import { AdminSyncEngine } from '../offline/syncEngine'
+import { CashierSyncEngine } from '../../cashier-pos/offline/syncEngine'
 import {
   deriveStatus,
   getAllProducts,
@@ -621,19 +622,21 @@ function cashierUpdateBody(data) {
 }
 
 async function cacheUsers(records) {
-  await adminDb.users.bulkPut(records.map((record) => ({
-    id: record.id,
-    email: record.email,
-    name: record.name || record.email,
-    role: record.role,
-    shift: record.shift || '',
-    status: record.status || 'active',
-    quick_login_enabled: Boolean(record.quick_login_enabled),
-    cashierBarcode: record.void_barcode || record.cashierBarcode || '',
-    void_barcode: record.void_barcode || record.cashierBarcode || '',
-    emailVisibility: Boolean(record.emailVisibility),
-    updated: record.updated || new Date().toISOString(),
-  })))
+  const cachedUsers = await adminDb.users.bulkGet(records.map((record) => record.id))
+  await adminDb.users.bulkPut(records.map((record, index) => ({
+      ...cachedUsers[index],
+      id: record.id,
+      email: record.email,
+      name: record.name || record.email,
+      role: record.role,
+      shift: record.shift || '',
+      status: record.status || 'active',
+      quick_login_enabled: Boolean(record.quick_login_enabled),
+      cashierBarcode: record.void_barcode || record.cashierBarcode || '',
+      void_barcode: record.void_barcode || record.cashierBarcode || '',
+      emailVisibility: Boolean(record.emailVisibility),
+      updated: record.updated || new Date().toISOString(),
+    })))
 }
 
 async function ensureQuickLoginEmailVisibility(records = []) {
@@ -966,13 +969,14 @@ function assertAdmin() {
 }
 
 async function cacheAdminLogin(record, password) {
+  const normalizedEmail = String(record.email || '').trim().toLowerCase()
   const cached = {
     id: record.id,
-    email: record.email,
+    email: normalizedEmail,
     name: record.name || record.email,
     role: record.role,
     status: record.status || 'active',
-    passwordHash: await sha256(`${record.email}:${password}`),
+    passwordHash: await sha256(`${normalizedEmail}:${password}`),
     updated: new Date().toISOString(),
   }
   await adminDb.users.put(cached)
@@ -980,13 +984,15 @@ async function cacheAdminLogin(record, password) {
 }
 
 async function offlineLogin(email, password) {
-  const cached = await adminDb.users.get({ email })
+  const normalizedEmail = String(email || '').trim().toLowerCase()
+  const cached = await adminDb.users.where('email').equalsIgnoreCase(normalizedEmail).first()
   if (!cached || cached.role !== 'admin' || cached.status === 'inactive') {
     throw new Error('Admin login requires internet the first time on this device.')
   }
 
-  const passwordHash = await sha256(`${email}:${password}`)
-  if (passwordHash !== cached.passwordHash) {
+  const passwordHash = await sha256(`${normalizedEmail}:${password}`)
+  const legacyPasswordHash = await sha256(`${email}:${password}`)
+  if (passwordHash !== cached.passwordHash && legacyPasswordHash !== cached.passwordHash) {
     throw new Error('Failed to authenticate.')
   }
 
@@ -1172,6 +1178,9 @@ export const desktopAdminApi = {
   async login(email, password) {
     requireBaseUrl()
     await startAdminRuntime()
+    if (globalThis.navigator && !globalThis.navigator.onLine) {
+      return offlineLogin(email, password)
+    }
     try {
       const auth = await pb.collection('users').authWithPassword(email, password)
       if (auth.record?.role !== 'admin') {
@@ -1545,12 +1554,87 @@ export const desktopAdminApi = {
   },
   async syncNow() {
     await startAdminRuntime()
+    await initializeCashierDb()
     await adminDb.pendingOps.where('status').equals('failed').modify({
       status: 'pending',
       nextAttemptAt: 0,
     })
     await adminDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-    return syncEngine?.syncNow() || { uploaded: 0, failed: 0 }
+    await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    const cashierQueueSync = new CashierSyncEngine({ pb })
+    try {
+      const [adminResult, cashierResult] = await Promise.all([
+        syncEngine?.syncNow() || { uploaded: 0, failed: 0, errors: [], pending: 0 },
+        cashierQueueSync.syncNow(),
+      ])
+      return {
+        uploaded: (adminResult.uploaded || 0) + (cashierResult.uploaded || 0),
+        failed: (adminResult.failed || 0) + (cashierResult.failed || 0),
+        errors: [...(adminResult.errors || []), ...(cashierResult.errors || [])],
+        pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
+      }
+    } finally {
+      cashierQueueSync.stop()
+    }
+  },
+  async syncQueueDetails() {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const [adminOps, cashierOps, cashierSales] = await Promise.all([
+      adminDb.pendingOps.orderBy('createdAt').reverse().toArray(),
+      cashierDb.pendingOps.orderBy('createdAt').reverse().toArray(),
+      cashierDb.pendingSales.orderBy('createdAt').reverse().toArray(),
+    ])
+    return [
+      ...adminOps.map((op) => ({ ...op, source: 'Admin' })),
+      ...cashierOps.map((op) => ({ ...op, source: 'Cashier', payload: op.payload || {} })),
+      ...cashierSales.map((sale) => ({
+        ...sale,
+        id: sale.clientSaleId,
+        type: 'sale',
+        source: 'Cashier',
+        payload: {
+          name: sale.transactionNo,
+          barcode: sale.items?.map((item) => item.barcode).filter(Boolean).join(', '),
+        },
+      })),
+    ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  },
+  async resolveSyncConflict(id, resolution = 'cloud', mergedFields = {}) {
+    await startAdminRuntime()
+    const op = await adminDb.pendingOps.get(id)
+    if (!op || op.status !== 'conflict' || !op.conflict) throw new Error('Sync conflict was not found.')
+    const localProduct = await adminDb.products.get(op.productId)
+
+    if (resolution === 'cloud') {
+      const cloud = op.conflict.cloud
+      await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+        await adminDb.products.put({
+          ...localProduct,
+          ...cloud,
+          qty: Number(localProduct?.qty ?? cloud.qty) || 0,
+          pendingSync: false,
+          status: deriveStatus({ ...cloud, qty: Number(localProduct?.qty ?? cloud.qty) || 0 }),
+        })
+        await adminDb.pendingOps.delete(id)
+      })
+      return { resolved: true, resolution }
+    }
+
+    const payload = resolution === 'fields'
+      ? { ...op.payload, ...mergedFields, forceConflictResolution: true }
+      : { ...op.payload, forceConflictResolution: true }
+    await adminDb.pendingOps.update(id, {
+      payload,
+      status: 'pending',
+      conflict: null,
+      attempts: 0,
+      lastError: '',
+      nextAttemptAt: 0,
+    })
+    void syncEngine?.syncNow()
+    return { resolved: true, resolution }
   },
   async offlineReadiness() {
     await startAdminRuntime()
@@ -1573,6 +1657,22 @@ export const desktopAdminApi = {
     const managerBarcodes = await adminDb.users.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92') && user.status !== 'inactive').count()
     const pending = adminPending + pendingSales + cashierPending
     const failed = adminFailed + cashierFailed
+    const [failedAdminOps, failedCashierOps, failedCashierSales] = await Promise.all([
+      adminDb.pendingOps.where('status').equals('failed').toArray(),
+      cashierDb.pendingOps.where('status').equals('failed').toArray(),
+      cashierDb.pendingSales.where('status').equals('failed').toArray(),
+    ])
+    const failedDetails = [
+      ...failedAdminOps.map((operation) => ({ ...operation, source: 'Admin' })),
+      ...failedCashierOps.map((operation) => ({ ...operation, source: 'Cashier' })),
+      ...failedCashierSales.map((operation) => ({ ...operation, source: 'Cashier', type: 'sale' })),
+    ].map((operation) => ({
+        id: operation.id,
+        source: operation.source,
+        type: operation.type,
+        record: operation.payload?.name || operation.transactionNo || operation.payload?.barcode || operation.id,
+        error: operation.lastError || 'Unknown synchronization error.',
+      }))
     const lastAdminSync = JSON.parse(localStorage.getItem('nexa_sync_status_admin') || 'null')
     const lastCashierSync = JSON.parse(localStorage.getItem('nexa_sync_status_cashier') || 'null')
     return {
@@ -1588,12 +1688,18 @@ export const desktopAdminApi = {
       receipts,
       pending,
       failed,
+      failedDetails,
       lastDownloadAt: [lastAdminSync?.updatedAt, lastCashierSync?.updatedAt].filter(Boolean).sort().at(-1) || '',
     }
   },
   async downloadOfflineData() {
     await this.syncNow()
-    await refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
+    try {
+      await refreshAdminLocalCache({ pb })
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
+      throw new Error(`Unable to download the product catalog for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })
+    }
     return this.offlineReadiness()
   },
   async latestAuthorizationBarcode() {
