@@ -339,12 +339,7 @@ export default function BarcodeTools() {
         <button className="btn btn-primary" onClick={handlePrintSelected} disabled={selectedBarcodes.length === 0 || printingBarcode === 'selected'}>
           {printingBarcode === 'selected' ? 'Saving...' : `Print Selected (${selectedBarcodes.length})`}
         </button>
-        <button className="btn btn-outline" onClick={() => setAuthModalOpen(true)} disabled={!admin?.email}>
-          <IconShield size={16} /> Generate Authorization Barcode
-        </button>
-        <button className="btn btn-primary" onClick={generateProductBarcode}>
-          <IconPlus size={16} /> Generate a Barcode
-        </button>
+
       </PageHeader>
 
       <div className="barcode-grid">
