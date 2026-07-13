@@ -584,20 +584,16 @@ fn print_receipt_impl(
     }
 
     fn append_receipt_contents(bytes: &mut Vec<u8>, contents: &str) {
-        let mut lines = contents.lines().peekable();
-        while let Some(line) = lines.next() {
-            let append_newline = lines.peek().is_some();
+        for line in contents.split('\n') {
             let trimmed = line.trim();
             if let Some(value) = trimmed
                 .strip_prefix("{{BARCODE:")
                 .and_then(|value| value.strip_suffix("}}"))
             {
-                append_code128_barcode(bytes, value, append_newline);
+                append_code128_barcode(bytes, value, true);
             } else {
                 bytes.extend_from_slice(line.as_bytes());
-                if append_newline {
-                    bytes.push(b'\n');
-                }
+                bytes.push(b'\n');
             }
         }
     }
@@ -620,9 +616,8 @@ fn print_receipt_impl(
             bytes.extend_from_slice(&[0x1b, 0x64, before_feed_lines as u8]); // Feed configured lines before receipt.
         }
         append_receipt_contents(&mut bytes, contents);
-        if after_feed_lines > 0 {
-            bytes.extend_from_slice(&[0x1b, 0x64, after_feed_lines as u8]); // Feed configured lines after receipt.
-        }
+        let feed_lines = if after_feed_lines > 0 { after_feed_lines as u8 } else { 1 };
+        bytes.extend_from_slice(&[0x1b, 0x64, feed_lines]); // Ensure receipt paper advances after the last line.
         bytes
     }
 

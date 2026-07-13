@@ -32,6 +32,44 @@ function savedReceiptPrinterName() {
   }
 }
 
+function openBrowserPopup(windowName, width = 720, height = 640) {
+  try {
+    return window.open('about:blank', windowName || '_blank', `width=${width},height=${height}`) || null
+  } catch {
+    return null
+  }
+}
+
+function printHtmlInIframe(html) {
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'
+  iframe.style.right = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.style.overflow = 'hidden'
+  iframe.style.opacity = '0'
+  iframe.style.pointerEvents = 'none'
+  document.body.appendChild(iframe)
+
+  const cleanup = () => {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe)
+  }
+
+  iframe.onload = () => {
+    try {
+      iframe.contentWindow?.focus()
+      iframe.contentWindow?.print()
+    } catch {
+      // ignore if printing is not available
+    }
+    window.setTimeout(cleanup, 2000)
+  }
+
+  iframe.srcdoc = html
+}
+
 function savedReceiptSpacing() {
   try {
     const settings = JSON.parse(localStorage.getItem(RECEIPT_SETTINGS_KEY) || '{}')
@@ -265,11 +303,19 @@ function buildBrowserHtml(inputLabels, copies) {
 }
 
 function printWithBrowser(labels, copies) {
-  const popup = window.open('', 'barcode-print', 'width=720,height=640')
-  if (!popup) throw new Error('Barcode print popup was blocked.')
-  popup.document.open()
-  popup.document.write(buildBrowserHtml(labels, copies))
-  popup.document.close()
+  const popup = openBrowserPopup('barcode-print', 720, 640)
+  if (!popup) {
+    printHtmlInIframe(buildBrowserHtml(labels, copies))
+    return
+  }
+
+  try {
+    popup.document.open()
+    popup.document.write(buildBrowserHtml(labels, copies))
+    popup.document.close()
+  } catch {
+    printHtmlInIframe(buildBrowserHtml(labels, copies))
+  }
 }
 
 function previewStatusScript(jobId, mode, totalLabels) {
@@ -381,8 +427,14 @@ function buildPreviewHtml(inputLabels, copies, options = {}) {
 }
 
 function openBarcodePreview(labels, copies, options = {}, onPrint, onSave) {
-  const popup = window.open('', `barcode-preview-${options.jobId}`, 'width=920,height=720')
-  if (!popup) throw new Error('Barcode preview popup was blocked.')
+  const popup = openBrowserPopup(`barcode-preview-${options.jobId}`, 920, 720)
+  if (!popup) {
+    if (options.mode === 'direct' && typeof onPrint === 'function') {
+      return onPrint()
+    }
+    printHtmlInIframe(buildPreviewHtml(labels, copies, options))
+    return
+  }
 
   const handler = async (event) => {
     if (!event.data || event.data.jobId !== options.jobId) return
@@ -491,8 +543,8 @@ export async function printBarcodeLabels(inputLabels, options = {}) {
   if (labels.length === 0) throw new Error('Select at least one barcode before printing.')
 
   const copies = clampNumber(options.copies, 1, 1, 99)
-  const useBrowserPrint = options.printerName === BROWSER_PRINT_VALUE || options.mode === 'browser'
   const printerName = barcodePrinterName(options)
+  const useBrowserPrint = printerName === BROWSER_PRINT_VALUE || options.mode === 'browser'
   const spacing = savedReceiptSpacing()
   const beforeFeedLines = clampNumber(options.beforeFeedLines ?? spacing.beforeLines, 0, 0, 8)
   const afterFeedLines = clampNumber(options.afterFeedLines ?? spacing.afterLines, 1, 0, 8)
@@ -538,7 +590,7 @@ export async function printBarcodeLabels(inputLabels, options = {}) {
   if (invoke && !useBrowserPrint) {
     await assertPrinterReady(invoke, printerName, options)
     try {
-      return await invoke('print_receipt', {
+      const result = await invoke('print_receipt', {
         printerName,
         contents,
         copies: 1,
@@ -546,10 +598,14 @@ export async function printBarcodeLabels(inputLabels, options = {}) {
         beforeFeedLines,
         afterFeedLines,
       })
+      return {
+        ...result,
+        printerName,
+      }
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || ''
       if (printerName && /deleted|1905|open printer/i.test(message)) {
-        return invoke('print_receipt', {
+        const result = await invoke('print_receipt', {
           printerName: '',
           contents,
           copies: 1,
@@ -557,6 +613,10 @@ export async function printBarcodeLabels(inputLabels, options = {}) {
           beforeFeedLines,
           afterFeedLines,
         })
+        return {
+          ...result,
+          printerName: '',
+        }
       }
       throw error
     }
