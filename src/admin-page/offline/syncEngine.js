@@ -277,9 +277,9 @@ export class AdminSyncEngine extends EventTarget {
     this.timer = setTimeout(() => void this.syncNow(), Math.max(delay, rateLimitDelay))
   }
 
-  async isCloudReachable() {
-    if (globalThis.navigator && !globalThis.navigator.onLine) return false
-    if (isPocketBaseRateLimited()) return false
+  async isCloudReachable({ forceNetworkCheck = false } = {}) {
+    if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
+    if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
 
     try {
       await this.pb.health.check({ requestKey: null })
@@ -290,10 +290,10 @@ export class AdminSyncEngine extends EventTarget {
     }
   }
 
-  async syncNow() {
+  async syncNow(options = {}) {
     if (this.syncPromise) return this.syncPromise
 
-    this.syncPromise = this.runSync()
+    this.syncPromise = this.runSync(options)
       .finally(() => {
         this.syncPromise = null
         this.schedule()
@@ -302,7 +302,7 @@ export class AdminSyncEngine extends EventTarget {
     return this.syncPromise
   }
 
-  async runSync() {
+  async runSync({ forceNetworkCheck = false } = {}) {
     const now = Date.now()
     const queuedOps = await adminDb.pendingOps
       .where('status')
@@ -318,7 +318,9 @@ export class AdminSyncEngine extends EventTarget {
       return { uploaded: 0, failed: 0, pending: await adminDb.pendingOps.count() }
     }
 
-    if (!(await this.isCloudReachable())) {
+    // A user-triggered sync goes straight to the queued API operations. This
+    // avoids false offline results from the embedded WebView health probe.
+    if (!forceNetworkCheck && !(await this.isCloudReachable())) {
       emitSyncStatus('offline', `Offline — ${queuedOps.length} change(s) waiting to sync`)
       this.dispatchEvent(new CustomEvent('offline'))
       return { uploaded: 0, failed: 0, pending: await adminDb.pendingOps.count() }

@@ -1561,12 +1561,17 @@ export const desktopAdminApi = {
     })
     await adminDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     const cashierQueueSync = new CashierSyncEngine({ pb })
+    // A newly constructed cashier engine is stopped by default. Start the
+    // one-shot engine so its sale and operation upload loops actually run.
+    cashierQueueSync.start()
     try {
       const [adminResult, cashierResult] = await Promise.all([
-        syncEngine?.syncNow() || { uploaded: 0, failed: 0, errors: [], pending: 0 },
-        cashierQueueSync.syncNow(),
+        syncEngine?.syncNow({ forceNetworkCheck: true }) || { uploaded: 0, failed: 0, errors: [], pending: 0 },
+        cashierQueueSync.syncNow({ forceNetworkCheck: true }),
       ])
       return {
         uploaded: (adminResult.uploaded || 0) + (cashierResult.uploaded || 0),

@@ -241,9 +241,9 @@ export class CashierSyncEngine extends EventTarget {
     this.timer = setTimeout(() => void this.syncNow(), Math.max(delay, rateLimitDelay))
   }
 
-  async isCloudReachable() {
-    if (globalThis.navigator && !globalThis.navigator.onLine) return false
-    if (isPocketBaseRateLimited()) return false
+  async isCloudReachable({ forceNetworkCheck = false } = {}) {
+    if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
+    if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
 
     try {
       await this.pb.health.check({ requestKey: null })
@@ -266,7 +266,7 @@ export class CashierSyncEngine extends EventTarget {
     return this.syncPromise
   }
 
-  async runSync({ forceProductRefresh = false } = {}) {
+  async runSync({ forceProductRefresh = false, forceNetworkCheck = false } = {}) {
     const now = Date.now()
     const queuedSales = await cashierDb.pendingSales
       .where('status')
@@ -287,7 +287,10 @@ export class CashierSyncEngine extends EventTarget {
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
     }
 
-    if (!(await this.isCloudReachable())) {
+    // Manual sync should attempt the actual queued writes even when WebView2's
+    // navigator/health probe reports offline. The write failure itself is the
+    // authoritative connectivity check and safely leaves the item queued.
+    if (!forceNetworkCheck && !(await this.isCloudReachable())) {
       emitSyncStatus('offline', `Offline — ${queuedSales.length + queuedOps.length} operation(s) waiting to sync`)
       this.dispatchEvent(new CustomEvent('offline'))
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
