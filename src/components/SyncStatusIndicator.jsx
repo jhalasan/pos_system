@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 const defaultMessages = {
   running: 'Auto-Sync Running',
   succeeded: 'Auto-Sync Succeeded',
+  waiting: 'Auto-Sync Waiting to Retry',
+  'auth-required': 'Cashier Online Login Required',
   offline: 'Auto-Sync Waiting for Connection',
   failed: 'Auto-Sync Failed',
 }
@@ -35,7 +37,7 @@ export default function SyncStatusIndicator({ scope }) {
   }, [scope])
 
   useEffect(() => {
-    if (!status || status.state === 'running' || ['offline', 'failed'].includes(status.state)) return undefined
+    if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required'].includes(status.state)) return undefined
 
     const timeoutId = window.setTimeout(() => setStatus(null), 5000)
     return () => window.clearTimeout(timeoutId)
@@ -44,7 +46,7 @@ export default function SyncStatusIndicator({ scope }) {
   if (!status) return null
 
   return (
-    <div className={`sync-indicator ${status.state}`.trim()}>
+    <div className={`sync-indicator sync-indicator-${scope} ${status.state}`.trim()}>
       <span className="sync-indicator-dot" />
       <span>{status.message}</span>
     </div>

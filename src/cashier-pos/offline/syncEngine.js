@@ -8,6 +8,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
+import { activityLogPayloadForSync } from './activityLogSync'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 2 * 60_000
@@ -151,7 +152,13 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     const baseQuantityToDeduct = toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1)
     const effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
     const movementReference = `sale:${sale.clientSaleId}:${productId}`
-    if (await findStockMovement(pb, productId, movementReference)) continue
+    if (await findStockMovement(pb, productId, movementReference)) {
+      // A retry may find the durable movement after another sync process has
+      // already handled the sale. Reconcile instead of trusting a possibly
+      // stale product snapshot cached before that upload finished.
+      await reconcileProductStock(pb, productId)
+      continue
+    }
     const nextQuantity = Math.max(0, previousQuantity - effectiveQtyToDeduct)
 
     await pb.collection('products').update(product.id, {
@@ -287,6 +294,18 @@ export class CashierSyncEngine extends EventTarget {
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
     }
 
+    if ((queuedSales.length > 0 || queuedOps.length > 0) && this.pb.authStore && !this.pb.authStore.isValid) {
+      const warning = 'Internet is connected, but this cashier session has no cloud authorization. Sign out, sign in once with the cashier email and password, then press Sync.'
+      emitSyncStatus('auth-required', warning)
+      return {
+        uploaded: 0,
+        failed: 0,
+        products: 0,
+        warnings: [warning],
+        pending: await this.pendingCount(),
+      }
+    }
+
     // Manual sync should attempt the actual queued writes even when WebView2's
     // navigator/health probe reports offline. The write failure itself is the
     // authoritative connectivity check and safely leaves the item queued.
@@ -301,14 +320,15 @@ export class CashierSyncEngine extends EventTarget {
     let uploaded = 0
     let failed = 0
     let products = 0
+    const warnings = []
 
     try {
       products = await refreshLocalProductCatalog({ pb: this.pb })
       this.lastProductRefreshAt = Date.now()
     } catch (error) {
       rememberPocketBaseRateLimit(error)
-      failed += 1
-      this.dispatchEvent(new CustomEvent('syncerror', {
+      warnings.push(errorMessage(error))
+      this.dispatchEvent(new CustomEvent('catalogrefresherror', {
         detail: { error },
       }))
     }
@@ -353,16 +373,19 @@ export class CashierSyncEngine extends EventTarget {
       }
     }
 
+    const pending = await this.pendingCount()
     this.dispatchEvent(new CustomEvent('synccomplete', {
-      detail: { uploaded, failed },
+      detail: { uploaded, failed, warnings },
     }))
     emitSyncStatus(
-      failed > 0 ? 'failed' : 'succeeded',
+      failed > 0 ? 'failed' : pending > 0 ? 'waiting' : 'succeeded',
       failed > 0
         ? `Auto-Sync Finished with ${failed} Failed`
-        : `Auto-Sync Succeeded — ${await this.pendingCount()} pending`,
+        : pending > 0
+          ? `Auto-Sync Waiting — ${pending} pending`
+          : 'Auto-Sync Succeeded — 0 pending',
     )
-    return { uploaded, failed, products, pending: await this.pendingCount() }
+    return { uploaded, failed, products, warnings, pending }
   }
 
   async pendingCount() {
@@ -459,7 +482,11 @@ export class CashierSyncEngine extends EventTarget {
     } else if (op.type === 'recordCashAudit') {
       await this.pb.collection('cash_audits').create(payload, { requestKey: op.id })
     } else if (op.type === 'activityLog') {
-      await this.pb.collection('activity_logs').create(payload, { requestKey: op.id })
+      const activityPayload = await activityLogPayloadForSync(
+        payload,
+        (userId) => this.existingRelationId('users', userId),
+      )
+      await this.pb.collection('activity_logs').create(activityPayload, { requestKey: op.id })
     } else if (op.type === 'voidCompletedSale' || op.type === 'adjustCompletedSale') {
       const sale = await this.pb.collection('sales').getFirstListItem(
         this.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {

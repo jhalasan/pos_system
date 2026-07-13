@@ -1,9 +1,10 @@
-import PocketBase from 'pocketbase'
+import PocketBase, { LocalAuthStore } from 'pocketbase'
 import { initializeAdminDb, adminDb } from '../offline/db'
 import { cashierDb, initializeCashierDb } from '../../cashier-pos/offline/db'
 import { refreshAdminLocalCache } from '../offline/cloudBootstrap'
 import { AdminSyncEngine } from '../offline/syncEngine'
 import { CashierSyncEngine } from '../../cashier-pos/offline/syncEngine'
+import { copyAdminProductCatalogToCashier } from '../../cashier-pos/offline/catalogCache'
 import {
   deriveStatus,
   getAllProducts,
@@ -25,13 +26,12 @@ function requireBaseUrl() {
   if (!baseUrl) throw new Error('VITE_POCKETBASE_URL is required for desktop admin access.')
 }
 
-export const pb = new PocketBase(baseUrl || 'http://127.0.0.1:8090')
+export const pb = new PocketBase(baseUrl || 'http://127.0.0.1:8090', new LocalAuthStore('nexa_admin_pb_auth'))
 pb.autoCancellation(false)
 
 let adminSession = null
 let runtimePromise = null
 let syncEngine = null
-let lastProductRefreshAt = 0
 let inventoryScanQueue = Promise.resolve()
 
 function newId(prefix = 'local') {
@@ -77,18 +77,6 @@ async function isCloudReachable() {
     rememberPocketBaseRateLimit(error)
     return false
   }
-}
-
-function refreshProductsInBackground() {
-  if (globalThis.navigator && !globalThis.navigator.onLine) return
-  if (isPocketBaseRateLimited()) return
-  if (Date.now() - lastProductRefreshAt < 30_000) return
-
-  lastProductRefreshAt = Date.now()
-  refreshAdminLocalCache({ pb }).catch((error) => {
-    rememberPocketBaseRateLimit(error)
-    lastProductRefreshAt = 0
-  })
 }
 
 function firstRelation(value) {
@@ -472,6 +460,7 @@ function receiptRecordFromLocalSale(sale) {
     items,
     adjustments: sale.adjustments || [],
     adjustedAmount: (sale.adjustments || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0),
+    syncStatus: sale.syncStatus || 'pending',
   }
 }
 
@@ -527,16 +516,25 @@ async function fetchReceiptRecords(filters = {}) {
   for (const record of localRecords) {
     const key = record.transactionNo || record.id
     const existing = merged.get(key)
-    if (!existing || ['adjusted', 'voided'].includes(record.rawStatus)) {
-      merged.set(key, { ...existing, ...record })
-    } else if ((record.items || []).length > 0 && !(existing.items || []).length) {
-      merged.set(key, {
-        ...existing,
-        items: record.items,
-        itemCount: record.itemCount,
-        missingItems: false,
-      })
+    if (!existing) {
+      merged.set(key, record)
+      continue
     }
+
+    const localOverridesStatus = ['adjusted', 'voided'].includes(record.rawStatus)
+    merged.set(key, {
+      ...existing,
+      ...record,
+      // Local completedSales contains the original offline timestamp, totals,
+      // discounts, and line items. Keep those details after upload, while a
+      // later cloud-side void/adjustment remains authoritative for status.
+      id: existing.id || record.id,
+      saleId: existing.saleId || record.saleId,
+      status: localOverridesStatus ? record.status : existing.status || record.status,
+      rawStatus: localOverridesStatus ? record.rawStatus : existing.rawStatus || record.rawStatus,
+      actionStatus: localOverridesStatus ? record.actionStatus : existing.actionStatus || record.actionStatus,
+      missingItems: (record.items || []).length > 0 ? false : existing.missingItems,
+    })
   }
 
   return filterReceiptRecords([...merged.values()], filters)
@@ -1131,16 +1129,19 @@ async function listDesktopProducts() {
     console.warn('Unable to read the local product cache; falling back to PocketBase.', error)
   }
 
-  if (localProducts.length > 0) {
-    refreshProductsInBackground()
-    return localProducts
-  }
-
   if (await isCloudReachable()) {
-    return fetchCloudProducts()
+    try {
+      // When online, return the cloud quantity that this request just cached.
+      // Returning the old IndexedDB value while refreshing in the background
+      // leaves an already-open Product Management page permanently stale.
+      return await fetchCloudProducts()
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
+      if (localProducts.length === 0) throw error
+    }
   }
 
-  return getAllProducts()
+  return localProducts.length > 0 ? localProducts : getAllProducts()
 }
 
 async function listDesktopStaff(role = 'cashier') {
@@ -1573,10 +1574,15 @@ export const desktopAdminApi = {
         syncEngine?.syncNow({ forceNetworkCheck: true }) || { uploaded: 0, failed: 0, errors: [], pending: 0 },
         cashierQueueSync.syncNow({ forceNetworkCheck: true }),
       ])
+      // The admin engine may have pulled products just before the cashier
+      // engine uploaded an offline sale. Pull once more after both finish so
+      // the shared admin cache contains the post-sale stock quantity.
+      await refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
       return {
         uploaded: (adminResult.uploaded || 0) + (cashierResult.uploaded || 0),
         failed: (adminResult.failed || 0) + (cashierResult.failed || 0),
         errors: [...(adminResult.errors || []), ...(cashierResult.errors || [])],
+        warnings: [...(adminResult.warnings || []), ...(cashierResult.warnings || [])],
         pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
       }
     } finally {
@@ -1644,8 +1650,9 @@ export const desktopAdminApi = {
   async offlineReadiness() {
     await startAdminRuntime()
     await initializeCashierDb()
-    const [products, categories, users, authorizationBarcodes, adminPending, adminFailed, pendingSales, cashierPending, cashierFailed, receipts, cashierSettings] = await Promise.all([
+    const [products, cashierProducts, categories, users, authorizationBarcodes, adminPending, adminFailed, pendingSales, cashierPending, cashierFailed, receipts, cashierSettings] = await Promise.all([
       adminDb.products.filter((product) => !product.deleted).count(),
+      cashierDb.products.count(),
       adminDb.categories.count(),
       adminDb.users.filter((user) => !user.deleted && user.status !== 'inactive').count(),
       adminDb.authorizationBarcodes.filter((record) => !record.deleted && record.status === 'active').count(),
@@ -1681,10 +1688,11 @@ export const desktopAdminApi = {
     const lastAdminSync = JSON.parse(localStorage.getItem('nexa_sync_status_admin') || 'null')
     const lastCashierSync = JSON.parse(localStorage.getItem('nexa_sync_status_cashier') || 'null')
     return {
-      ready: products > 0 && categories > 0 && users > 0 && offlineCashierLogins > 0 && (authorizationBarcodes + managerBarcodes + offlineManagerPasswords) > 0 && failed === 0,
+      ready: products > 0 && cashierProducts > 0 && categories > 0 && users > 0 && offlineCashierLogins > 0 && (authorizationBarcodes + managerBarcodes + offlineManagerPasswords) > 0 && failed === 0,
       terminalId: getTerminalId(),
       terminalName: getTerminalName(),
       products,
+      cashierProducts,
       categories,
       users,
       authorizationBarcodes,
@@ -1701,6 +1709,7 @@ export const desktopAdminApi = {
     await this.syncNow()
     try {
       await refreshAdminLocalCache({ pb })
+      await copyAdminProductCatalogToCashier()
     } catch (error) {
       rememberPocketBaseRateLimit(error)
       throw new Error(`Unable to download the product catalog for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })

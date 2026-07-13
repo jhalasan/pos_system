@@ -443,6 +443,11 @@ const Cashier = ({ onLogout, user }) => {
   const [historySearch, setHistorySearch] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [showCloudAuth, setShowCloudAuth] = useState(false);
+  const [cloudAuthEmail, setCloudAuthEmail] = useState(() => user?.email || '');
+  const [cloudAuthPassword, setCloudAuthPassword] = useState('');
+  const [cloudAuthError, setCloudAuthError] = useState('');
+  const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
   const [supportOpen, setSupportOpen] = useState(false);
   const [showReceiptLookup, setShowReceiptLookup] = useState(false);
   const [lookupQuery, setLookupQuery] = useState('');
@@ -1944,7 +1949,19 @@ const Cashier = ({ onLogout, user }) => {
       const result = await cashierApi.syncNow();
       await loadProducts();
       if (showHistory) await loadTransactionHistory();
-      showNotification(`Sync finished: ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed, ${result?.pending || 0} pending.`);
+      if ((result?.pending || 0) > 0 && (result?.failed || 0) === 0) {
+        const warning = result?.warnings?.[0] || '';
+        if (/no cloud authorization|authentication is required/i.test(warning)) {
+          setCloudAuthEmail(user?.email || '');
+          setCloudAuthPassword('');
+          setCloudAuthError('');
+          setShowCloudAuth(true);
+        } else {
+          showNotification(warning || `Sync is waiting to retry ${result.pending} pending record(s).`);
+        }
+      } else {
+        showNotification(`Sync finished: ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed, ${result?.pending || 0} pending.`);
+      }
     } catch (err) {
       showNotification(err.message || 'Unable to sync right now.');
     } finally {
@@ -2358,6 +2375,27 @@ const Cashier = ({ onLogout, user }) => {
       completedTxn: null,
     });
     window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
+  };
+
+  const connectCashierToCloud = async () => {
+    setCloudAuthBusy(true);
+    setCloudAuthError('');
+    try {
+      const result = await cashierApi.reauthenticate({
+        cashierId: user?.id,
+        email: cloudAuthEmail,
+        password: cloudAuthPassword,
+      });
+      setShowCloudAuth(false);
+      setCloudAuthPassword('');
+      await loadProducts();
+      if (showHistory) await loadTransactionHistory();
+      showNotification(`Cloud connected. ${result?.uploaded || 0} uploaded, ${result?.failed || 0} failed, ${result?.pending || 0} pending.`);
+    } catch (err) {
+      setCloudAuthError(err.message || 'Unable to authenticate this cashier account.');
+    } finally {
+      setCloudAuthBusy(false);
+    }
   };
 
   const recordDrawerClosureConfirmation = async (context) => {
@@ -3458,6 +3496,42 @@ const Cashier = ({ onLogout, user }) => {
 
           {paymentFlow.error && <div className={styles['payment-flow-error']}>{paymentFlow.error}</div>}
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={showCloudAuth}
+        onClose={() => !cloudAuthBusy && setShowCloudAuth(false)}
+        title="Connect Cashier to Cloud"
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" disabled={cloudAuthBusy} onClick={() => setShowCloudAuth(false)}>Cancel</button>
+            <button className="btn btn-primary" disabled={cloudAuthBusy} onClick={connectCashierToCloud}>
+              {cloudAuthBusy ? 'Connecting...' : 'Connect & Sync'}
+            </button>
+          </div>
+        }
+      >
+        <p>The internet is connected, but this offline or barcode session needs one online account verification before it can upload.</p>
+        <Input
+          label="Cashier Email"
+          type="email"
+          value={cloudAuthEmail}
+          onChange={(e) => setCloudAuthEmail(e.target.value)}
+        />
+        <Input
+          label="Cashier Password"
+          type="password"
+          value={cloudAuthPassword}
+          onChange={(e) => setCloudAuthPassword(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void connectCashierToCloud();
+            }
+          }}
+          autoFocus
+        />
+        {cloudAuthError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cloudAuthError}</div>}
       </Modal>
 
       <Modal

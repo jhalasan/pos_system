@@ -691,7 +691,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
 /* ---- Misc ---- */
 .muted { color: var(--text-muted); }
 .toast {
-  position: fixed; bottom: 24px; right: 24px; z-index: 200;
+  position: fixed; bottom: 80px; right: 24px; z-index: 200;
   background: var(--text); color: #fff;
   padding: 12px 18px; border-radius: var(--radius-sm);
   font-size: 13px; font-weight: 600;
@@ -754,7 +754,12 @@ table.data tbody tr:hover { background: var(--surface-2); }
 }
 
 .sync-indicator {
-  position: fixed; bottom: 24px; left: 24px; z-index: 190;
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  left: auto;
+  z-index: 190;
+  max-width: calc(100vw - 48px);
   background: rgba(255, 255, 255, 0.96); color: var(--text);
   border: 1px solid var(--border-strong);
   padding: 12px 18px; border-radius: 999px;
@@ -767,6 +772,8 @@ table.data tbody tr:hover { background: var(--surface-2); }
 
 .sync-indicator.running { border-color: #bfdbfe; color: #1d4ed8; }
 .sync-indicator.succeeded { border-color: #86efac; color: #166534; }
+.sync-indicator.waiting,
+.sync-indicator.auth-required { border-color: #fcd34d; color: #92400e; }
 .sync-indicator.offline,
 .sync-indicator.failed { border-color: #fecaca; color: #b91c1c; }
 
@@ -980,6 +987,7 @@ table.data tbody tr:hover { background: var(--surface-2); }
   table.data { font-size: 12px; }
   table.data thead th { padding: 9px 12px; }
   table.data tbody td { padding: 10px 12px; }
+
 }
 
 /* Mobile Portrait - 768px and below */
@@ -1100,8 +1108,23 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .btn-lg { padding: 10px 16px; font-size: 13px; }
   
   /* Toast positioning */
-  .toast { bottom: 16px; right: 16px; font-size: 12px; padding: 10px 14px; }
-  .sync-indicator { bottom: 16px; left: 16px; font-size: 12px; padding: 10px 14px; }
+  .toast { bottom: 68px; right: 16px; font-size: 12px; padding: 10px 14px; }
+  .sync-indicator {
+    bottom: 16px;
+    right: 16px;
+    left: auto;
+    max-width: calc(100vw - 32px);
+    font-size: 12px;
+    padding: 10px 14px;
+  }
+  .sync-indicator-admin {
+    right: 16px;
+    left: auto;
+    max-width: calc(100vw - 32px);
+  }
+  .admin-shell.menu-open .sync-indicator-admin {
+    display: none;
+  }
   
   /* Misc */
   .icon-btn { width: 28px; height: 28px; }

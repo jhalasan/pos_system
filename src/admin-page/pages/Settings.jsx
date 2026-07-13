@@ -18,7 +18,7 @@ import {
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 import { getDeveloperModeSettings, isDeveloperPinValid, saveDeveloperModeSettings } from '../../utils/developerMode'
 
-const emptyReadiness = { ready: false, products: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
+const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
 export default function Settings() {
   const {
@@ -537,6 +537,7 @@ export default function Settings() {
             <div className="offline-readiness-grid">
               {[
                 ['Product catalog', readiness.products, readiness.products > 0],
+                ['Cashier product catalog', readiness.cashierProducts, readiness.cashierProducts > 0],
                 ['Categories', readiness.categories, readiness.categories > 0],
                 ['Staff accounts', readiness.users, readiness.users > 0],
                 ['Cashier offline logins', readiness.offlineCashierLogins, readiness.offlineCashierLogins > 0],

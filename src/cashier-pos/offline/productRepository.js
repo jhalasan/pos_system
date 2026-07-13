@@ -1,5 +1,5 @@
-import { cashierDb } from './db'
-import { barcodesMatch, normalizeBarcode } from '../utils/barcodeUtils'
+import { cashierDb } from './db.js'
+import { barcodesMatch, normalizeBarcode } from '../utils/barcodeUtils.js'
 
 function firstFileValue(value) {
   return Array.isArray(value) ? value[0] : value

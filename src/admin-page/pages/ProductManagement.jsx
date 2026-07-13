@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
@@ -147,6 +147,15 @@ export default function ProductManagement() {
   const [printing, setPrinting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
   const [expandedProducts, setExpandedProducts] = useState(() => new Set())
+
+  useEffect(() => {
+    const handleSyncStatus = (event) => {
+      if (event.detail?.state !== 'succeeded') return
+      void api.products().then(setList).catch(() => {})
+    }
+    globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus)
+    return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus)
+  }, [setList])
 
   const categories = useMemo(() => {
     return [...new Set([

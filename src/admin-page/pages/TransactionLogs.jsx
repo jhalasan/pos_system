@@ -1,14 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
-import { IconBarcode, IconDownload, IconPrint, IconReceipt, IconSearch } from '../components/Icons'
+import { IconArrowSwap, IconBarcode, IconDownload, IconPrint, IconReceipt, IconSearch } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/services/receiptPrinter'
 import GCashPayments from './GCashPayments'
+import { sortTransactionRecords } from '../utils/transactionLogUtils'
 
 const PAGE_SIZE = 10
 
@@ -106,7 +107,7 @@ function paymentBreakdown(receipt) {
 }
 
 export default function TransactionLogs() {
-  const { data: receipts, loading, error } = useApi(api.receipts, [])
+  const { data: receipts, setData: setReceipts, loading, error } = useApi(api.receipts, [])
   const { data: cashiers } = useApi(api.cashiers, [])
   const scanInputRef = useRef(null)
   const [query, setQuery] = useState('')
@@ -120,6 +121,36 @@ export default function TransactionLogs() {
   const [selectedReceipt, setSelectedReceipt] = useState(null)
   const [toast, setToast] = useState('')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
+  const [sortOrder, setSortOrder] = useState('newest')
+  const [refreshing, setRefreshing] = useState(false)
+
+  const refreshReceipts = useCallback(async ({ showProgress = false } = {}) => {
+    if (showProgress) setRefreshing(true)
+    try {
+      setReceipts(await api.receipts())
+    } finally {
+      if (showProgress) setRefreshing(false)
+    }
+  }, [setReceipts])
+
+  useEffect(() => {
+    const handleSyncStatus = (event) => {
+      if (['succeeded', 'failed'].includes(event.detail?.state)) void refreshReceipts()
+    }
+    const handleFocus = () => void refreshReceipts()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void refreshReceipts()
+    }
+
+    globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus)
+    globalThis.addEventListener?.('focus', handleFocus)
+    document.addEventListener?.('visibilitychange', handleVisibility)
+    return () => {
+      globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus)
+      globalThis.removeEventListener?.('focus', handleFocus)
+      document.removeEventListener?.('visibilitychange', handleVisibility)
+    }
+  }, [refreshReceipts])
 
   const cashierOptions = useMemo(() => {
     const names = new Set()
@@ -160,11 +191,17 @@ export default function TransactionLogs() {
 
   const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
   const voidedCount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').length
-  const visibleReceipts = filteredReceipts.slice(0, visibleCount)
+  const sortedReceipts = useMemo(
+    () => sortTransactionRecords(filteredReceipts, sortOrder),
+    [filteredReceipts, sortOrder],
+  )
+  const visibleReceipts = sortedReceipts.slice(0, visibleCount)
 
   useEffect(() => {
+    // Reset pagination whenever the active result set or ordering changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisibleCount(PAGE_SIZE)
-  }, [action, cashierName, customFrom, customTo, dateRange, query, status, subTab])
+  }, [action, cashierName, customFrom, customTo, dateRange, query, sortOrder, status, subTab])
 
   async function handleReprint(receipt) {
     try {
@@ -192,7 +229,7 @@ export default function TransactionLogs() {
   async function handleExportTransactions() {
     const result = await exportCsv(`transaction-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
       ['Transaction No.', 'Date / Time', 'Cashier', 'Status', 'Items', 'Cash', 'GCash', 'Cash Subtotal', 'GCash Subtotal', 'Total'],
-      ...filteredReceipts.map((receipt) => {
+      ...sortedReceipts.map((receipt) => {
         const payment = paymentBreakdown(receipt)
         return [
           receipt.receiptNo || receipt.transactionNo,
@@ -258,6 +295,9 @@ export default function TransactionLogs() {
   return (
     <>
       <PageHeader title="Transaction Logs" subtitle="All transaction history with receipt-number scan/search, date, cashier, action, and status filters.">
+        <button className="btn btn-outline" onClick={() => refreshReceipts({ showProgress: true })} disabled={refreshing}>
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
         <button className="btn btn-outline" onClick={handleExportTransactions} disabled={filteredReceipts.length === 0}>
           <IconDownload size={16} /> Export Sheet
         </button>
@@ -369,7 +409,17 @@ export default function TransactionLogs() {
             <h3>Transaction History</h3>
             <span className="sub">Includes completed, voided, and adjusted transactions when they are available in sales history.</span>
           </div>
-          <span className="muted">{filteredReceipts.length} result(s)</span>
+          <div className="row-actions">
+            <span className="muted">{filteredReceipts.length} result(s)</span>
+            <button
+              type="button"
+              className="btn btn-outline btn-sm"
+              onClick={() => setSortOrder((current) => current === 'newest' ? 'oldest' : 'newest')}
+              title="Reverse transaction date order"
+            >
+              <IconArrowSwap size={15} /> {sortOrder === 'newest' ? 'Newest to Oldest' : 'Oldest to Newest'}
+            </button>
+          </div>
         </div>
 
         {filteredReceipts.length === 0 ? (

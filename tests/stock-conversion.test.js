@@ -11,3 +11,7 @@ test('defaults to one base unit when conversion is missing', () => {
   assert.equal(toBaseStockQuantity(3), 3);
   assert.equal(toBaseStockQuantity(0, 12), 0);
 });
+
+test('converts two reams into four hundred base sticks', () => {
+  assert.equal(toBaseStockQuantity(2, 200), 400);
+});

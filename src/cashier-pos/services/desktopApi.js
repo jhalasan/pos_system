@@ -3,6 +3,7 @@ import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
 import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
+import { copyAdminProductCatalogToCashier } from '../offline/catalogCache'
 import { getAllProducts, getProductByBarcode, normalizeProduct } from '../offline/productRepository'
 import { barcodesMatch } from '../utils/barcodeUtils'
 import {
@@ -371,7 +372,15 @@ async function ensureProducts() {
   await initializeCashierDb()
   let products = await getAllProducts()
 
-  if (products.length === 0 && !isPocketBaseRateLimited()) {
+  if (products.length === 0) {
+    products = await copyAdminProductCatalogToCashier().catch(() => [])
+  }
+
+  if (
+    products.length === 0
+    && (!globalThis.navigator || globalThis.navigator.onLine)
+    && !isPocketBaseRateLimited()
+  ) {
     const activeRuntime = await runtime()
     await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
       rememberPocketBaseRateLimit(error)
@@ -445,6 +454,36 @@ async function cachedCashierLogin(email, password) {
   const credential = await cashierDb.settings.get(`cashierLogin:${String(email).toLowerCase()}`)
   if (!credential?.value?.hash) return null
   return await cashierPasswordHash(email, password) === credential.value.hash ? credential.value.user : null
+}
+
+async function cacheCashierSyncAuth(activeRuntime, user) {
+  const token = activeRuntime.pb.authStore.token
+  if (!token || !user?.id) return false
+  await cashierDb.settings.put({
+    key: `cashierSyncAuth:${user.id}`,
+    value: { token, user, cachedAt: new Date().toISOString() },
+  })
+  return true
+}
+
+async function restoreCashierSyncAuth(activeRuntime, cashierId) {
+  if (!cashierId) return false
+  const credential = await cashierDb.settings.get(`cashierSyncAuth:${cashierId}`)
+  const token = credential?.value?.token
+  const user = credential?.value?.user
+  if (!token || user?.id !== cashierId) return false
+  activeRuntime.pb.authStore.save(token, user)
+  if (activeRuntime.pb.authStore.isValid) return true
+  activeRuntime.pb.authStore.clear()
+  return false
+}
+
+async function retryPendingCashierSync(activeRuntime) {
+  await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0 })
+  await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0 })
+  await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
+  await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
+  return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
 }
 
 async function createCloudActivityLog({ cashierId, action, detail }) {
@@ -667,7 +706,11 @@ export const desktopCashierApi = {
         key: `cashierLogin:${String(email).toLowerCase()}`,
         value: { hash: await cashierPasswordHash(email, password), user: auth.record },
       })
+      await cacheCashierSyncAuth(activeRuntime, auth.record)
+    } else {
+      await restoreCashierSyncAuth(activeRuntime, auth.record.id)
     }
+    if (activeRuntime.pb.authStore.isValid) void retryPendingCashierSync(activeRuntime)
     await createCloudActivityLog({
       cashierId: auth.record.id,
       action: 'Login',
@@ -736,6 +779,10 @@ export const desktopCashierApi = {
       status: 'active',
       cashierBarcode: account.cashierBarcode,
     }
+
+    const activeRuntime = await runtime()
+    await restoreCashierSyncAuth(activeRuntime, user.id)
+    if (activeRuntime.pb.authStore.isValid) void retryPendingCashierSync(activeRuntime)
 
     await createCloudActivityLog({
       cashierId: user.id,
@@ -930,7 +977,32 @@ export const desktopCashierApi = {
     const activeRuntime = await runtime()
     await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
     await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
+    await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
+    await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
     return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
+  },
+
+  async reauthenticate({ cashierId, email, password }) {
+    const activeRuntime = await runtime()
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+    if (!normalizedEmail || !password) throw new Error('Cashier email and password are required.')
+    const auth = await activeRuntime.login(normalizedEmail, password).catch((error) => {
+      throw new Error(loginErrorMessage(error))
+    })
+    if (auth.record?.role !== 'cashier' || (cashierId && auth.record.id !== cashierId)) {
+      activeRuntime.logout()
+      throw new Error('Sign in with the cashier account currently using this POS session.')
+    }
+    if (auth.record?.status === 'inactive') {
+      activeRuntime.logout()
+      throw new Error('This cashier account is inactive.')
+    }
+    await cashierDb.settings.put({
+      key: `cashierLogin:${normalizedEmail}`,
+      value: { hash: await cashierPasswordHash(normalizedEmail, password), user: auth.record },
+    })
+    await cacheCashierSyncAuth(activeRuntime, auth.record)
+    return retryPendingCashierSync(activeRuntime)
   },
 
   async authorizeVoid(code) {

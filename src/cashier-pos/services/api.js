@@ -78,6 +78,10 @@ const webCashierApi = {
     body: JSON.stringify(sale),
   }),
   syncNow: async () => ({ uploaded: 0, failed: 0, mode: 'server-direct' }),
+  reauthenticate: ({ email, password }) => request('/cashier/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  }),
   voidCompletedSale: ({ saleId, cashierId, authorization, reason }) => request(`/cashier/sales/${encodeURIComponent(saleId)}/void`, {
     method: 'POST',
     body: JSON.stringify({

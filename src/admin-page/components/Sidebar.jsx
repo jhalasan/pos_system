@@ -74,7 +74,9 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       setSyncQueue(await api.syncQueueDetails())
       setShowSyncCenter(true)
       if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
-        flash(`Cloud sync complete. ${result.pending || 0} pending.`)
+        flash((result.warnings || []).length > 0
+          ? `Cloud uploads complete. ${result.pending || 0} pending; catalog refresh will retry automatically.`
+          : `Cloud sync complete. ${result.pending || 0} pending.`)
       } else if ((result.failed || 0) > 0 && result.errors?.[0]) {
         flash(`Cloud sync failed: ${result.errors[0]}`)
       } else {
