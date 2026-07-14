@@ -9,6 +9,12 @@ export default function Modal({ title, onClose, children, footer, className = ''
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = previousOverflow }
+  }, [])
+
   return createPortal((
     <div className="modal-overlay" onMouseDown={onClose}>
       <div className={`modal ${className}`.trim()} onMouseDown={(e) => e.stopPropagation()}>

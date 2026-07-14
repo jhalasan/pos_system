@@ -21,6 +21,20 @@ const titles = {
   settings: 'Settings',
 }
 const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
+const dismissedNotificationsKey = 'nexa-admin-dismissed-notifications'
+
+function notificationId(item) {
+  return [item.tone, item.title, item.detail].join('|')
+}
+
+function readDismissedNotifications() {
+  try {
+    const value = JSON.parse(localStorage.getItem(dismissedNotificationsKey) || '[]')
+    return new Set(Array.isArray(value) ? value : [])
+  } catch {
+    return new Set()
+  }
+}
 
 export default function AdminLayout() {
   const { pathname } = useLocation()
@@ -90,7 +104,8 @@ export default function AdminLayout() {
           detail: `${log.user || 'System'} - ${log.detail || new Date(log.time).toLocaleString()}`,
         })),
       ]
-      setNotifications(alerts.length ? alerts.slice(0, 5) : [{
+      const visibleAlerts = alerts.filter((item) => !readDismissedNotifications().has(notificationId(item)))
+      setNotifications(visibleAlerts.length ? visibleAlerts.slice(0, 5) : alerts.length ? [] : [{
         tone: 'success',
         title: 'All clear',
         detail: 'No critical stock, discount, void, refund, exchange, receipt, or sales alerts right now.',
@@ -102,6 +117,13 @@ export default function AdminLayout() {
         detail: error.message || 'Please try again.',
       }])
     }
+  }
+
+  function clearNotifications() {
+    const dismissed = readDismissedNotifications()
+    notifications.forEach((item) => dismissed.add(notificationId(item)))
+    localStorage.setItem(dismissedNotificationsKey, JSON.stringify([...dismissed].slice(-250)))
+    setNotifications([])
   }
 
   return (
@@ -155,7 +177,7 @@ export default function AdminLayout() {
                 <div className="notification-panel">
                   <div className="notification-head">
                     <span>Notifications</span>
-                    <button type="button" onClick={() => setNotifications([])}>Clear History</button>
+                    <button type="button" onClick={clearNotifications} disabled={notifications.length === 0}>Clear History</button>
                   </div>
                   {notifications.map((item, index) => (
                     <div className={`notification-item ${item.tone}`} key={`${item.title}-${index}`}>
