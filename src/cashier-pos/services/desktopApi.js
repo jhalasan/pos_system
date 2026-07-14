@@ -769,7 +769,7 @@ export const desktopCashierApi = {
       const activeRuntime = await runtime()
       let cloudChecked = false
       const record = await activeRuntime.pb.collection('users').getFirstListItem(
-        activeRuntime.pb.filter('(void_barcode = {:code} || cashierBarcode = {:code}) && role = "cashier" && status != "inactive"', { code }),
+        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier" && status != "inactive"', { code }),
         { requestKey: null },
       ).then((result) => {
         cloudChecked = true
@@ -780,7 +780,9 @@ export const desktopCashierApi = {
           return null
         }
         rememberPocketBaseRateLimit(error)
-        if (!canUseOfflineLoginFallback(error)) throw error
+        if (!canUseOfflineLoginFallback(error)) {
+          throw new Error(pocketBaseErrorMessage(error, 'Unable to verify this cashier barcode. Ask an administrator to refresh staff access.'))
+        }
         return null
       })
       if (record) {
