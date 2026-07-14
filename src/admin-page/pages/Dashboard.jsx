@@ -96,7 +96,7 @@ export default function Dashboard() {
           ['Average Sale', peso(stats.averageSale), 'Revenue per transaction'],
           ['Cash Sales', peso(stats.cashSales), 'Selected source and range'],
           ['GCash Sales', peso(stats.gcashSales), 'Selected source and range'],
-          ['Critical / Out', Number(stats.criticalStock || 0).toLocaleString(), 'Products needing attention'],
+          ['Restock / Out', Number(stats.criticalStock || 0).toLocaleString(), 'Products needing attention'],
         ].map(([label, value, detail]) => <button className="dashboard-kpi" key={label} onClick={() => label.includes('Critical') && navigate('/admin/products')}><span>{label}</span><strong>{value}</strong><small>{detail}</small></button>)}
       </div>
 

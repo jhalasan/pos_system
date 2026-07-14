@@ -577,7 +577,7 @@ export default function Audit() {
 
   async function exportAudit() {
     const result = await exportCsv(`cash-audit-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ['Cashier', 'Cash Beginning', 'Cash Sales', 'Cash In', 'Cash Out', 'Register Opens', 'Expected Ending', 'Actual Ending', 'Automatic Cash Count', 'Count Mode', 'Breakdown', 'Variance', 'Status', 'Flags'],
+      ['Cashier', 'Opening Cash', 'Cash Sales', 'Cash In', 'Cash Out', 'Drawer Opens', 'Expected Cash', 'Counted Cash', 'Denomination Total', 'Counting Method', 'Denomination Breakdown', 'Difference', 'Status', 'Flags'],
       ...filteredAuditRows.map((row) => [
         row.cashierName,
         row.cashBeginning,

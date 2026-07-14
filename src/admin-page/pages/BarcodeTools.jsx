@@ -330,7 +330,8 @@ export default function BarcodeTools() {
             min="1"
             max="99"
             value={printSettings.copies}
-            onChange={(e) => updatePrintSettings({ copies: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })}
+            onChange={(e) => updatePrintSettings({ copies: e.target.value === '' ? '' : Math.min(99, Math.max(1, Number(e.target.value) || 1)) })}
+            onBlur={(e) => updatePrintSettings({ copies: Math.min(99, Math.max(1, Number(e.target.value) || 1)) })}
             aria-label="Barcode labels to print"
           />
         </label>

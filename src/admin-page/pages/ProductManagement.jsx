@@ -438,7 +438,7 @@ export default function ProductManagement() {
             <option value="all">All Stock Statuses</option>
             <option value="in-stock">In Stock</option>
             <option value="low">Low Stock</option>
-            <option value="critical">Critical Stock</option>
+            <option value="critical">Restock Needed</option>
             <option value="out-of-stock">Out of Stock</option>
           </select>
           <select className="select" value={lifecycleFilter} onChange={(e) => { setLifecycleFilter(e.target.value); setVisibleCount(pageSize) }} aria-label="Filter by lifecycle status">

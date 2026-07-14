@@ -285,12 +285,16 @@ export class CashierSyncEngine extends EventTarget {
       .equals('pending')
       .filter((op) => (Number(op.nextAttemptAt) || 0) <= now)
       .sortBy('createdAt')
+    const operationNeedsCatalog = queuedOps.some((operation) => (
+      operation.type === 'voidCompletedSale' || operation.type === 'adjustCompletedSale'
+    ))
+    const hasQueuedWrites = queuedSales.length > 0 || queuedOps.length > 0
     const shouldRefreshProducts = forceProductRefresh
       || queuedSales.length > 0
-      || queuedOps.length > 0
-      || now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS
+      || operationNeedsCatalog
+      || (!hasQueuedWrites && now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS)
 
-    if (queuedSales.length === 0 && !shouldRefreshProducts) {
+    if (!hasQueuedWrites && !shouldRefreshProducts) {
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
     }
 
@@ -322,15 +326,17 @@ export class CashierSyncEngine extends EventTarget {
     let products = 0
     const warnings = []
 
-    try {
-      products = await refreshLocalProductCatalog({ pb: this.pb })
-      this.lastProductRefreshAt = Date.now()
-    } catch (error) {
-      rememberPocketBaseRateLimit(error)
-      warnings.push(errorMessage(error))
-      this.dispatchEvent(new CustomEvent('catalogrefresherror', {
-        detail: { error },
-      }))
+    if (shouldRefreshProducts) {
+      try {
+        products = await refreshLocalProductCatalog({ pb: this.pb })
+        this.lastProductRefreshAt = Date.now()
+      } catch (error) {
+        rememberPocketBaseRateLimit(error)
+        warnings.push(errorMessage(error))
+        this.dispatchEvent(new CustomEvent('catalogrefresherror', {
+          detail: { error },
+        }))
+      }
     }
 
     for (const sale of queuedSales) {
@@ -398,6 +404,37 @@ export class CashierSyncEngine extends EventTarget {
     return mapping?.value || (String(localId).startsWith('shift_') ? '' : localId)
   }
 
+  async resolveCloudCashSession(localId, payload = {}) {
+    const mappedId = await this.cloudSessionId(localId)
+    const validMappedId = await this.existingRelationId('cash_register_sessions', mappedId)
+    if (validMappedId) return validMappedId
+
+    const deviceId = String(payload.device_id || '').trim()
+    if (!deviceId) return ''
+
+    const result = await this.pb.collection('cash_register_sessions').getList(1, 20, {
+      filter: this.pb.filter('device_id = {:deviceId}', { deviceId }),
+      sort: '-opened_at',
+      fields: 'id,status,opened_at,closed_at',
+      requestKey: null,
+    }).catch(() => null)
+    const sessions = result?.items || []
+    const closeTime = Date.parse(payload.closed_at || '')
+    const eligible = Number.isFinite(closeTime)
+      ? sessions.filter((session) => {
+        const openedAt = Date.parse(session.opened_at || '')
+        return !Number.isFinite(openedAt) || openedAt <= closeTime
+      })
+      : sessions
+    const recovered = eligible.find((session) => session.status === 'open') || eligible[0]
+    if (!recovered?.id) return ''
+
+    if (localId) {
+      await cashierDb.settings.put({ key: `cashSession:${localId}`, value: recovered.id })
+    }
+    return recovered.id
+  }
+
   async existingRelationId(collection, value) {
     if (!isPocketBaseRecordId(value)) return ''
     const record = await this.pb.collection(collection).getOne(value, {
@@ -410,6 +447,29 @@ export class CashierSyncEngine extends EventTarget {
   async resolveCashierId(value) {
     const original = await this.existingRelationId('users', value)
     if (original) return original
+
+    // A cashier can be deleted and recreated in PocketBase while this terminal
+    // still has operations queued under the old record ID. Recover the stable
+    // identity from the local login/sync cache and match the replacement cloud
+    // account by email. This also works while an administrator runs Sync Center.
+    const [quickLogin, syncCredential, settings] = await Promise.all([
+      cashierDb.quickLoginAccounts.get(String(value || '')).catch(() => null),
+      cashierDb.settings.get(`cashierSyncAuth:${String(value || '')}`).catch(() => null),
+      cashierDb.settings.toArray().catch(() => []),
+    ])
+    const cachedLogin = settings.find((setting) => (
+      String(setting.key || '').startsWith('cashierLogin:')
+      && setting.value?.user?.id === value
+    ))
+    const cachedUser = quickLogin || syncCredential?.value?.user || cachedLogin?.value?.user
+    const email = String(cachedUser?.email || '').trim().toLowerCase()
+    if (email) {
+      const replacement = await this.pb.collection('users').getFirstListItem(
+        this.pb.filter('email = {:email} && role = "cashier" && status != "inactive"', { email }),
+        { fields: 'id', requestKey: null },
+      ).catch(() => null)
+      if (replacement?.id) return replacement.id
+    }
 
     const authenticated = this.pb.authStore?.record
     if (authenticated?.role === 'cashier' && authenticated?.status !== 'inactive') {
@@ -445,11 +505,8 @@ export class CashierSyncEngine extends EventTarget {
       if (terminalCashier) return terminalCashier
     }
 
-    const authenticated = this.pb.authStore?.record
-    if (authenticated?.role === 'cashier' && authenticated?.status !== 'inactive') {
-      const currentCashier = await this.existingRelationId('users', authenticated.id)
-      if (currentCashier) return currentCashier
-    }
+    const recoveredCashier = await this.resolveCashierId(payload.cashier_id).catch(() => '')
+    if (recoveredCashier) return recoveredCashier
 
     throw new Error('The cashier account for this cash movement no longer exists, and no matching drawer session could be found.')
   }
@@ -467,8 +524,12 @@ export class CashierSyncEngine extends EventTarget {
       const created = await this.pb.collection('cash_register_sessions').create(payload, { requestKey: op.id })
       await cashierDb.settings.put({ key: `cashSession:${op.entityId}`, value: created.id })
     } else if (op.type === 'closeCashRegisterSession') {
-      if (!cloudSessionId) throw new Error('Opening cash session has not synchronized yet.')
-      await this.pb.collection('cash_register_sessions').update(cloudSessionId, payload, { requestKey: op.id })
+      const resolvedSessionId = await this.resolveCloudCashSession(localSessionId, payload)
+      if (!resolvedSessionId) {
+        throw new Error('The original drawer session could not be found. Open Sync Center after signing in online and retry.')
+      }
+      delete payload.session_id
+      await this.pb.collection('cash_register_sessions').update(resolvedSessionId, payload, { requestKey: op.id })
     } else if (op.type === 'recordCashMovement') {
       // Older queued movements may contain a synthetic developer approver ID
       // or a stale/deleted cloud relation. Both relations are optional, so

@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import AppTarget from '@app-target'
 import AppErrorBoundary from './components/AppErrorBoundary.jsx'
+import CapsLockDetector from './components/CapsLockDetector.jsx'
 import { applyTheme, getStoredTheme } from './utils/themeSettings.js'
 import './global.css'
 
@@ -11,6 +12,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppErrorBoundary>
       <AppTarget />
+      <CapsLockDetector />
     </AppErrorBoundary>
   </React.StrictMode>,
 )

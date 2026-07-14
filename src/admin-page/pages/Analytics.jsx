@@ -278,7 +278,7 @@ export default function Analytics() {
           <div className="panel-head">
             <div>
               <h3>Inventory Movement</h3>
-              <span className="sub">FSN analysis based on 90-day sales velocity and days since last sale.</span>
+              <span className="sub">Fast, slow, and non-moving product analysis based on 90-day sales activity.</span>
             </div>
           </div>
           <div className="panel-body fsn-grid-wrap">

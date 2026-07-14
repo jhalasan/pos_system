@@ -542,10 +542,10 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     if (!form.name.trim()) { alert('Product name is required.'); return }
     if (!String(form.category || '').trim()) { alert('Category is required.'); return }
     if (!String(form.unit || '').trim()) { alert('Base unit is required.'); return }
-    if (costValue < 0) { alert('Cost of goods sold must be 0 or greater.'); return }
+    if (costValue < 0) { alert('Product cost must be 0 or greater.'); return }
     if (!Number.isFinite(marginValue) || marginValue < 0) { alert('Desired profit margin must be 0 or greater.'); return }
     if (!Number.isFinite(initialStock) || initialStock < 0) { alert('Initial stock must be 0 or greater.'); return }
-    if (!Number.isFinite(Number(form.lowStock)) || Number(form.lowStock) < 0) { alert('Critical stock must be 0 or greater.'); return }
+    if (!Number.isFinite(Number(form.lowStock)) || Number(form.lowStock) < 0) { alert('Restock value must be 0 or greater.'); return }
 
     if (!form.hasMultipleUnits) {
       if (!String(form.barcode || '').trim()) { alert('Barcode is required for single-unit products.'); return }
@@ -744,7 +744,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         </div>
 
         <div className="field">
-          <label>Critical Stock</label>
+          <label>Restock Value</label>
           <input className="input" type="number" min="0" value={form.lowStock} onChange={set('lowStock')} />
         </div>
 

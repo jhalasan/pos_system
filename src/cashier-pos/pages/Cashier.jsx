@@ -212,7 +212,7 @@ const CASH_FLOW_CATEGORIES = {
   in: ['Additional drawer fund', 'Correction', 'Customer change return', 'Other'],
   out: ['Supplier payment', 'Bank deposit', 'Petty cash', 'Correction', 'Other'],
 };
-const DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1];
+const DENOMINATIONS = [1000, 500, 200, 100, 50, 20, 10, 5, 1, 0.25, 0.10, 0.05, 0.01];
 
 function loadReceiptSettings() {
   try {
@@ -409,6 +409,8 @@ const Cashier = ({ onLogout, user }) => {
   });
   const [cashRegisterOpen, setCashRegisterOpen] = useState(false);
   const [notification, setNotification] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
+  const confirmationResolverRef = useRef(null);
   const [receiptPrintQueue, setReceiptPrintQueue] = useState([]);
   const [printerQueueJobs, setPrinterQueueJobs] = useState([]);
   const [developerModeSettings] = useState(getDeveloperModeSettings);
@@ -757,6 +759,17 @@ const Cashier = ({ onLogout, user }) => {
     }, 6000);
   };
 
+  const requestConfirmation = (options) => new Promise((resolve) => {
+    confirmationResolverRef.current = resolve;
+    setConfirmation(typeof options === 'string' ? { message: options } : options);
+  });
+
+  const resolveConfirmation = (accepted) => {
+    confirmationResolverRef.current?.(accepted);
+    confirmationResolverRef.current = null;
+    setConfirmation(null);
+  };
+
   const cancelQueuedReceiptPrint = (jobId) => {
     cancelledReceiptPrintJobsRef.current.add(jobId);
     setReceiptPrintQueue((current) => current.filter((job) => job.id !== jobId));
@@ -862,7 +875,7 @@ const Cashier = ({ onLogout, user }) => {
     setCashierAuditEntry((current) => {
       const denominations = {
         ...(current.denominations || {}),
-        [denomination]: Math.max(0, Math.floor(Number(value) || 0)),
+        [denomination]: value === '' ? '' : Math.max(0, Math.floor(Number(value) || 0)),
       };
       const next = {
         ...current,
@@ -909,7 +922,7 @@ const Cashier = ({ onLogout, user }) => {
   const updateShiftCloseDenomination = (denomination, value) => {
     setShiftCloseDenominations((current) => ({
       ...current,
-      [denomination]: Math.max(0, Math.floor(Number(value) || 0)),
+      [denomination]: value === '' ? '' : Math.max(0, Math.floor(Number(value) || 0)),
     }));
     setShiftError('');
   };
@@ -1141,15 +1154,21 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const syncResult = await cashierApi.syncNow();
       if ((syncResult?.pending || 0) > 0) {
-        const leaveWithPendingSales = confirm(
-          `${syncResult.pending} transaction(s) are still waiting for cloud sync. The other computer may not have the latest stock. Log out anyway?`
-        );
+        const leaveWithPendingSales = await requestConfirmation({
+          title: 'Transactions Still Syncing',
+          message: `${syncResult.pending} transaction(s) are still waiting for cloud sync. Other terminals may not have the latest stock yet.`,
+          confirmLabel: 'Log Out Anyway',
+          tone: 'danger',
+        });
         if (!leaveWithPendingSales) return false;
       }
     } catch (error) {
-      const leaveWithoutSync = confirm(
-        `End of day was saved locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}. Log out anyway?`
-      );
+      const leaveWithoutSync = await requestConfirmation({
+        title: 'Cloud Sync Incomplete',
+        message: `End of day was saved locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}.`,
+        confirmLabel: 'Log Out Anyway',
+        tone: 'danger',
+      });
       if (!leaveWithoutSync) return false;
     }
 
@@ -1373,7 +1392,11 @@ const Cashier = ({ onLogout, user }) => {
       }
       if (confirmDrawerClosed) {
         updateReceiptPrintJob(jobId, { status: 'Waiting for drawer close' });
-        const drawerClosed = window.confirm('Physically close the cash drawer, then click OK to confirm. The drawer has no status sensor.');
+        const drawerClosed = await requestConfirmation({
+          title: 'Confirm Cash Drawer Is Closed',
+          message: 'Physically close the cash drawer before continuing. The drawer has no automatic status sensor.',
+          confirmLabel: 'Drawer Is Closed',
+        });
         if (!drawerClosed) throw new Error('Receipt printing paused until drawer closure is manually confirmed.');
         await recordDrawerClosureConfirmation(`receipt ${transactionNo}`);
       }
@@ -2472,11 +2495,11 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
     if (isLockedTxn) {
-      alert(isVoidedTxn ? 'This transaction has already been voided.' : 'This transaction is already completed.');
+      showNotification(isVoidedTxn ? 'This transaction has already been voided.' : 'This transaction is already completed.');
       return;
     }
     if (cartItems.length === 0) {
-      alert('Add items to the cart before completing the transaction.');
+      showNotification('Add items to the cart before completing the transaction.');
       return;
     }
 
@@ -2682,9 +2705,16 @@ const Cashier = ({ onLogout, user }) => {
     setBarcode('');
   };
 
-  const handleDeleteTransaction = (txnId) => {
+  const handleDeleteTransaction = async (txnId) => {
     const target = transactions.find((txn) => txn.id === txnId);
-    if (target?.status === 'completed' && !confirm(`Close completed transaction ${target.transactionNo}?`)) return;
+    if (target?.status === 'completed') {
+      const accepted = await requestConfirmation({
+        title: 'Close Completed Transaction',
+        message: `Remove completed transaction ${target.transactionNo} from the open transaction tabs? Its sales record and receipt history will be kept.`,
+        confirmLabel: 'Close Transaction',
+      });
+      if (!accepted) return;
+    }
     const remaining = transactions.filter((t) => t.id !== txnId);
     if (remaining.length === 0) {
       const nextTransaction = createTransaction(1);
@@ -3780,7 +3810,7 @@ const Cashier = ({ onLogout, user }) => {
       >
         <p>Enter the beginning cash before using the cashier POS.</p>
         <Input
-          label="Cash Beginning"
+          label="Opening Cash"
           type="number"
           min="0"
           step="0.01"
@@ -3880,11 +3910,11 @@ const Cashier = ({ onLogout, user }) => {
         <div style={{ marginBottom: '18px' }}>
           <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>End-of-Day Summary</div>
           <div className={styles['audit-summary-grid']}>
-            <div><span>Cash Beginning</span><strong>{money(shiftOpeningCash)}</strong></div>
+            <div><span>Opening Cash</span><strong>{money(shiftOpeningCash)}</strong></div>
             <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
             <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
             <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
-            <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
+            <div><span>Expected Cash</span><strong>{money(expectedShiftCash)}</strong></div>
           </div>
         </div>
         <div style={{ marginBottom: '18px' }}>
@@ -3941,7 +3971,7 @@ const Cashier = ({ onLogout, user }) => {
             </>
           ) : (
             <Input
-              label="Actual Cash Ending"
+              label="Counted Cash"
               type="number"
               min="0"
               step="0.01"
@@ -4624,11 +4654,11 @@ const Cashier = ({ onLogout, user }) => {
                   </div>
                 </div>
                 <div className={styles['audit-summary-grid']}>
-                  <div><span>Cash Beginning</span><strong>{money(auditCashBeginning)}</strong></div>
+                  <div><span>Opening Cash</span><strong>{money(auditCashBeginning)}</strong></div>
                   <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
                   <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
                   <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
-                  <div><span>Expected Ending</span><strong>{money(auditExpectedCash)}</strong></div>
+                  <div><span>Expected Cash</span><strong>{money(auditExpectedCash)}</strong></div>
                   <div><span>Variance</span><strong className={auditVariance === null ? '' : auditVariance < 0 ? styles.negative : auditVariance > 0 ? styles.positive : ''}>{auditVariance === null ? 'Not counted' : money(auditVariance)}</strong></div>
                 </div>
                 <div className={styles['cash-flow-type-row']}>
@@ -4649,7 +4679,7 @@ const Cashier = ({ onLogout, user }) => {
                 </div>
                 <div className={styles['audit-entry-grid']}>
                   <Input
-                    label="Cash Beginning"
+                    label="Opening Cash"
                     type="number"
                     min="0"
                     step="0.01"
@@ -4659,7 +4689,7 @@ const Cashier = ({ onLogout, user }) => {
                     disabled={cashierAuditSaving}
                   />
                   <Input
-                    label="Expected Cash Ending"
+                    label="Expected Cash"
                     type="number"
                     min="0"
                     step="0.01"
@@ -4669,7 +4699,7 @@ const Cashier = ({ onLogout, user }) => {
                     disabled={cashierAuditSaving}
                   />
                   <Input
-                    label="Actual Cash Ending"
+                    label="Counted Cash"
                     type="number"
                     min="0"
                     step="0.01"
@@ -4948,6 +4978,25 @@ const Cashier = ({ onLogout, user }) => {
           />
         )}
         {idleUnlockError && <div style={{ color: '#dc2626', marginTop: 10 }}>{idleUnlockError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(confirmation)}
+        onClose={() => resolveConfirmation(false)}
+        title={confirmation?.title || 'Please Confirm'}
+        footer={(
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline" onClick={() => resolveConfirmation(false)}>Cancel</button>
+            <button
+              className={`btn ${confirmation?.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
+              onClick={() => resolveConfirmation(true)}
+            >
+              {confirmation?.confirmLabel || 'Confirm'}
+            </button>
+          </div>
+        )}
+      >
+        <p style={{ lineHeight: 1.6 }}>{confirmation?.message}</p>
       </Modal>
 
       <SyncStatusIndicator scope="cashier" />

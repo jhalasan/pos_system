@@ -108,7 +108,7 @@ export default function AdminLayout() {
       setNotifications(visibleAlerts.length ? visibleAlerts.slice(0, 5) : alerts.length ? [] : [{
         tone: 'success',
         title: 'All clear',
-        detail: 'No critical stock, discount, void, refund, exchange, receipt, or sales alerts right now.',
+        detail: 'No restock, discount, void, refund, exchange, receipt, or sales alerts right now.',
       }])
     } catch (error) {
       setNotifications([{

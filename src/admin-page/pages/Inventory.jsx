@@ -232,6 +232,7 @@ export default function Inventory() {
   const [stockOutError, setStockOutError] = useState('')
   const [confirmingStockOut, setConfirmingStockOut] = useState(false)
   const [reconcileProductId, setReconcileProductId] = useState('')
+  const [reconcileSearch, setReconcileSearch] = useState('')
   const [physicalCount, setPhysicalCount] = useState('')
   const [reconcileReason, setReconcileReason] = useState('cycle-count')
   const [reconcileNote, setReconcileNote] = useState('')
@@ -292,6 +293,12 @@ export default function Inventory() {
       .filter((p) => productMatchesQuery(p, query))
       .slice(0, 6)
   }, [products, stockOutBarcode, stockOutProduct])
+  const reconciliationProducts = useMemo(() => {
+    const query = reconcileSearch.trim()
+    return [...products]
+      .filter((product) => !query || productMatchesQuery(product, query))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [products, reconcileSearch])
   const pendingStockOutById = useMemo(() => {
     return stockOutBatch.reduce((map, item) => ({ ...map, [item.id]: (map[item.id] || 0) + (Number(item.baseQty) || Number(item.qty) || 0) }), {})
   }, [stockOutBatch])
@@ -1297,7 +1304,7 @@ export default function Inventory() {
       />
 
       <div className="stat-grid cols-3">
-        <StatCard label="Total Products" tone="indigo" icon={IconBox} value={totalProducts} foot="active SKUs" />
+        <StatCard label="Total Products" tone="indigo" icon={IconBox} value={totalProducts} foot="catalog items" />
         <StatCard label="Low Stock Items" tone="amber" icon={IconAlert} value={lowItems} foot="below threshold" />
         <StatCard label="Total Stock Value" tone="green" icon={IconDollar} value={peso(stockValue)} foot="at cost" />
       </div>
@@ -1324,15 +1331,34 @@ export default function Inventory() {
           Stock-Out
         </button>
         <button type="button" className={`scan-mode ${inventoryTab === 'reconcile' ? 'active' : ''}`} onClick={() => setInventoryTab('reconcile')}>
-          Physical Reconciliation
+          Stock Count
         </button>
       </div>
 
       {inventoryTab === 'stock-in' ? stockInScanner : inventoryTab === 'stock-out' ? stockOutScanner : (
         <div className="card">
-          <div className="panel-head"><div><h3>Physical Inventory Reconciliation</h3><span className="sub">Compare system stock with a verified physical count and approve the variance.</span></div></div>
+          <div className="panel-head"><div><h3>Stock Count Adjustment</h3><span className="sub">Compare recorded stock with the counted quantity and adjust any difference.</span></div></div>
           <form className="panel-body reconciliation-form" onSubmit={reconcileInventory}>
-            <label className="field"><span>Product</span><select className="select" value={reconcileProductId} onChange={(event) => setReconcileProductId(event.target.value)} required><option value="">Select product…</option>{[...products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => <option value={product.id} key={product.id}>{product.name} — system {formatQty(product.qty)}</option>)}</select></label>
+            <label className="field">
+              <span>Search Product</span>
+              <input
+                className="input"
+                type="search"
+                value={reconcileSearch}
+                onChange={(event) => {
+                  setReconcileSearch(event.target.value)
+                  setReconcileProductId('')
+                }}
+                placeholder="Search name, barcode, or selling unit"
+              />
+            </label>
+            <label className="field">
+              <span>Product</span>
+              <select className="select" value={reconcileProductId} onChange={(event) => setReconcileProductId(event.target.value)} required>
+                <option value="">{reconciliationProducts.length ? `Select product (${reconciliationProducts.length} found)…` : 'No matching products'}</option>
+                {reconciliationProducts.map((product) => <option value={product.id} key={product.id}>{product.name}{product.barcode ? ` — ${product.barcode}` : ''} — system {formatQty(product.qty)}</option>)}
+              </select>
+            </label>
             <label className="field"><span>Physical Count</span><input className="input" type="number" min="0" step="any" value={physicalCount} onChange={(event) => setPhysicalCount(event.target.value)} required /></label>
             <label className="field"><span>Adjustment Reason</span><select className="select" value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)}><option value="cycle-count">Cycle count</option><option value="initial-count">Initial count correction</option><option value="damage-found">Damage found during count</option><option value="shrinkage">Missing or shrinkage</option><option value="data-correction">Legacy data correction</option></select></label>
             <label className="field"><span>Count Note</span><input className="input" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} placeholder="Counter, location, discrepancy details" /></label>
