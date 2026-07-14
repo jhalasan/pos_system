@@ -5,6 +5,13 @@ import { fileURLToPath } from 'node:url'
 
 const cargoBin = join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.cargo', 'bin')
 const env = { ...process.env }
+const defaultSigningKey = join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.tauri', 'nexa-pos-updater.key')
+let passwordlessLocalKey = false
+
+if (!env.TAURI_SIGNING_PRIVATE_KEY && existsSync(defaultSigningKey)) {
+  env.TAURI_SIGNING_PRIVATE_KEY = defaultSigningKey
+  passwordlessLocalKey = !env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+}
 
 if (existsSync(cargoBin)) {
   env.Path = `${cargoBin}${delimiter}${env.Path ?? env.PATH ?? ''}`
@@ -25,8 +32,11 @@ if (process.platform === 'win32') {
 const tauriCli = fileURLToPath(new URL('../node_modules/@tauri-apps/cli/tauri.js', import.meta.url))
 const child = spawn(process.execPath, [tauriCli, 'build', '--bundles', 'nsis'], {
   env,
-  stdio: 'inherit',
+  stdio: passwordlessLocalKey ? ['pipe', 'inherit', 'inherit'] : 'inherit',
 })
+
+// Tauri prompts even when a signing key intentionally has no password.
+if (passwordlessLocalKey) child.stdin.end('\n')
 
 child.on('exit', (code, signal) => {
   if (signal) {

@@ -1,7 +1,7 @@
 {
   "name": "pos_system",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "api": "node server/index.js",
@@ -32,6 +32,7 @@
     "tauri:build": "node scripts/tauri-build.mjs"
   },
   "dependencies": {
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "cors": "^2.8.6",
     "dexie": "^4.4.3",
     "docx": "^8.4.0",

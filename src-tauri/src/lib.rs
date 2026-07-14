@@ -3,6 +3,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let app_handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -49,7 +50,11 @@ fn select_export_folder() -> Option<String> {
 }
 
 #[tauri::command]
-fn write_export_file(directory: String, filename: String, contents: String) -> Result<String, String> {
+fn write_export_file(
+    directory: String,
+    filename: String,
+    contents: String,
+) -> Result<String, String> {
     let trimmed = directory.trim();
     if trimmed.is_empty() {
         return Err("Export location is empty.".to_string());
@@ -70,20 +75,33 @@ fn write_export_file(directory: String, filename: String, contents: String) -> R
 }
 
 #[tauri::command]
-fn save_print_file(default_filename: String, contents: String, file_type: String, extension: String) -> Result<Option<String>, String> {
+fn save_print_file(
+    default_filename: String,
+    contents: String,
+    file_type: String,
+    extension: String,
+) -> Result<Option<String>, String> {
     let safe_extension = extension
         .trim()
         .trim_start_matches('.')
         .chars()
         .filter(|char| char.is_ascii_alphanumeric())
         .collect::<String>();
-    let extension = if safe_extension.is_empty() { "pdf".to_string() } else { safe_extension };
+    let extension = if safe_extension.is_empty() {
+        "pdf".to_string()
+    } else {
+        safe_extension
+    };
 
-    let mut safe_filename = default_filename.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "-");
+    let mut safe_filename =
+        default_filename.replace(['\\', '/', ':', '*', '?', '"', '<', '>', '|'], "-");
     if safe_filename.trim().is_empty() {
         safe_filename = format!("print-file.{extension}");
     }
-    if !safe_filename.to_lowercase().ends_with(&format!(".{}", extension.to_lowercase())) {
+    if !safe_filename
+        .to_lowercase()
+        .ends_with(&format!(".{}", extension.to_lowercase()))
+    {
         safe_filename.push('.');
         safe_filename.push_str(&extension);
     }
@@ -172,7 +190,9 @@ fn cancel_printer_job_impl(printer_name: String, job_id: u32) -> Result<bool, St
     use std::iter::once;
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::HANDLE;
-    use windows_sys::Win32::Graphics::Printing::{ClosePrinter, OpenPrinterW, SetJobW, JOB_CONTROL_DELETE};
+    use windows_sys::Win32::Graphics::Printing::{
+        ClosePrinter, OpenPrinterW, SetJobW, JOB_CONTROL_DELETE,
+    };
 
     let selected_printer = printer_name.trim();
     if selected_printer.is_empty() {
@@ -183,7 +203,10 @@ fn cancel_printer_job_impl(printer_name: String, job_id: u32) -> Result<bool, St
     let mut handle: HANDLE = null_mut();
     let opened = unsafe { OpenPrinterW(printer_name_w.as_mut_ptr(), &mut handle, null()) };
     if opened == 0 {
-        return Err(format!("Unable to open printer \"{}\" to cancel the job.", selected_printer));
+        return Err(format!(
+            "Unable to open printer \"{}\" to cancel the job.",
+            selected_printer
+        ));
     }
 
     let canceled = unsafe { SetJobW(handle, job_id, 0, null_mut(), JOB_CONTROL_DELETE) };
@@ -216,10 +239,10 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Graphics::Printing::{
-        ClosePrinter, EnumJobsW, GetDefaultPrinterW, GetPrinterW, JOB_INFO_1W,
+        ClosePrinter, EnumJobsW, GetDefaultPrinterW, GetPrinterW, OpenPrinterW, JOB_INFO_1W,
         JOB_STATUS_BLOCKED_DEVQ, JOB_STATUS_ERROR, JOB_STATUS_OFFLINE, JOB_STATUS_PAPEROUT,
         JOB_STATUS_PAUSED, JOB_STATUS_PRINTING, JOB_STATUS_SPOOLING, JOB_STATUS_USER_INTERVENTION,
-        OpenPrinterW, PRINTER_INFO_6, PRINTER_STATUS_DOOR_OPEN, PRINTER_STATUS_ERROR,
+        PRINTER_INFO_6, PRINTER_STATUS_DOOR_OPEN, PRINTER_STATUS_ERROR,
         PRINTER_STATUS_NOT_AVAILABLE, PRINTER_STATUS_OFFLINE, PRINTER_STATUS_PAPER_JAM,
         PRINTER_STATUS_PAPER_OUT, PRINTER_STATUS_PAPER_PROBLEM, PRINTER_STATUS_PAUSED,
         PRINTER_STATUS_PENDING_DELETION, PRINTER_STATUS_USER_INTERVENTION,
@@ -248,7 +271,10 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
             return Err(last_error("Unable to read the default Windows printer"));
         }
 
-        let end = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+        let end = buffer
+            .iter()
+            .position(|ch| *ch == 0)
+            .unwrap_or(buffer.len());
         Ok(String::from_utf16_lossy(&buffer[..end]))
     }
 
@@ -274,8 +300,14 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
             (PRINTER_STATUS_NOT_AVAILABLE, "Printer is not available."),
             (PRINTER_STATUS_ERROR, "Printer is reporting an error."),
             (PRINTER_STATUS_PAUSED, "Printer is paused."),
-            (PRINTER_STATUS_PENDING_DELETION, "Printer is pending deletion."),
-            (PRINTER_STATUS_USER_INTERVENTION, "Printer needs user intervention."),
+            (
+                PRINTER_STATUS_PENDING_DELETION,
+                "Printer is pending deletion.",
+            ),
+            (
+                PRINTER_STATUS_USER_INTERVENTION,
+                "Printer needs user intervention.",
+            ),
             (PRINTER_STATUS_DOOR_OPEN, "Printer cover/door is open."),
         ];
 
@@ -344,9 +376,8 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
         }
 
         let mut printer_buffer = vec![0u8; needed as usize];
-        let got_printer = unsafe {
-            GetPrinterW(handle, 6, printer_buffer.as_mut_ptr(), needed, &mut needed)
-        };
+        let got_printer =
+            unsafe { GetPrinterW(handle, 6, printer_buffer.as_mut_ptr(), needed, &mut needed) };
         if got_printer == 0 {
             return Err(last_error("Unable to read printer status"));
         }
@@ -355,7 +386,16 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
         let mut jobs_needed = 0u32;
         let mut jobs_returned = 0u32;
         unsafe {
-            EnumJobsW(handle, 0, 20, 1, null_mut(), 0, &mut jobs_needed, &mut jobs_returned);
+            EnumJobsW(
+                handle,
+                0,
+                20,
+                1,
+                null_mut(),
+                0,
+                &mut jobs_needed,
+                &mut jobs_returned,
+            );
         }
 
         let mut jobs = Vec::new();
@@ -390,10 +430,18 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
 
         let mut messages = status_messages(status);
         for job in &jobs {
-            if job.status & JOB_STATUS_PAPEROUT != 0 && !messages.iter().any(|msg| msg.contains("out of paper")) {
+            if job.status & JOB_STATUS_PAPEROUT != 0
+                && !messages.iter().any(|msg| msg.contains("out of paper"))
+            {
                 messages.push("Printer is out of paper.".to_string());
             }
-            if job.status & (JOB_STATUS_ERROR | JOB_STATUS_OFFLINE | JOB_STATUS_USER_INTERVENTION | JOB_STATUS_BLOCKED_DEVQ) != 0 {
+            if job.status
+                & (JOB_STATUS_ERROR
+                    | JOB_STATUS_OFFLINE
+                    | JOB_STATUS_USER_INTERVENTION
+                    | JOB_STATUS_BLOCKED_DEVQ)
+                != 0
+            {
                 messages.push(format!("Print job {} is {}.", job.id, job.status_text));
             }
         }
@@ -449,7 +497,9 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
         printer_name: selected_printer,
         is_ready: true,
         status: 0,
-        messages: vec!["Printer status checks are currently supported only on Windows.".to_string()],
+        messages: vec![
+            "Printer status checks are currently supported only on Windows.".to_string(),
+        ],
         jobs: Vec::new(),
     })
 }
@@ -458,7 +508,7 @@ fn printer_status_impl(printer_name: String) -> Result<PrinterStatusResult, Stri
 fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
     use std::ptr::null_mut;
     use windows_sys::Win32::Graphics::Printing::{
-        EnumPrintersW, GetDefaultPrinterW, PRINTER_ENUM_LOCAL, PRINTER_ENUM_CONNECTIONS,
+        EnumPrintersW, GetDefaultPrinterW, PRINTER_ENUM_CONNECTIONS, PRINTER_ENUM_LOCAL,
         PRINTER_INFO_4W,
     };
 
@@ -490,7 +540,10 @@ fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
             return String::new();
         }
 
-        let end = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+        let end = buffer
+            .iter()
+            .position(|ch| *ch == 0)
+            .unwrap_or(buffer.len());
         String::from_utf16_lossy(&buffer[..end])
     }
 
@@ -498,7 +551,15 @@ fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
     let mut needed = 0u32;
     let mut returned = 0u32;
     unsafe {
-        EnumPrintersW(flags, null_mut(), 4, null_mut(), 0, &mut needed, &mut returned);
+        EnumPrintersW(
+            flags,
+            null_mut(),
+            4,
+            null_mut(),
+            0,
+            &mut needed,
+            &mut returned,
+        );
     }
     if needed == 0 {
         return Ok(Vec::new());
@@ -517,7 +578,10 @@ fn list_printers_impl() -> Result<Vec<PrinterInfo>, String> {
         )
     };
     if ok == 0 {
-        return Err(format!("Unable to list Windows printers: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "Unable to list Windows printers: {}",
+            std::io::Error::last_os_error()
+        ));
     }
 
     let default_name = default_printer_name();
@@ -557,8 +621,8 @@ fn print_receipt_impl(
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::HANDLE;
     use windows_sys::Win32::Graphics::Printing::{
-        ClosePrinter, DOC_INFO_1W, EndDocPrinter, EndPagePrinter, GetDefaultPrinterW, OpenPrinterW,
-        StartDocPrinterW, StartPagePrinter, WritePrinter,
+        ClosePrinter, EndDocPrinter, EndPagePrinter, GetDefaultPrinterW, OpenPrinterW,
+        StartDocPrinterW, StartPagePrinter, WritePrinter, DOC_INFO_1W,
     };
 
     fn wide_null(value: &str) -> Vec<u16> {
@@ -584,7 +648,10 @@ fn print_receipt_impl(
             return Err(last_error("Unable to read the default Windows printer"));
         }
 
-        let end = buffer.iter().position(|ch| *ch == 0).unwrap_or(buffer.len());
+        let end = buffer
+            .iter()
+            .position(|ch| *ch == 0)
+            .unwrap_or(buffer.len());
         Ok(String::from_utf16_lossy(&buffer[..end]))
     }
 
@@ -642,7 +709,11 @@ fn print_receipt_impl(
             bytes.extend_from_slice(&[0x1b, 0x64, before_feed_lines as u8]); // Feed configured lines before receipt.
         }
         append_receipt_contents(&mut bytes, contents);
-        let feed_lines = if after_feed_lines > 0 { after_feed_lines as u8 } else { 1 };
+        let feed_lines = if after_feed_lines > 0 {
+            after_feed_lines as u8
+        } else {
+            1
+        };
         bytes.extend_from_slice(&[0x1b, 0x64, feed_lines]); // Ensure receipt paper advances after the last line.
         bytes
     }
@@ -663,7 +734,12 @@ fn print_receipt_impl(
         )));
     }
 
-    let bytes = escpos_bytes(&contents, open_cash_drawer, before_feed_lines, after_feed_lines);
+    let bytes = escpos_bytes(
+        &contents,
+        open_cash_drawer,
+        before_feed_lines,
+        after_feed_lines,
+    );
     let document_label = if document_name.trim().is_empty() {
         "Nexa POS Receipt".to_string()
     } else {

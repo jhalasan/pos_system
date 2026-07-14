@@ -20,6 +20,7 @@ import {
 } from '../utils/barcodePrinter'
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 import { getDeveloperModeSettings, isDeveloperPinValid, saveDeveloperModeSettings } from '../../utils/developerMode'
+import { requestUpdateCheck } from '../../utils/desktopUpdateEvents'
 
 const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
@@ -311,6 +312,16 @@ export default function Settings() {
         {(error || adminsError) && (
           <div className="alert error">Staff account settings could not be loaded: {error || adminsError}. Local appearance and export settings remain available.</div>
         )}
+        <div className="card">
+          <div className="panel-head">
+            <div>
+              <h3>Software Updates</h3>
+              <span className="sub">Current version {import.meta.env.VITE_APP_VERSION}. Updates are verified before installation.</span>
+            </div>
+            <button type="button" className="btn btn-outline" onClick={requestUpdateCheck}>Check for updates</button>
+          </div>
+        </div>
+
         <div className="card">
           <div className="panel-head">
             <div>

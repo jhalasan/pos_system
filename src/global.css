@@ -71,6 +71,27 @@
 
 html, body, #root { height: 100%; }
 
+.desktop-update-notice {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 10000;
+  width: min(440px, calc(100vw - 40px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--border, #d9dce3);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--text, #1f2937);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, .2);
+}
+.desktop-update-notice > div:first-child { display: grid; gap: 4px; }
+.desktop-update-notice span { font-size: 13px; color: var(--text-muted, #667085); }
+.desktop-update-actions { display: flex; flex-shrink: 0; gap: 8px; }
+
 body {
   font-family: var(--font);
   background: var(--bg);

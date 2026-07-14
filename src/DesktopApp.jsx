@@ -4,6 +4,7 @@ import RoleSelection from './pages/RoleSelection'
 import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
 import AdminLayout from './admin-page/components/AdminLayout'
 import BrandedLoader from './components/BrandedLoader'
+import DesktopUpdater from './components/DesktopUpdater'
 import { cashierApi } from './cashier-pos/services/api'
 import './admin-page/index.css'
 
@@ -83,6 +84,7 @@ export default function DesktopApp() {
 
   return (
     <DesktopErrorBoundary>
+    <DesktopUpdater />
     <Router>
       <Suspense fallback={<BrandedLoader message="Opening screen…" />}>
       <Routes>

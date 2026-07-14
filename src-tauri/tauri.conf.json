@@ -43,6 +43,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "category": "Business",
     "shortDescription": "Offline-first cashier terminal",
@@ -51,6 +52,17 @@
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5MzZGQUExQ0NCNTI3RUQKUldUdEo3WE1vZm8yR1g0OGsvaTNqeHJHaHpZbjVOUG1YUGdWeEIydGdVTXdDYTFTUERRaDN1cDMK",
+      "endpoints": [
+        "https://github.com/jhalasan/pos_system/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }
