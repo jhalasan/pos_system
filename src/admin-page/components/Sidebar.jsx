@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { logout } from '../auth'
 import { api } from '../services/api'
 import Modal from './Modal'
@@ -68,12 +68,12 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     nav('/', { replace: true })
   }
 
-  function flash(message) {
+  const flash = useCallback((message) => {
     setToast(message)
     window.setTimeout(() => setToast(''), 2400)
-  }
+  }, [])
 
-  async function handleSync() {
+  const handleSync = useCallback(async () => {
     if (syncing) return
     setSyncing(true)
     setShowSyncCenter(true)
@@ -117,7 +117,20 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     } finally {
       setSyncing(false)
     }
-  }
+  }, [flash, syncing])
+
+  useEffect(() => {
+    if (isAdminWeb) return undefined
+    const handleShortcut = (event) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== 's') return
+      const target = event.target
+      event.preventDefault()
+      if (target?.matches?.('input, textarea, select, [contenteditable="true"]')) return
+      void handleSync()
+    }
+    window.addEventListener('keydown', handleShortcut)
+    return () => window.removeEventListener('keydown', handleShortcut)
+  }, [handleSync])
 
   async function resolveConflict(op, resolution, fields = {}) {
     try {
@@ -215,7 +228,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
         {!isAdminWeb && <button
           className="nav-item"
           style={{ width: '100%' }}
-          title={collapsed ? 'Sync to Cloud' : undefined}
+          title={collapsed ? 'Sync to Cloud (Ctrl+S)' : undefined}
           onClick={handleSync}
           disabled={syncing}
           aria-busy={syncing}
@@ -224,6 +237,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
             ? <span className="sync-button-spinner" aria-hidden="true" />
             : <span className="sync-button-icon"><IconCloud size={18} /></span>}
           <span className="nav-text">{syncing ? 'Syncing...' : 'Sync to Cloud'}</span>
+          {!syncing && <kbd className="nav-shortcut">Ctrl+S</kbd>}
         </button>}
         {!isAdminWeb && <NavLink to="/admin/settings" className="nav-item" onClick={onNavigate} title={collapsed ? 'Settings' : undefined}>
           <IconSettings size={18} />
