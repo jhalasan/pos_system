@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import ProductModal from '../components/ProductModal'
@@ -206,6 +207,7 @@ function downloadPdf(filename, contents) {
 }
 
 export default function Inventory() {
+  const dialog = useAppDialog()
   const { data: products, setData: setProducts, loading, error } = useApi(api.products, [])
   const { data: categoryRecords } = useApi(api.categories, [])
   const barcodeRef = useRef(null)
@@ -336,7 +338,7 @@ export default function Inventory() {
     const actual = Math.max(0, Number(physicalCount) || 0)
     const variance = actual - expected
     if (!variance) return flash('Physical count already matches system stock.')
-    if (!confirm(`Approve inventory adjustment for "${product.name}"?\nSystem: ${expected}\nPhysical: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`)) return
+    if (!await dialog.confirm(`Approve the inventory adjustment for “${product.name}”?\n\nSystem stock: ${expected}\nPhysical count: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`, { title: 'Approve stock adjustment', confirmLabel: 'Approve adjustment' })) return
     setReconciling(true)
     try {
       const updated = await api.adjustInventoryCount({

@@ -7,6 +7,7 @@
     <title>NEXA POS</title>
     <style>
       .startup-splash{position:fixed;inset:0;display:grid;place-items:center;background:linear-gradient(145deg,#f8faff,#eef2ff);font-family:Segoe UI,sans-serif;color:#111827}.startup-splash>div{text-align:center}.startup-splash img{display:block;width:240px;height:112px;object-fit:contain;margin:auto}.startup-splash p{margin:4px 0 0;color:#64748b;font-size:13px}.startup-splash i{display:block;width:34px;height:34px;margin:18px auto 0;border:3px solid #dbeafe;border-top-color:#4f46e5;border-radius:50%;animation:start-spin 1s linear infinite}@keyframes start-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.startup-splash i{animation:none}}
+      .boot-recovery{position:fixed;inset:0;z-index:99999;display:grid;place-items:center;padding:24px;background:linear-gradient(145deg,#f8faff,#eef2ff);font-family:Segoe UI,sans-serif;color:#111827}.boot-recovery>div{width:min(440px,100%);padding:28px;border:1px solid #e2e8f0;border-radius:16px;background:#fff;box-shadow:0 22px 60px rgba(15,23,42,.16);text-align:center}.boot-recovery img{width:72px;height:72px;object-fit:contain;border-radius:14px}.boot-recovery h2{margin:16px 0 8px;font-size:20px}.boot-recovery p{margin:0;color:#64748b;line-height:1.55}.boot-recovery button{margin-top:20px;padding:11px 20px;border:0;border-radius:9px;background:#4f46e5;color:#fff;font:700 14px Segoe UI,sans-serif;cursor:pointer}.boot-recovery button:hover{background:#4338ca}
     </style>
   </head>
   <body>
@@ -19,6 +20,30 @@
         </div>
       </div>
     </div>
+    <script>
+      (() => {
+        let finished = false;
+        const markReady = () => { finished = true; };
+        window.addEventListener('nexa-react-ready', markReady, { once: true });
+        const showRecovery = () => {
+          if (finished || window.__NEXA_REACT_READY__ || document.querySelector('.boot-recovery')) return;
+          const panel = document.createElement('div');
+          panel.className = 'boot-recovery';
+          panel.setAttribute('role', 'alert');
+          panel.innerHTML = '<div><img src="/branding/nexa-systems-mark.jpg" alt=""><h2>NEXA POS did not finish opening</h2><p>The display did not load correctly. Your local sales and offline data remain safe.</p><button type="button">Reload application</button></div>';
+          panel.querySelector('button').addEventListener('click', () => window.location.reload());
+          document.body.appendChild(panel);
+        };
+        window.setTimeout(showRecovery, 12000);
+        window.addEventListener('error', (event) => {
+          if (!finished && event?.target instanceof HTMLScriptElement) window.setTimeout(showRecovery, 100);
+        }, true);
+        window.addEventListener('unhandledrejection', (event) => {
+          const message = String(event?.reason?.message || event?.reason || '');
+          if (!finished && /chunk|module|import|loading/i.test(message)) window.setTimeout(showRecovery, 100);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

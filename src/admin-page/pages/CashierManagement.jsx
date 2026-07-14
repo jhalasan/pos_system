@@ -3,6 +3,7 @@ import PageHeader from '../components/PageHeader'
 import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconUsers, IconUserPlus, IconScan, IconTrash, IconEdit, IconImage, IconDownload } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
@@ -34,6 +35,7 @@ function nextStaffBarcode(role = 'cashier') {
 }
 
 export default function CashierManagement() {
+  const dialog = useAppDialog()
   const [activeTab, setActiveTab] = useState('cashier')
   const loadStaff = useCallback(() => api.staff ? api.staff(activeTab) : api.cashiers(), [activeTab])
   const { data: list, setData: setList, loading, error } = useApi(loadStaff, [])
@@ -204,7 +206,7 @@ export default function CashierManagement() {
   }
 
   async function removeCashier(c) {
-    if (confirm(`Remove ${staffNoun.toLowerCase()} "${c.name}"?`)) {
+    if (await dialog.confirm(`Remove ${staffNoun.toLowerCase()} “${c.name}”?`, { title: `Remove ${staffNoun}`, confirmLabel: 'Remove' })) {
       try {
         await api.deleteCashier(c.id)
         setList(list.filter((x) => x.id !== c.id))
@@ -413,7 +415,7 @@ export default function CashierManagement() {
         <button className="btn btn-primary" onClick={printSelectedCashiers} disabled={selectedCashierBarcodes.length === 0 || printingBarcode === 'selected'}>
           {printingBarcode === 'selected' ? 'Printing...' : `Print Selected (${selectedCashierBarcodes.length})`}
         </button>
-        <button className="btn btn-outline" onClick={() => alert(`Scan a ${staffNoun.toLowerCase()} ID badge to look up an account.`)}>
+        <button className="btn btn-outline" onClick={() => dialog.alert(`Scan a ${staffNoun.toLowerCase()} ID badge to look up an account.`, { title: `${staffNoun} lookup` })}>
           <IconScan size={16} /> Scan ID
         </button>
         <button className="btn btn-primary" onClick={openAddCashier}>

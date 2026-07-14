@@ -4,6 +4,7 @@ import PageHeader from '../components/PageHeader'
 import PageLoader from '../components/PageLoader'
 import BrandedLoader from '../../components/BrandedLoader'
 import Modal from '../components/Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconDownload, IconSettings, IconUsers } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
@@ -25,6 +26,7 @@ import { requestUpdateCheck } from '../../utils/desktopUpdateEvents'
 const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
 export default function Settings() {
+  const dialog = useAppDialog()
   const [searchParams] = useSearchParams()
   const {
     data: admins,
@@ -217,7 +219,7 @@ export default function Settings() {
       'sync-status': 'saved sync messages and offline self-test result',
       full: 'all downloaded terminal data',
     }
-    const confirmation = prompt(`Reset ${labels[resetScope]}?\n\nCloud records, terminal identity, printer settings, and application preferences will not be deleted.\n\nType exactly: RESET TERMINAL`)
+    const confirmation = await dialog.prompt(`Reset ${labels[resetScope]}?\n\nCloud records, terminal identity, printer settings, and application preferences will not be deleted.\n\nType exactly: RESET TERMINAL`, '', { title: 'Reset local terminal data', confirmLabel: 'Reset data', danger: true })
     if (confirmation !== 'RESET TERMINAL') return flash('Local reset cancelled; confirmation did not match.')
     setResettingLocalData(true)
     try {
@@ -288,7 +290,7 @@ export default function Settings() {
   }
 
   async function restoreBackup(name) {
-    const confirmation = prompt(`Restoring replaces the current PocketBase data.\nType exactly: RESTORE ${name}`)
+    const confirmation = await dialog.prompt(`Restoring replaces the current PocketBase data.\n\nType exactly: RESTORE ${name}`, '', { title: 'Restore backup', confirmLabel: 'Restore backup', danger: true })
     if (confirmation !== `RESTORE ${name}`) return flash('Restore cancelled; confirmation did not match.')
     try {
       await api.restoreBackup(name, confirmation)

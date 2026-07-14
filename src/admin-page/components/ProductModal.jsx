@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import Modal from './Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconImage, IconPlus, IconTrash } from './Icons'
 import { defaultCategories } from '../services/api'
 
@@ -327,6 +328,7 @@ function resolveInventoryBaseQty(initialStock, conversionQuantity) {
 }
 
 export default function ProductModal({ mode, product, categories = defaultCategories, onClose, onSave }) {
+  const dialog = useAppDialog()
   const isEdit = mode === 'edit'
   const initialForm = buildInitialForm(product, categories, isEdit)
   const [form, setForm] = useState(initialForm)
@@ -427,11 +429,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   function selectImage(file) {
     if (!file) return
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-      alert('Please upload a JPEG, PNG, or WEBP image.')
+      dialog.alert('Please upload a JPEG, PNG, or WEBP image.', { title: 'Unsupported image format' })
       return
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert('Product image must be 5MB or smaller.')
+      dialog.alert('Product image must be 5MB or smaller.', { title: 'Image is too large' })
       return
     }
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
@@ -539,20 +541,20 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     const initialStock = Number(form.initialStock)
     const basePrice = deriveSellingPrice(costValue, marginValue, 1, conversionQuantity)
 
-    if (!form.name.trim()) { alert('Product name is required.'); return }
-    if (!String(form.category || '').trim()) { alert('Category is required.'); return }
-    if (!String(form.unit || '').trim()) { alert('Base unit is required.'); return }
-    if (costValue < 0) { alert('Product cost must be 0 or greater.'); return }
-    if (!Number.isFinite(marginValue) || marginValue < 0) { alert('Desired profit margin must be 0 or greater.'); return }
-    if (!Number.isFinite(initialStock) || initialStock < 0) { alert('Initial stock must be 0 or greater.'); return }
-    if (!Number.isFinite(Number(form.lowStock)) || Number(form.lowStock) < 0) { alert('Restock value must be 0 or greater.'); return }
+    if (!form.name.trim()) { dialog.alert('Product name is required.', { title: 'Check product details' }); return }
+    if (!String(form.category || '').trim()) { dialog.alert('Category is required.', { title: 'Check product details' }); return }
+    if (!String(form.unit || '').trim()) { dialog.alert('Base unit is required.', { title: 'Check product details' }); return }
+    if (costValue < 0) { dialog.alert('Product cost must be 0 or greater.', { title: 'Check product details' }); return }
+    if (!Number.isFinite(marginValue) || marginValue < 0) { dialog.alert('Desired profit margin must be 0 or greater.', { title: 'Check product details' }); return }
+    if (!Number.isFinite(initialStock) || initialStock < 0) { dialog.alert('Initial stock must be 0 or greater.', { title: 'Check product details' }); return }
+    if (!Number.isFinite(Number(form.lowStock)) || Number(form.lowStock) < 0) { dialog.alert('Restock value must be 0 or greater.', { title: 'Check product details' }); return }
 
     if (!form.hasMultipleUnits) {
-      if (!String(form.barcode || '').trim()) { alert('Barcode is required for single-unit products.'); return }
+      if (!String(form.barcode || '').trim()) { dialog.alert('Barcode is required for single-unit products.', { title: 'Check product details' }); return }
     } else {
-      if (!String(form.purchaseUnit || '').trim()) { alert('Purchase unit is required.'); return }
-      if (!Number.isFinite(conversionQuantity) || conversionQuantity <= 1) { alert('Units per purchase unit must be greater than 1 for multi-unit products.'); return }
-      if (normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)) { alert('Purchase unit must be larger than the smallest inventory unit.'); return }
+      if (!String(form.purchaseUnit || '').trim()) { dialog.alert('Purchase unit is required.', { title: 'Check product details' }); return }
+      if (!Number.isFinite(conversionQuantity) || conversionQuantity <= 1) { dialog.alert('Units per purchase unit must be greater than 1 for multi-unit products.', { title: 'Check product details' }); return }
+      if (normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)) { dialog.alert('Purchase unit must be larger than the smallest inventory unit.', { title: 'Check product details' }); return }
     }
 
     const submitSellingUnits = ensureSellingRows(form, sellingUnits)
@@ -576,16 +578,16 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
     const duplicateBarcodes = normalizedSellingUnits.map((row) => row.barcode).filter(Boolean)
     const hasDuplicateBarcode = duplicateBarcodes.some((barcode, index) => duplicateBarcodes.indexOf(barcode) !== index)
-    if (hasDuplicateBarcode) { alert('Selling unit barcodes must be unique.'); return }
+    if (hasDuplicateBarcode) { dialog.alert('Selling unit barcodes must be unique.', { title: 'Check selling units' }); return }
 
     const emptySellingUnit = normalizedSellingUnits.find((row) => !row.unit)
-    if (emptySellingUnit) { alert('Selling unit names cannot be empty.'); return }
+    if (emptySellingUnit) { dialog.alert('Selling unit names cannot be empty.', { title: 'Check selling units' }); return }
 
     const invalidPrice = normalizedSellingUnits.find((row) => Number(row.price) <= 0)
-    if (form.hasMultipleUnits && invalidPrice) { alert('Selling price must be greater than zero.'); return }
+    if (form.hasMultipleUnits && invalidPrice) { dialog.alert('Selling price must be greater than zero.', { title: 'Check selling units' }); return }
 
     if (form.hasMultipleUnits && !normalizedSellingUnits.every((row) => Number(row.price) > 0)) {
-      alert('Selling price must be greater than zero.');
+      dialog.alert('Selling price must be greater than zero.', { title: 'Check selling units' });
       return
     }
 

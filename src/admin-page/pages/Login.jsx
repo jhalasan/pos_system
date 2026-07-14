@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { login } from '../auth'
 import { IconLock } from '../components/Icons'
 import { api } from '../services/api'
+import { useAppDialog } from '../../components/AppDialogProvider'
 
 const QUICK_LOGIN_CACHE_KEY = 'nexa_admin_quick_accounts'
 const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
@@ -23,6 +24,7 @@ function initialsFor(account) {
 }
 
 export default function Login() {
+  const dialog = useAppDialog()
   const nav = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -156,7 +158,7 @@ export default function Login() {
             <button
               type="button"
               className="link-btn"
-              onClick={() => alert('Password reset should be handled by your admin process.')}
+              onClick={() => dialog.alert('Password resets are handled by your administrator.', { title: 'Forgot your password?' })}
             >
               Forgot Password?
             </button>

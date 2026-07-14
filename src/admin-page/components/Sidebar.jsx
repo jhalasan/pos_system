@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { logout } from '../auth'
 import { api } from '../services/api'
 import Modal from './Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { getTerminalName, setTerminalName } from '../../utils/terminalIdentity'
 import {
   IconDashboard, IconBox, IconTag, IconUsers, IconChart, IconList,
@@ -24,6 +25,7 @@ const navItems = [
 const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
 
 export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
+  const dialog = useAppDialog()
   const nav = useNavigate()
   const [toast, setToast] = useState('')
   const [terminalName, updateTerminalName] = useState(getTerminalName)
@@ -134,7 +136,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
 
   async function discardFailedProduct(op) {
     const name = op.payload?.name || op.payload?.barcode || 'this local product'
-    if (!confirm(`Discard the failed change for "${name}"?\n\nThis removes the obsolete sync entry and its local cached product. It will not recreate the product in PocketBase.`)) return
+    if (!await dialog.confirm(`Discard the failed change for “${name}”?\n\nThis removes the obsolete sync entry and its local cached product. It will not recreate the product in PocketBase.`, { title: 'Discard failed change', confirmLabel: 'Discard change' })) return
     setDiscarding(true)
     try {
       await api.discardFailedProductSync(op.id)
@@ -149,7 +151,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
 
   async function discardAllFailedProducts() {
     const count = syncQueue.filter(isDiscardableProductFailure).length
-    if (!count || !confirm(`Discard ${count} failed product change(s)?\n\nOnly failed product create, update, and delete operations will be removed. Their local cached products will also be deleted. Sales and cashier records will not be touched.`)) return
+    if (!count || !await dialog.confirm(`Discard ${count} failed product change(s)?\n\nOnly failed product create, update, and delete operations will be removed. Their local cached products will also be deleted. Sales and cashier records will not be touched.`, { title: 'Discard failed product changes', confirmLabel: 'Discard changes' })) return
     setDiscarding(true)
     try {
       const result = await api.discardAllFailedProductSync()
@@ -172,8 +174,8 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     return value === '' || value === null || value === undefined ? '—' : String(value)
   }
 
-  function renameTerminal() {
-    const value = prompt('Terminal name (for example COUNTER-A):', terminalName)
+  async function renameTerminal() {
+    const value = await dialog.prompt('Enter a name that identifies this terminal.', terminalName, { title: 'Rename terminal', confirmLabel: 'Save name' })
     if (value === null) return
     updateTerminalName(setTerminalName(value))
   }

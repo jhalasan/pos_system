@@ -3,6 +3,7 @@ import PageHeader from '../components/PageHeader'
 import PageLoader from '../components/PageLoader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconPlus, IconSearch, IconEdit, IconTrash, IconArchive, IconImage, IconDownload, IconPrint } from '../components/Icons'
 import { api, defaultCategories, statusLabel, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
@@ -134,6 +135,7 @@ function formatProductPrice(product) {
 }
 
 export default function ProductManagement() {
+  const dialog = useAppDialog()
   const pageSize = 20
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
   const { data: categoryRecords, setData: setCategoryRecords } = useApi(api.categories, [])
@@ -236,7 +238,7 @@ export default function ProductManagement() {
   }
 
   async function handleDelete(p) {
-    if (confirm(`Delete "${p.name}"? This cannot be undone.`)) {
+    if (await dialog.confirm(`Delete “${p.name}”?\n\nThis action cannot be undone.`, { title: 'Delete product', confirmLabel: 'Delete product' })) {
       try {
         await api.deleteProduct(p.id)
         setList(list.filter((x) => x.id !== p.id))

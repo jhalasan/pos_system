@@ -1,7 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import { IconShield, IconCart } from '../components/Icons'
+import { useAppDialog } from '../../components/AppDialogProvider'
 
 export default function RoleSelect() {
+  const dialog = useAppDialog()
   const nav = useNavigate()
 
   return (
@@ -27,7 +29,7 @@ export default function RoleSelect() {
             <p>Process sales, manage transactions, and handle customer payments.</p>
             <button
               className="btn btn-outline btn-block"
-              onClick={() => alert('Cashier side is out of scope — this build covers the Admin dashboard only.')}
+              onClick={() => dialog.alert('Use the NEXA POS Cashier application to process sales and payments.', { title: 'Open the cashier app' })}
             >
               Login as Cashier
             </button>

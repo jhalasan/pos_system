@@ -3,16 +3,30 @@ import ReactDOM from 'react-dom/client'
 import AppTarget from '@app-target'
 import AppErrorBoundary from './components/AppErrorBoundary.jsx'
 import CapsLockDetector from './components/CapsLockDetector.jsx'
+import { AppDialogProvider } from './components/AppDialogProvider.jsx'
 import { applyTheme, getStoredTheme } from './utils/themeSettings.js'
 import './global.css'
 
 applyTheme(getStoredTheme())
 
+// Kept in the entry module because it reports this specific root's first commit.
+// eslint-disable-next-line react-refresh/only-export-components
+function BootReadySignal() {
+  React.useEffect(() => {
+    window.__NEXA_REACT_READY__ = true
+    window.dispatchEvent(new Event('nexa-react-ready'))
+  }, [])
+  return null
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppErrorBoundary>
-      <AppTarget />
-      <CapsLockDetector />
+      <AppDialogProvider>
+        <BootReadySignal />
+        <AppTarget />
+        <CapsLockDetector />
+      </AppDialogProvider>
     </AppErrorBoundary>
   </React.StrictMode>,
 )

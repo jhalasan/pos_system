@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import BrandedLoader from '../../components/BrandedLoader'
 import Modal from '../components/Modal'
+import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconBarcode, IconCheck, IconLock, IconPlus, IconShield, IconTag, IconTrash } from '../components/Icons'
 import { currentAdminUser } from '../auth'
 import { api } from '../services/api'
@@ -117,6 +118,7 @@ function AuthorizationModal({ email, onClose, onGenerated }) {
 }
 
 export default function BarcodeTools() {
+  const dialog = useAppDialog()
   const {
     data: authCodes,
     setData: setAuthCodes,
@@ -192,8 +194,8 @@ export default function BarcodeTools() {
     localStorage.setItem('nexa_generated_barcodes', JSON.stringify(next))
   }
 
-  function renameGeneratedBarcode(barcode) {
-    const title = prompt('Barcode name:', barcode.title)
+  async function renameGeneratedBarcode(barcode) {
+    const title = await dialog.prompt('Enter a new name for this barcode.', barcode.title, { title: 'Rename barcode', confirmLabel: 'Save name' })
     if (title === null || !title.trim()) return
     const next = generatedBarcodes.map((item) => (
       item.id === barcode.id ? { ...item, title: title.trim() } : item
@@ -287,7 +289,7 @@ export default function BarcodeTools() {
   }
 
   async function deleteAuthorization(code) {
-    if (!confirm(`Delete authorization barcode ${code.barcode}? This cannot be undone.`)) return
+    if (!await dialog.confirm(`Delete authorization barcode ${code.barcode}?\n\nThis action cannot be undone.`, { title: 'Delete authorization barcode', confirmLabel: 'Delete barcode' })) return
     try {
       await api.deleteAuthorizationBarcode(code.id)
       setAuthCodes(authCodes.filter((item) => item.id !== code.id))

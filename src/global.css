@@ -1261,3 +1261,15 @@ table.data tbody tr:hover { background: var(--surface-2); }
   .stat-grid { grid-template-columns: repeat(4, 1fr); }
   .fsn-grid { grid-template-columns: repeat(3, 1fr); }
 }
+/* Branded replacement for browser/Tauri alert, confirm, and prompt dialogs. */
+.app-dialog-overlay { position:fixed; inset:0; z-index:10000; display:grid; place-items:center; padding:20px; background:rgba(15,23,42,.58); backdrop-filter:blur(3px); animation:app-dialog-fade .16s ease; }
+.app-dialog { width:min(440px,100%); padding:24px; border:1px solid rgba(148,163,184,.25); border-radius:16px; background:#fff; color:#111827; box-shadow:0 24px 70px rgba(15,23,42,.3); animation:app-dialog-pop .2s cubic-bezier(.34,1.56,.64,1); }
+.app-dialog-icon { display:grid; place-items:center; width:42px; height:42px; margin-bottom:14px; border-radius:12px; background:#eef2ff; color:#4f46e5; font-size:20px; font-weight:800; }
+.app-dialog-icon.danger { background:#fee2e2; color:#dc2626; }
+.app-dialog-content h2 { margin:0 0 8px; font-size:18px; }
+.app-dialog-content p { margin:0; color:#64748b; line-height:1.55; white-space:pre-line; }
+.app-dialog-content .input { width:100%; margin-top:16px; }
+.app-dialog-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:22px; }
+@keyframes app-dialog-fade { from { opacity:0 } }
+@keyframes app-dialog-pop { from { opacity:0; transform:translateY(8px) scale(.97) } }
+@media (prefers-reduced-motion:reduce) { .app-dialog-overlay,.app-dialog { animation:none } }

@@ -2275,7 +2275,11 @@ export const desktopAdminApi = {
       await recordActivity('Cashier', 'Deleted cashier account offline.')
       return null
     }
-    await pb.collection('users').delete(id, { requestKey: null })
+    await pb.collection('users').delete(id, { requestKey: null }).catch((error) => {
+      // Another terminal may have removed this account after this screen loaded.
+      // A missing cloud record means the requested end state is already reached.
+      if (Number(error?.status || error?.response?.status) !== 404) throw error
+    })
     await adminDb.users.delete(id)
     await recordActivity('Cashier', 'Deleted cashier account.')
     return null

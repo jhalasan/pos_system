@@ -2982,8 +2982,8 @@ const Cashier = ({ onLogout, user }) => {
       <ConnectionStatusBar scope="cashier" placement="banner" />
 
       <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
-        <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>
-          <span className={styles['sidebar-symbol']}>☰</span><strong>Sales Menu</strong>
+        <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!sidebarCollapsed}>
+          <span className={`${styles['sidebar-symbol']} ${styles['menu-toggle-icon']} ${sidebarCollapsed ? styles.collapsed : ''}`} aria-hidden="true">☰</span><strong>Sales Menu</strong>
         </button>
         <button type="button" onClick={handleNewTransaction}><Plus size={18} /><span>New Transaction</span></button>
         <button type="button" className={showHistory ? styles.active : ''} onClick={handleOpenHistory}><ClockHistory size={18} /><span>{withShortcut('History', 'history')}</span></button>
