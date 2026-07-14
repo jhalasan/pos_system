@@ -47,6 +47,15 @@ async function patchField(name, fieldName, patch) {
   console.log(`${name}.${fieldName}: field updated`)
 }
 
+async function ensureJsonField(name, fieldName, help = '') {
+  const collection = await pb.collections.getOne(name)
+  const fieldsKey = Array.isArray(collection.fields) ? 'fields' : 'schema'
+  const fields = collection[fieldsKey] || []
+  if (fields.some((field) => field.name === fieldName)) return
+  await pb.collections.update(collection.id, { [fieldsKey]: [...fields, { name: fieldName, type: 'json', required: false, maxSize: 200000, help }] })
+  console.log(`${name}.${fieldName}: field created`)
+}
+
 await authAsSuperuser()
 
 await updateCollection('categories', {
@@ -147,5 +156,6 @@ await updateCollection('users', {
   updateRule: adminRule,
   deleteRule: adminRule,
 })
+await ensureJsonField('users', 'permissions', 'Allowed POS capabilities for this staff account. Empty keeps legacy access.')
 
 console.log(`PocketBase rules configured for ${pbUrl}`)

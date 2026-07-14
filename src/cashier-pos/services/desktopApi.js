@@ -60,6 +60,7 @@ function toQuickLoginAccount(record) {
     status: record.status || 'active',
     shift: record.shift || '',
     cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
+    permissions: Array.isArray(record.permissions) ? record.permissions : [],
   }
 }
 
@@ -73,6 +74,7 @@ function toCachedQuickLoginAccount(record) {
     shift: record.shift || '',
     quickLoginEnabled: Boolean(record.quickLoginEnabled ?? record.quick_login_enabled),
     cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
+    permissions: Array.isArray(record.permissions) ? record.permissions : [],
   }
 }
 
@@ -1152,7 +1154,7 @@ export const desktopCashierApi = {
     }
   },
 
-  async adjustCompletedSale({ saleId, cashierId, authorization, type, items, reason, note }) {
+  async adjustCompletedSale({ saleId, cashierId, authorization, type, items, reason, note, restock = true }) {
     const localSale = await findLocalSale(saleId)
     if (!localSale) throw new Error('Completed sale not found on this device.')
     if (localSale.status === 'voided') throw new Error('This transaction has already been voided.')
@@ -1167,6 +1169,7 @@ export const desktopCashierApi = {
         items: items || [],
         reason: String(reason || ''),
         note: String(note || ''),
+        restock: restock !== false,
         createdAt: new Date().toISOString(),
     }, saleId)
 
@@ -1175,6 +1178,7 @@ export const desktopCashierApi = {
       items,
       reason,
       note,
+      restock: restock !== false,
       approvedBy: approver.name,
       cashierId,
       createdAt: new Date().toISOString(),
@@ -1184,7 +1188,7 @@ export const desktopCashierApi = {
     await createCloudActivityLog({
       cashierId: cashierId || localSale.cashierId,
       action: type === 'exchange' ? 'Transaction Exchange' : 'Transaction Refund',
-      detail: `${type === 'exchange' ? 'Recorded exchange' : 'Refunded'} transaction ${localSale.transactionNo} for PHP ${Number(latestAdjustment?.amount || 0).toFixed(2)} approved by ${approver.name}${reason ? ` (${reason})` : ''}`,
+      detail: `${type === 'exchange' ? 'Recorded exchange' : 'Refunded'} transaction ${localSale.transactionNo} for PHP ${Number(latestAdjustment?.amount || 0).toFixed(2)} approved by ${approver.name}${reason ? ` (${reason})` : ''}; ${restock !== false ? 'returned to stock' : 'not restocked'}`,
     })
 
     return toCashierSale(adjustedSale)

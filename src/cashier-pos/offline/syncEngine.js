@@ -495,7 +495,7 @@ export class CashierSyncEngine extends EventTarget {
         }),
         { requestKey: null },
       )
-      for (const item of payload.items || []) {
+      for (const item of (op.type === 'adjustCompletedSale' && payload.restock === false) ? [] : (payload.items || [])) {
           const productId = String(item.productId || item.id || '')
           if (!productId) continue
           const existingMovement = await this.pb.collection('stock_movements').getFirstListItem(

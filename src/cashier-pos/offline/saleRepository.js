@@ -1,9 +1,9 @@
-import { cashierDb, initializeCashierDb } from './db'
-import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
-import { barcodesMatch } from '../utils/barcodeUtils'
-import { normalizeProduct } from './productRepository'
-import { toBaseStockQuantity } from './stockUtils'
-import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
+import { cashierDb, initializeCashierDb } from './db.js'
+import { adminDb, initializeAdminDb } from '../../admin-page/offline/db.js'
+import { barcodesMatch } from '../utils/barcodeUtils.js'
+import { normalizeProduct } from './productRepository.js'
+import { toBaseStockQuantity } from './stockUtils.js'
+import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -295,6 +295,7 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
     amount,
     items: returnedItems,
     note: String(adjustment.note || '').trim(),
+    restock: adjustment.restock !== false,
   }
 
   const canStoreCompletedSales = await hasTable('completedSales')
@@ -302,7 +303,7 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
   if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
 
   await cashierDb.transaction('rw', ...transactionTables, async () => {
-    await restoreProductStock(returnedItems)
+    if (entry.restock) await restoreProductStock(returnedItems)
 
     if (canStoreCompletedSales) {
       await cashierDb.completedSales.put({

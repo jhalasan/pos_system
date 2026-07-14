@@ -381,6 +381,7 @@ function tauriInvoke() {
 
 const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
+  const can = useCallback((capability) => !Array.isArray(user?.permissions) || user.permissions.length === 0 || user.permissions.includes(capability), [user?.permissions]);
   const barcodeInputRef = useRef(null);
   const searchProductInputRef = useRef(null);
   const initialQuantityInputRef = useRef(null);
@@ -459,6 +460,7 @@ const Cashier = ({ onLogout, user }) => {
   const lookupApproval = useApproval('barcode');
   const [lookupReason, setLookupReason] = useState('');
   const [lookupNote, setLookupNote] = useState('');
+  const [lookupRestock, setLookupRestock] = useState(true);
   const [lookupReturnQty, setLookupReturnQty] = useState({});
   const [lookupActionLoading, setLookupActionLoading] = useState(false);
   const [showReceiptSettings, setShowReceiptSettings] = useState(false);
@@ -1584,6 +1586,7 @@ const Cashier = ({ onLogout, user }) => {
     lookupApproval.reset();
     setLookupReason('');
     setLookupNote('');
+    setLookupRestock(true);
   };
 
   const resetReceiptLookupState = () => {
@@ -1656,6 +1659,7 @@ const Cashier = ({ onLogout, user }) => {
 
   const handleLookupReprint = async () => {
     if (!lookupSale) return;
+    if (!can('receipt_reprint')) return setLookupError('Your account does not have permission to reprint receipts.');
     try {
       await printCompletedReceipt({
         transactionNo: lookupSale.transactionNo,
@@ -1717,6 +1721,11 @@ const Cashier = ({ onLogout, user }) => {
 
   const handleLookupApprovalAction = async (override = {}) => {
     if (!lookupSale) return;
+    const requiredCapability = lookupMode === 'void' ? 'voids' : lookupMode === 'exchange' ? 'exchanges' : 'refunds';
+    if (!can(requiredCapability)) {
+      lookupApproval.setError(`Your account does not have permission to request ${lookupMode}.`);
+      return;
+    }
 
     const code = Object.hasOwn(override || {}, 'code') ? override.code : lookupApproval.code;
     const email = Object.hasOwn(override || {}, 'email') ? override.email : lookupApproval.email;
@@ -1728,6 +1737,10 @@ const Cashier = ({ onLogout, user }) => {
     }
     if (lookupMode !== 'void' && selectedLookupReturnItems().length === 0) {
       lookupApproval.setError('Select at least one item quantity.');
+      return;
+    }
+    if (!lookupReason.trim()) {
+      lookupApproval.setError(`Enter a reason for this ${lookupMode}.`);
       return;
     }
 
@@ -1756,6 +1769,7 @@ const Cashier = ({ onLogout, user }) => {
             })),
             reason: lookupReason.trim(),
             note: lookupNote.trim(),
+            restock: lookupRestock,
           });
 
       await loadProducts();
@@ -1868,6 +1882,10 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const openCashFlowModal = (type = 'out') => {
+    if (!can('cash_drawer')) {
+      showNotification('Your account does not have permission to record cash drawer movements.');
+      return;
+    }
     if (!shiftSession) {
       setShowShiftOpen(true);
       showNotification('Open a cashier shift before recording cash flow.');
@@ -2430,6 +2448,10 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const openPaymentFlow = () => {
+    if (!can('process_sales')) {
+      showNotification('Your account does not have permission to process sales.');
+      return;
+    }
     if (!shiftSession) {
       setShowShiftOpen(true);
       showNotification('Open a cashier shift before completing sales.');
@@ -4008,6 +4030,16 @@ const Cashier = ({ onLogout, user }) => {
                   autoFocus
                   disabled={adminLogoutBusy}
                 />
+                {lookupMode !== 'void' && (
+                  <label className={styles['return-disposition']}>
+                    <span>Returned Item Disposition</span>
+                    <select value={lookupRestock ? 'restock' : 'do-not-restock'} onChange={(event) => setLookupRestock(event.target.value === 'restock')} disabled={lookupActionLoading}>
+                      <option value="restock">Return to available stock</option>
+                      <option value="do-not-restock">Do not restock (damaged/expired)</option>
+                    </select>
+                    <small>This decision is recorded with the refund or exchange.</small>
+                  </label>
+                )}
                 <Input
                   label="Manager Password"
                   type="password"

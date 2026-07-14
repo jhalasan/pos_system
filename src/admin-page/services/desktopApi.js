@@ -98,6 +98,39 @@ async function isCloudReachable() {
   return reachabilityPromise
 }
 
+function reconcileAdminSyncStatus(operations, { force = false } = {}) {
+  const failed = operations.filter((operation) => operation.status === 'failed').length
+  const pending = operations.filter((operation) => ['pending', 'conflict'].includes(operation.status)).length
+  const next = failed > 0
+    ? { state: 'failed', message: `Auto-Sync Finished with ${failed} Failed.` }
+    : pending > 0
+      ? { state: 'waiting', message: `${pending} local change${pending === 1 ? '' : 's'} waiting to sync.` }
+      : { state: 'succeeded', message: 'Everything is synchronized.' }
+
+  let current = null
+  try {
+    current = JSON.parse(globalThis.localStorage?.getItem('nexa_sync_status_admin') || 'null')
+  } catch {
+    // A corrupt or unavailable status cache should not block queue maintenance.
+  }
+
+  const staleFailure = ['failed', 'waiting'].includes(current?.state)
+  if (!force && !staleFailure) return
+  if (current?.state === next.state && current?.message === next.message) return
+
+  const stored = { ...next, updatedAt: new Date().toISOString() }
+  try {
+    globalThis.localStorage?.setItem('nexa_sync_status_admin', JSON.stringify(stored))
+  } catch {
+    // The live event still updates the UI when persistent storage is unavailable.
+  }
+  if (typeof globalThis.CustomEvent === 'function') {
+    globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+      detail: { scope: 'admin', ...next },
+    }))
+  }
+}
+
 function firstRelation(value) {
   return Array.isArray(value) ? value[0] : value
 }
@@ -181,6 +214,7 @@ function toCashierUser(record, sales = 0) {
     image: image || '',
     imageUrl: image ? pb.files.getURL(record, image, { thumb: '100x100' }) : '',
     sales: Number(sales) || 0,
+    permissions: Array.isArray(record.permissions) ? record.permissions : [],
   }
 }
 
@@ -643,6 +677,7 @@ function cashierPayload(data) {
     status: data.status || 'active',
     role: 'cashier',
     emailVisibility: true,
+    permissions: Array.isArray(data.permissions) ? data.permissions : [],
   }
 
   if (staffBarcode) payload.void_barcode = staffBarcode
@@ -661,7 +696,7 @@ function cashierBody(data) {
 
   const formData = new FormData()
   for (const [key, value] of Object.entries(payload)) {
-    formData.append(key, value ?? '')
+    formData.append(key, key === 'permissions' ? JSON.stringify(value || []) : (value ?? ''))
   }
   formData.append('profile_img', data.imageFile)
   return formData
@@ -1584,6 +1619,40 @@ export const desktopAdminApi = {
     })
   },
 
+  async adjustInventoryCount({ productId, countedQty, reason, note = '' }) {
+    assertAdmin()
+    await startAdminRuntime()
+    const normalizedReason = String(reason || '').trim()
+    if (!normalizedReason) throw new Error('An adjustment reason is required.')
+    const actual = Number(countedQty)
+    if (!Number.isFinite(actual) || actual < 0) throw new Error('Physical count must be zero or greater.')
+
+    let updated
+    let previousQty
+    await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+      const product = await adminDb.products.get(productId)
+      if (!product || product.deleted) throw new Error('Product was not found in the local catalog.')
+      previousQty = Number(product.qty) || 0
+      const delta = actual - previousQty
+      if (!delta) throw new Error('Physical count already matches system stock.')
+      updated = { ...product, qty: actual, pendingSync: true, updated: new Date().toISOString() }
+      updated.status = deriveStatus(updated)
+      await adminDb.products.put(updated)
+      await queueOperation('adjustInventoryCount', product.id, {
+        id: product.id,
+        barcode: product.barcode,
+        name: product.name,
+        previousQty,
+        countedQty: actual,
+        delta,
+        reason: normalizedReason,
+        note: String(note || '').trim(),
+      })
+    })
+    await recordActivity('Inventory Adjustment', `Adjusted "${updated.name}" from ${previousQty} to ${actual} (${normalizedReason})${note ? ` - ${note}` : ''}.`)
+    return updated
+  },
+
   async fsnInventory() {
     const products = await listDesktopProducts()
     const localCompletedSales = await localCashierCompletedSales()
@@ -1744,20 +1813,56 @@ export const desktopAdminApi = {
       cashierDb.pendingOps.orderBy('createdAt').reverse().toArray(),
       cashierDb.pendingSales.orderBy('createdAt').reverse().toArray(),
     ])
+    reconcileAdminSyncStatus(adminOps)
     return [
-      ...adminOps.map((op) => ({ ...op, source: 'Admin' })),
-      ...cashierOps.map((op) => ({ ...op, source: 'Cashier', payload: op.payload || {} })),
+      ...adminOps.map((op) => ({ ...op, source: 'Admin', queueKind: 'adminOperation' })),
+      ...cashierOps.map((op) => ({ ...op, source: 'Cashier', queueKind: 'cashierOperation', payload: op.payload || {} })),
       ...cashierSales.map((sale) => ({
         ...sale,
         id: sale.clientSaleId,
         type: 'sale',
         source: 'Cashier',
+        queueKind: 'cashierSale',
         payload: {
           name: sale.transactionNo,
           barcode: sale.items?.map((item) => item.barcode).filter(Boolean).join(', '),
         },
       })),
     ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  },
+  async discardFailedProductSync(id) {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const operation = await adminDb.pendingOps.get(id)
+    const productTypes = new Set(['createProduct', 'updateProduct', 'deleteProduct'])
+    if (!operation || operation.status !== 'failed' || !productTypes.has(operation.type)) {
+      throw new Error('The failed product change was not found or is not safe to discard.')
+    }
+
+    await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+      const related = await adminDb.pendingOps.where('productId').equals(operation.productId).toArray()
+      const failedRelatedIds = related.filter((item) => item.status === 'failed' && productTypes.has(item.type)).map((item) => item.id)
+      await adminDb.pendingOps.bulkDelete(failedRelatedIds)
+      await adminDb.products.delete(operation.productId)
+    })
+    await cashierDb.products.delete(operation.productId).catch(() => {})
+    reconcileAdminSyncStatus(await adminDb.pendingOps.toArray(), { force: true })
+    return { discarded: true, productId: operation.productId }
+  },
+  async discardAllFailedProductSync() {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const productTypes = new Set(['createProduct', 'updateProduct', 'deleteProduct'])
+    const failed = (await adminDb.pendingOps.where('status').equals('failed').toArray())
+      .filter((operation) => productTypes.has(operation.type))
+    const productIds = [...new Set(failed.map((operation) => operation.productId).filter(Boolean))]
+    await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
+      await adminDb.pendingOps.bulkDelete(failed.map((operation) => operation.id))
+      await adminDb.products.bulkDelete(productIds)
+    })
+    await cashierDb.products.bulkDelete(productIds).catch(() => {})
+    reconcileAdminSyncStatus(await adminDb.pendingOps.toArray(), { force: true })
+    return { discarded: failed.length, productsRemoved: productIds.length }
   },
   async resolveSyncConflict(id, resolution = 'cloud', mergedFields = {}) {
     await startAdminRuntime()

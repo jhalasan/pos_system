@@ -31,6 +31,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
   const [selectedConflict, setSelectedConflict] = useState(null)
   const [fieldChoices, setFieldChoices] = useState({})
   const [syncing, setSyncing] = useState(false)
+  const [discarding, setDiscarding] = useState(false)
 
   useEffect(() => {
     if (!showSyncCenter) return undefined
@@ -99,6 +100,40 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       flash(`Conflict resolved using ${resolution === 'fields' ? 'selected fields' : resolution}.`)
     } catch (error) {
       flash(error.message || 'Unable to resolve conflict.')
+    }
+  }
+
+  const isDiscardableProductFailure = (op) => op.source === 'Admin'
+    && op.status === 'failed'
+    && ['createProduct', 'updateProduct', 'deleteProduct'].includes(op.type)
+
+  async function discardFailedProduct(op) {
+    const name = op.payload?.name || op.payload?.barcode || 'this local product'
+    if (!confirm(`Discard the failed change for "${name}"?\n\nThis removes the obsolete sync entry and its local cached product. It will not recreate the product in PocketBase.`)) return
+    setDiscarding(true)
+    try {
+      await api.discardFailedProductSync(op.id)
+      setSyncQueue(await api.syncQueueDetails())
+      flash(`Discarded obsolete changes for ${name}.`)
+    } catch (error) {
+      flash(error.message || 'Unable to discard the failed product change.')
+    } finally {
+      setDiscarding(false)
+    }
+  }
+
+  async function discardAllFailedProducts() {
+    const count = syncQueue.filter(isDiscardableProductFailure).length
+    if (!count || !confirm(`Discard ${count} failed product change(s)?\n\nOnly failed product create, update, and delete operations will be removed. Their local cached products will also be deleted. Sales and cashier records will not be touched.`)) return
+    setDiscarding(true)
+    try {
+      const result = await api.discardAllFailedProductSync()
+      setSyncQueue(await api.syncQueueDetails())
+      flash(`Discarded ${result.discarded || 0} obsolete product change(s).`)
+    } catch (error) {
+      flash(error.message || 'Unable to discard failed product changes.')
+    } finally {
+      setDiscarding(false)
     }
   }
 
@@ -172,7 +207,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       {toast && <div className="toast"><IconCloud size={15} /> {toast}</div>}
       {showSyncCenter && (
         <Modal className="sync-center-modal" title="Sync Center" onClose={() => { setShowSyncCenter(false); setSelectedConflict(null) }}>
-          <div className="sync-center-toolbar"><div><strong>Local changes awaiting cloud upload</strong><small>Sales and stock changes remain safe on this terminal while offline.</small></div><button className="btn btn-primary btn-sm" onClick={handleSync} disabled={syncing}>{syncing ? 'Retrying…' : 'Retry All'}</button></div>
+          <div className="sync-center-toolbar"><div><strong>Local changes awaiting cloud upload</strong><small>Sales and stock changes remain safe on this terminal while offline.</small></div><div className="sync-center-toolbar-actions">{syncQueue.some(isDiscardableProductFailure) && <button className="btn btn-outline btn-sm" onClick={discardAllFailedProducts} disabled={discarding}>{discarding ? 'Discarding…' : 'Discard Failed Products'}</button>}<button className="btn btn-primary btn-sm" onClick={handleSync} disabled={syncing}>{syncing ? 'Retrying…' : 'Retry All'}</button></div></div>
           <div className="sync-center-summary">
             <div><strong>{syncQueue.length}</strong><span>Total</span></div>
             <div><strong>{syncQueue.filter((op) => op.status === 'pending').length}</strong><span>Waiting</span></div>
@@ -199,6 +234,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
               {syncQueue.map((op) => (
                 <div className={`sync-queue-card ${op.status}`} key={op.id}>
                   <div><strong>{op.payload?.name || op.transactionNo || op.payload?.barcode || op.type}</strong><small>{op.source || 'Admin'} · {String(op.type || 'change').replaceAll('_', ' ')} · {op.status}{op.createdAt ? ` · ${new Date(op.createdAt).toLocaleString('en-PH')}` : ''}</small>{op.lastError && <p>{op.lastError}</p>}</div>
+                  {isDiscardableProductFailure(op) && <button className="btn btn-outline btn-sm sync-discard-btn" onClick={() => discardFailedProduct(op)} disabled={discarding}>Discard</button>}
                   {op.status === 'conflict' && <div className="sync-conflict-actions"><button className="btn btn-outline btn-sm" onClick={() => resolveConflict(op, 'cloud')}>Use Cloud</button><button className="btn btn-outline btn-sm" onClick={() => reviewFields(op)}>Review Fields</button><button className="btn btn-primary btn-sm" onClick={() => resolveConflict(op, 'local')}>Use Local</button></div>}
                 </div>
               ))}

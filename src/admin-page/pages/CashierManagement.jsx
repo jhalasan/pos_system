@@ -16,7 +16,16 @@ import {
   selectBarcodePdfDirectory,
 } from '../utils/barcodePrinter'
 
-const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', password: '', passwordConfirm: '', role: 'cashier' }
+const cashierCapabilities = [
+  ['process_sales', 'Process sales'],
+  ['receipt_reprint', 'Reprint receipts'],
+  ['refunds', 'Request refunds'],
+  ['exchanges', 'Request exchanges'],
+  ['voids', 'Request transaction voids'],
+  ['cash_drawer', 'Record cash in/out'],
+]
+const defaultCashierPermissions = cashierCapabilities.map(([value]) => value)
+const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', password: '', passwordConfirm: '', role: 'cashier', permissions: defaultCashierPermissions }
 
 function nextStaffBarcode(role = 'cashier') {
   const prefix = role === 'manager' ? '92' : '81'
@@ -98,6 +107,7 @@ export default function CashierManagement() {
       password: '',
       passwordConfirm: '',
       role: cashier.role || activeTab,
+      permissions: Array.isArray(cashier.permissions) && cashier.permissions.length ? cashier.permissions : defaultCashierPermissions,
     })
     setImagePreview(cashier.imageUrl || '')
     setFormError('')
@@ -111,6 +121,10 @@ export default function CashierManagement() {
     setImagePreview('')
     setFormError('')
     setSaving(false)
+  }
+
+  function togglePermission(permission) {
+    setForm((current) => ({ ...current, permissions: current.permissions.includes(permission) ? current.permissions.filter((item) => item !== permission) : [...current.permissions, permission] }))
   }
 
   function selectImage(file) {
@@ -626,6 +640,15 @@ export default function CashierManagement() {
                 <option value="inactive">Inactive</option>
               </select>
             </div>
+            {!isManagerTab && (
+              <fieldset className="permission-grid span-2">
+                <legend>POS Permissions</legend>
+                <p>Manager approval is still required for protected actions.</p>
+                <div>{cashierCapabilities.map(([value, label]) => (
+                  <label key={value}><input type="checkbox" checked={form.permissions.includes(value)} onChange={() => togglePermission(value)} /><span>{label}</span></label>
+                ))}</div>
+              </fieldset>
+            )}
             {!isEdit && (
               <>
                 <div className="field">

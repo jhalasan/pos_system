@@ -171,6 +171,7 @@ function stockDeltaForOp(op) {
   const qty = Math.max(0, Number(op?.payload?.qty) || 0)
   if (op?.type === 'scanInventory') return qty
   if (op?.type === 'stockOutInventory') return -qty
+  if (op?.type === 'adjustInventoryCount') return Number(op?.payload?.delta) || 0
   return 0
 }
 
@@ -178,7 +179,7 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
   const delta = Number(nextQuantity) - Number(previousQuantity)
   if (!product?.id || delta === 0) return
 
-  const movementType = delta > 0 ? 'stock_in' : 'stock_out'
+  const movementType = op.type === 'adjustInventoryCount' ? 'adjustment' : delta > 0 ? 'stock_in' : 'stock_out'
   if (await findStockMovement(pb, product.id, op.id)) return
   await pb.collection('stock_movements').create({
     product_id: product.id,
@@ -629,6 +630,18 @@ export class AdminSyncEngine extends EventTarget {
         preservePendingStock: true,
         currentOpId: op.id,
       })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'adjustInventoryCount') {
+      const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
+      if (!product) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+      const previousQuantity = Number(product.quantity) || 0
+      const nextQuantity = Math.max(0, previousQuantity + (Number(op.payload.delta) || 0))
+      const updated = await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { expand: 'category', requestKey: op.id })
+      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
+      await replaceLocalProductWithCloud(op.productId, updated, this.pb, { preservePendingStock: true, currentOpId: op.id })
       await adminDb.pendingOps.delete(op.id)
       return
     }

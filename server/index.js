@@ -31,6 +31,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIST_DIR = path.resolve(__dirname, '..', 'dist')
 const INDEX_HTML = path.join(DIST_DIR, 'index.html')
 const PB_PROXY_TARGET = process.env.POCKETBASE_PROXY_TARGET || PB_URL
+const AUTO_BACKUP_ENABLED = String(process.env.AUTO_BACKUP_ENABLED || 'true').toLowerCase() !== 'false'
+const AUTO_BACKUP_RETENTION = Math.max(1, Number(process.env.AUTO_BACKUP_RETENTION) || 7)
+const AUTO_BACKUP_INTERVAL_MS = Math.max(60 * 60 * 1000, Number(process.env.AUTO_BACKUP_INTERVAL_MS) || 24 * 60 * 60 * 1000)
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:1420,http://localhost:5133,http://localhost:5173,http://localhost:5174')
   .split(',')
   .map((origin) => origin.trim())
@@ -1691,6 +1694,26 @@ app.get('/api/gcash-payments', asyncRoute(async (_req, res) => {
   res.json(records.map(gcashPaymentFromSale).filter(Boolean))
 }))
 
+app.post('/api/inventory/adjust-count', asyncRoute(async (req, res) => {
+  const productId = String(req.body.productId || '').trim()
+  const countedQty = Number(req.body.countedQty)
+  const reason = String(req.body.reason || '').trim()
+  const note = String(req.body.note || '').trim()
+  if (!productId) return res.status(400).json({ error: 'Product is required.' })
+  if (!Number.isFinite(countedQty) || countedQty < 0) return res.status(400).json({ error: 'Physical count must be zero or greater.' })
+  if (!reason) return res.status(400).json({ error: 'Adjustment reason is required.' })
+  const products = await pbCollection('products')
+  const record = await products.getOne(productId, { expand: 'category' }).catch(() => null)
+  if (!record) return res.status(404).json({ error: 'Product was not found.' })
+  const previousQty = Number(record.quantity) || 0
+  const delta = countedQty - previousQty
+  if (!delta) return res.status(409).json({ error: 'Physical count already matches system stock.' })
+  const updated = await products.update(record.id, { quantity: numberFieldValue(countedQty) }, { expand: 'category' })
+  await createStockMovement({ productId: record.id, movementType: 'adjustment', quantity: Math.abs(delta), previousQuantity: previousQty, newQuantity: countedQty, referenceType: 'physical_count', notes: `${reason}${note ? ` (${note})` : ''}` })
+  await createLog({ action: 'Inventory Adjustment', detail: `Adjusted "${record.name}" from ${previousQty} to ${countedQty} (${reason})${note ? ` - ${note}` : ''}` })
+  res.json(toProduct(updated))
+}))
+
 app.get('/api/system/import-status', asyncRoute(async (_req, res) => {
   const reportsDir = path.resolve(__dirname, '..', 'migration_reports')
   const readJson = (name) => {
@@ -1708,6 +1731,73 @@ app.get('/api/system/import-status', asyncRoute(async (_req, res) => {
 app.get('/api/system/backups', asyncRoute(async (_req, res) => {
   await pbCollection('products')
   res.json(await pb.backups.getFullList())
+}))
+
+function automaticBackupName(date = new Date()) {
+  return `nexa_auto_${date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}.zip`
+}
+
+async function pruneAutomaticBackups() {
+  const backups = await pb.backups.getFullList()
+  const automatic = backups
+    .filter((backup) => String(backup.key || backup.name || '').startsWith('nexa_auto_'))
+    .sort((a, b) => new Date(b.modified || 0) - new Date(a.modified || 0))
+  for (const backup of automatic.slice(AUTO_BACKUP_RETENTION)) {
+    await pb.backups.delete(backup.key || backup.name)
+  }
+  return automatic.slice(0, AUTO_BACKUP_RETENTION)
+}
+
+async function runAutomaticBackup() {
+  if (!AUTO_BACKUP_ENABLED) return { enabled: false, created: false }
+  await pbCollection('products')
+  const backups = await pb.backups.getFullList()
+  const latestAuto = backups
+    .filter((backup) => String(backup.key || backup.name || '').startsWith('nexa_auto_'))
+    .sort((a, b) => new Date(b.modified || 0) - new Date(a.modified || 0))[0]
+  if (latestAuto && Date.now() - new Date(latestAuto.modified || 0).getTime() < AUTO_BACKUP_INTERVAL_MS) {
+    await pruneAutomaticBackups()
+    return { enabled: true, created: false, latest: latestAuto.key || latestAuto.name }
+  }
+  const name = automaticBackupName()
+  await pb.backups.create(name)
+  await pruneAutomaticBackups()
+  return { enabled: true, created: true, latest: name }
+}
+
+app.get('/api/system/backup-policy', asyncRoute(async (_req, res) => {
+  const backups = await pb.backups.getFullList()
+  const automatic = backups.filter((backup) => String(backup.key || backup.name || '').startsWith('nexa_auto_'))
+  res.json({ enabled: AUTO_BACKUP_ENABLED, retention: AUTO_BACKUP_RETENTION, intervalHours: Math.round(AUTO_BACKUP_INTERVAL_MS / 3600000), automaticBackups: automatic.length, latest: automatic.sort((a, b) => new Date(b.modified || 0) - new Date(a.modified || 0))[0] || null })
+}))
+
+app.post('/api/system/backups/automatic', asyncRoute(async (_req, res) => {
+  res.status(201).json(await runAutomaticBackup())
+}))
+
+app.get('/api/system/maintenance-report', asyncRoute(async (_req, res) => {
+  const [products, saleItems] = await Promise.all([
+    (await pbCollection('products')).getFullList({ fields: 'id,name,barcode,price,quantity,category', requestKey: null }),
+    (await pbCollection('sale_items')).getFullList({ fields: 'id,product_id', requestKey: null }).catch(() => []),
+  ])
+  const barcodeGroups = new Map()
+  for (const product of products) {
+    const barcode = String(product.barcode || '').trim().toLowerCase()
+    if (!barcode) continue
+    barcodeGroups.set(barcode, [...(barcodeGroups.get(barcode) || []), product])
+  }
+  const productIds = new Set(products.map((product) => product.id))
+  const duplicateBarcodes = [...barcodeGroups.entries()]
+    .filter(([, records]) => records.length > 1)
+    .map(([barcode, records]) => ({ barcode, count: records.length, products: records.map((record) => record.name) }))
+  const invalidPrices = products.filter((product) => !Number.isFinite(Number(product.price)) || Number(product.price) <= 0)
+  const invalidStock = products.filter((product) => !Number.isFinite(Number(product.quantity)) || Number(product.quantity) < 0)
+  const uncategorized = products.filter((product) => !product.category)
+  const orphanSaleItems = saleItems.filter((item) => {
+    const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
+    return productId && !productIds.has(productId)
+  })
+  res.json({ checkedAt: new Date().toISOString(), products: products.length, duplicateBarcodes, invalidPrices: invalidPrices.map((item) => ({ id: item.id, name: item.name })), invalidStock: invalidStock.map((item) => ({ id: item.id, name: item.name })), uncategorized: uncategorized.map((item) => ({ id: item.id, name: item.name })), orphanSaleItems: orphanSaleItems.length })
 }))
 
 app.post('/api/system/backups', asyncRoute(async (_req, res) => {
@@ -1749,4 +1839,10 @@ app.use((error, _req, res, next) => {
 app.listen(PORT, () => {
   console.log(`Admin API listening on http://localhost:${PORT}`)
   console.log(`For LAN testing, open http://<this-computer-ip>:${PORT}`)
+  if (AUTO_BACKUP_ENABLED) {
+    const initialBackupTimer = setTimeout(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), 30000)
+    initialBackupTimer.unref?.()
+    const backupTimer = setInterval(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), AUTO_BACKUP_INTERVAL_MS)
+    backupTimer.unref?.()
+  }
 })

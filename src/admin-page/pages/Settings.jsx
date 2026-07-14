@@ -45,6 +45,8 @@ export default function Settings() {
   })
   const [importStatus, setImportStatus] = useState(null)
   const [backups, setBackups] = useState([])
+  const [backupPolicy, setBackupPolicy] = useState(null)
+  const [maintenanceReport, setMaintenanceReport] = useState(null)
   const [dataAdminLoading, setDataAdminLoading] = useState(false)
   const [importStatusError, setImportStatusError] = useState('')
   const [backupError, setBackupError] = useState('')
@@ -194,7 +196,7 @@ export default function Settings() {
   async function loadDataAdministration() {
     setActiveTab('data')
     setDataAdminLoading(true)
-    const [statusResult, backupResult] = await Promise.allSettled([api.importStatus(), api.backups()])
+    const [statusResult, backupResult, policyResult, maintenanceResult] = await Promise.allSettled([api.importStatus(), api.backups(), api.backupPolicy(), api.maintenanceReport()])
     if (statusResult.status === 'fulfilled') {
       setImportStatus(statusResult.value)
       setImportStatusError('')
@@ -209,6 +211,8 @@ export default function Settings() {
       setBackups([])
       setBackupError('Backup and restore require the local NEXA API service on port 3001.')
     }
+    setBackupPolicy(policyResult.status === 'fulfilled' ? policyResult.value : null)
+    setMaintenanceReport(maintenanceResult.status === 'fulfilled' ? maintenanceResult.value : null)
     setDataAdminLoading(false)
   }
 
@@ -224,6 +228,18 @@ export default function Settings() {
       flash('Backup service unavailable. Start the local NEXA API service.')
     }
     finally { setDataAdminLoading(false) }
+  }
+
+  async function runAutomaticBackup() {
+    setDataAdminLoading(true)
+    try {
+      const result = await api.runAutomaticBackup()
+      setBackups(await api.backups())
+      setBackupPolicy(await api.backupPolicy())
+      flash(result.created ? `Automatic backup ${result.latest} created.` : 'A recent automatic backup already exists.')
+    } catch (err) {
+      flash(err.message || 'Unable to run automatic backup.')
+    } finally { setDataAdminLoading(false) }
   }
 
   async function restoreBackup(name) {
@@ -490,11 +506,22 @@ export default function Settings() {
             </div>
           </div>
           <div className="card">
-            <div className="panel-head"><div><h3>Backups and Restore</h3><span className="sub">Create a PocketBase backup before imports, cleanup, or schema changes.</span></div><button className="btn btn-primary" onClick={createBackup} disabled={dataAdminLoading || Boolean(backupError)}>Create Backup</button></div>
+            <div className="panel-head"><div><h3>Backups and Restore</h3><span className="sub">Create a PocketBase backup before imports, cleanup, or schema changes.</span></div><div className="panel-head-actions"><button className="btn btn-outline" onClick={runAutomaticBackup} disabled={dataAdminLoading || Boolean(backupError)}>Run Scheduled Backup</button><button className="btn btn-primary" onClick={createBackup} disabled={dataAdminLoading || Boolean(backupError)}>Create Backup</button></div></div>
             <div className="panel-body">
+              {backupPolicy && <div className="offline-terminal-summary"><div><span>Automatic backups</span><strong>{backupPolicy.enabled ? 'Enabled' : 'Disabled'}</strong></div><div><span>Schedule</span><strong>Every {backupPolicy.intervalHours} hours</strong></div><div><span>Retention</span><strong>{backupPolicy.retention} backups</strong></div><div><span>Stored automatically</span><strong>{backupPolicy.automaticBackups}</strong></div></div>}
               {backupError ? <div className="alert warning"><strong>Backup service unavailable</strong><span>{backupError}</span></div> : backups.length === 0 ? <div className="empty"><h4>No backups found</h4></div> : backups.map((backup) => (
                 <div className="backup-row" key={backup.key || backup.name}><div><strong>{backup.key || backup.name}</strong><small>{backup.modified ? new Date(backup.modified).toLocaleString('en-PH') : ''} · {Number(backup.size || 0).toLocaleString()} bytes</small></div><button className="btn btn-outline" onClick={() => restoreBackup(backup.key || backup.name)}>Restore</button></div>
               ))}
+            </div>
+          </div>
+          <div className="card">
+            <div className="panel-head"><div><h3>Database Maintenance Report</h3><span className="sub">Read-only checks for catalog and relation problems. No records are changed automatically.</span></div><button className="btn btn-outline" onClick={loadDataAdministration} disabled={dataAdminLoading}>Run Checks</button></div>
+            <div className="panel-body">
+              {!maintenanceReport ? <div className="empty"><h4>Maintenance report unavailable</h4><p>Start the local API service and run the checks again.</p></div> : <>
+                <div className="offline-terminal-summary"><div><span>Products checked</span><strong>{maintenanceReport.products}</strong></div><div><span>Duplicate barcodes</span><strong className={maintenanceReport.duplicateBarcodes.length ? 'readiness-danger' : ''}>{maintenanceReport.duplicateBarcodes.length}</strong></div><div><span>Invalid prices</span><strong className={maintenanceReport.invalidPrices.length ? 'readiness-danger' : ''}>{maintenanceReport.invalidPrices.length}</strong></div><div><span>Uncategorized</span><strong>{maintenanceReport.uncategorized.length}</strong></div></div>
+                <div className="maintenance-summary"><span>Invalid stock: <strong>{maintenanceReport.invalidStock.length}</strong></span><span>Orphan sale items: <strong>{maintenanceReport.orphanSaleItems}</strong></span><span>Checked: <strong>{new Date(maintenanceReport.checkedAt).toLocaleString('en-PH')}</strong></span></div>
+                {(maintenanceReport.duplicateBarcodes.length > 0 || maintenanceReport.invalidPrices.length > 0 || maintenanceReport.invalidStock.length > 0) && <div className="alert warning"><strong>Review recommended</strong><span>Resolve catalog warnings in Product Management. Create a backup before bulk corrections.</span></div>}
+              </>}
             </div>
           </div>
         </div>

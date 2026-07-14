@@ -583,6 +583,9 @@
 .end-of-day-checks span { display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; }
 .end-of-day-checks .ready b { color:#16a34a; }
 .end-of-day-checks .warning b { color:#d97706; }
+.return-disposition { display:grid; gap:6px; color:#334155; font-size:13px; font-weight:700; }
+.return-disposition select { width:100%; min-height:40px; border:1px solid #cbd5e1; border-radius:8px; padding:0 10px; background:#fff; color:#0f172a; }
+.return-disposition small { color:#64748b; font-weight:400; }
 
 .drawer-confirm-button {
   padding: 5px 9px;

@@ -71,7 +71,7 @@ function cashierBody(data) {
   const formData = new FormData()
   for (const [key, value] of Object.entries(data)) {
     if (['imageFile', 'imageUrl', 'image'].includes(key)) continue
-    formData.append(key, value ?? '')
+    formData.append(key, key === 'permissions' ? JSON.stringify(value || []) : (value ?? ''))
   }
   formData.append('profile_img', data.imageFile)
   return formData
@@ -122,6 +122,7 @@ const webApi = {
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
   scanInventory: (data) => request('/inventory/scan', { method: 'POST', body: JSON.stringify(data) }),
   stockOutInventory: (data) => request('/inventory/stock-out', { method: 'POST', body: JSON.stringify(data) }),
+  adjustInventoryCount: (data) => request('/inventory/adjust-count', { method: 'POST', body: JSON.stringify(data) }),
   fsnInventory: () => request('/inventory/fsn'),
   cashiers: () => request('/cashiers'),
   staff: (role = 'cashier') => request(`/cashiers?role=${encodeURIComponent(role)}`),
@@ -167,14 +168,19 @@ const webApi = {
   syncNow: async () => ({ uploaded: 0, failed: 0 }),
   syncQueueDetails: async () => [],
   resolveSyncConflict: async () => ({ resolved: false }),
+  discardFailedProductSync: async () => ({ discarded: false }),
+  discardAllFailedProductSync: async () => ({ discarded: 0, productsRemoved: 0 }),
   offlineReadiness: async () => ({ ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }),
   downloadOfflineData: async () => ({ ready: false }),
   importStatus: () => request('/system/import-status'),
   backups: () => request('/system/backups'),
+  backupPolicy: () => request('/system/backup-policy'),
+  runAutomaticBackup: () => request('/system/backups/automatic', { method: 'POST', body: '{}' }),
+  maintenanceReport: () => request('/system/maintenance-report'),
   createBackup: () => request('/system/backups', { method: 'POST', body: '{}' }),
   restoreBackup: (name, confirmation) => request(`/system/backups/${encodeURIComponent(name)}/restore`, { method: 'POST', body: JSON.stringify({ confirmation }) }),
 }
 
 export const api = isDesktopApp
-  ? { ...desktopAdminApi, importStatus: webApi.importStatus, backups: webApi.backups, createBackup: webApi.createBackup, restoreBackup: webApi.restoreBackup }
+  ? { ...desktopAdminApi, importStatus: webApi.importStatus, backups: webApi.backups, backupPolicy: webApi.backupPolicy, runAutomaticBackup: webApi.runAutomaticBackup, maintenanceReport: webApi.maintenanceReport, createBackup: webApi.createBackup, restoreBackup: webApi.restoreBackup }
   : webApi

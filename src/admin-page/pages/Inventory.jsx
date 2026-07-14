@@ -232,6 +232,7 @@ export default function Inventory() {
   const [confirmingStockOut, setConfirmingStockOut] = useState(false)
   const [reconcileProductId, setReconcileProductId] = useState('')
   const [physicalCount, setPhysicalCount] = useState('')
+  const [reconcileReason, setReconcileReason] = useState('cycle-count')
   const [reconcileNote, setReconcileNote] = useState('')
   const [reconciling, setReconciling] = useState(false)
 
@@ -330,9 +331,12 @@ export default function Inventory() {
     if (!confirm(`Approve inventory adjustment for "${product.name}"?\nSystem: ${expected}\nPhysical: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`)) return
     setReconciling(true)
     try {
-      const updated = variance > 0
-        ? await api.scanInventory({ productId: product.id, qty: variance, unitConversion: 1, unitLabel: product.unit || 'unit' })
-        : await api.stockOutInventory({ productId: product.id, qty: Math.abs(variance), unitConversion: 1, unitLabel: product.unit || 'unit', reason: 'other', note: `Physical count reconciliation: ${reconcileNote || 'No note'}` })
+      const updated = await api.adjustInventoryCount({
+        productId: product.id,
+        countedQty: actual,
+        reason: reconcileReason,
+        note: reconcileNote,
+      })
       setProducts((current) => mergeUpdatedProduct(current, updated))
       setPhysicalCount('')
       setReconcileNote('')
@@ -1334,7 +1338,8 @@ export default function Inventory() {
           <form className="panel-body reconciliation-form" onSubmit={reconcileInventory}>
             <label className="field"><span>Product</span><select className="select" value={reconcileProductId} onChange={(event) => setReconcileProductId(event.target.value)} required><option value="">Select product…</option>{[...products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => <option value={product.id} key={product.id}>{product.name} — system {formatQty(product.qty)}</option>)}</select></label>
             <label className="field"><span>Physical Count</span><input className="input" type="number" min="0" step="any" value={physicalCount} onChange={(event) => setPhysicalCount(event.target.value)} required /></label>
-            <label className="field"><span>Count Note</span><input className="input" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} placeholder="Counter, location, or reason" /></label>
+            <label className="field"><span>Adjustment Reason</span><select className="select" value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)}><option value="cycle-count">Cycle count</option><option value="initial-count">Initial count correction</option><option value="damage-found">Damage found during count</option><option value="shrinkage">Missing or shrinkage</option><option value="data-correction">Legacy data correction</option></select></label>
+            <label className="field"><span>Count Note</span><input className="input" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} placeholder="Counter, location, discrepancy details" /></label>
             {reconcileProductId && physicalCount !== '' && <div className="reconciliation-variance">Variance: <strong>{(Number(physicalCount) || 0) - (Number(products.find((item) => item.id === reconcileProductId)?.qty) || 0)}</strong></div>}
             <button className="btn btn-primary" disabled={reconciling}>{reconciling ? 'Applying…' : 'Review and Apply Adjustment'}</button>
           </form>

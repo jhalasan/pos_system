@@ -154,6 +154,7 @@ export function toCashier(record, sales = 0) {
     image: firstFileValue(record.profile_img) || '',
     imageUrl: profileImageUrl(record),
     sales: Number(sales) || 0,
+    permissions: parseSellingUnits(record.permissions),
   }
 }
 
@@ -190,6 +191,7 @@ export function cashierPayload(input = {}) {
     passwordConfirm: password,
     role: 'cashier',
     emailVisibility: true,
+    permissions: parseSellingUnits(input.permissions),
   }
 }
 

@@ -2285,6 +2285,17 @@
         "required": false,
         "system": false,
         "type": "bool"
+      },
+      {
+        "help": "Allowed POS capabilities for this staff account. Empty keeps legacy access.",
+        "hidden": false,
+        "id": "json100000001",
+        "maxSize": 200000,
+        "name": "permissions",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "json"
       }
     ],
     "indexes": [
