@@ -108,8 +108,10 @@
 }
 
 .cashier-operator {
-  display: grid;
-  gap: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   min-width: 132px;
   padding: 5px 10px;
   border: 1px solid #e2e8f0;
@@ -117,7 +119,11 @@
   background: #f8fafc;
   text-align: right;
 }
-.cashier-operator span { color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.cashier-avatar { position: relative; display: grid; flex: 0 0 38px; width: 38px; height: 38px; place-items: center; overflow: hidden; border: 2px solid #fff; border-radius: 50%; background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #fff; box-shadow: 0 0 0 1px #cbd5e1; }
+.cashier-avatar b { font-size: 14px; }
+.cashier-avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.cashier-operator-copy { display: grid; gap: 1px; min-width: 0; }
+.cashier-operator-copy small { color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
 .cashier-operator strong { max-width: 210px; overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
 .cashier-name {
@@ -2108,7 +2114,7 @@
 
   .cashier-brand-copy > span { display: none; }
   .cashier-operator { min-width: 0; padding: 6px 9px; }
-  .cashier-operator span { display: none; }
+  .cashier-operator-copy small { display: none; }
   .cashier-operator strong { max-width: 130px; }
   .shared-drawer-badge { display: none; }
 

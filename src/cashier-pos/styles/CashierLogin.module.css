@@ -34,6 +34,8 @@
   width: 250px;
   height: 104px;
   object-fit: contain;
+  transform: scale(1.9);
+  transform-origin: center;
 }
 
 /* Heading */

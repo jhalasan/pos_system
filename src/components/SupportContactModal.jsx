@@ -81,7 +81,10 @@ export default function SupportContactModal({ open, onClose, source = 'POS Syste
       setImages([])
     } catch (error) {
       await adminDb.supportTickets.update(ticket.id, { status: 'failed', lastError: error.message }).catch(() => {})
-      setSendError(`${error.message || 'Unable to deliver the ticket.'} The ticket remains saved on this device.`)
+      const message = error instanceof TypeError && /fetch/i.test(error.message || '')
+        ? 'The support email service could not be reached. Check the internet connection or server deployment.'
+        : (error.message || 'Unable to deliver the ticket.')
+      setSendError(`${message} The ticket remains saved on this device.`)
     } finally {
       setSending(false)
     }

@@ -75,7 +75,16 @@ function toCachedQuickLoginAccount(record) {
     quickLoginEnabled: Boolean(record.quickLoginEnabled ?? record.quick_login_enabled),
     cashierBarcode: String(record.cashierBarcode || record.void_barcode || '').trim(),
     permissions: Array.isArray(record.permissions) ? record.permissions : [],
+    profileImage: Array.isArray(record.profile_img) ? record.profile_img[0] : (record.profile_img || record.profileImage || ''),
+    imageUrl: record.imageUrl || '',
   }
+}
+
+function cashierProfileImageUrl(record, pbClient) {
+  if (record?.imageUrl) return record.imageUrl
+  const image = Array.isArray(record?.profile_img) ? record.profile_img[0] : (record?.profile_img || record?.profileImage || '')
+  if (!image || !record?.id || !pbClient?.files?.getURL) return ''
+  return pbClient.files.getURL(record, image, { thumb: '100x100' })
 }
 
 function mergeAccountsById(...groups) {
@@ -679,7 +688,14 @@ async function adminCachedProductByBarcode(barcode) {
 export const desktopCashierApi = {
   async currentUser() {
     const activeRuntime = await runtime()
-    return activeRuntime.pb.authStore.isValid ? activeRuntime.pb.authStore.record : null
+    if (!activeRuntime.pb.authStore.isValid) return null
+    let record = activeRuntime.pb.authStore.record
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      record = await activeRuntime.pb.collection('users').authRefresh({ requestKey: null })
+        .then((auth) => auth.record)
+        .catch(() => record)
+    }
+    return record ? { ...record, imageUrl: cashierProfileImageUrl(record, activeRuntime.pb) } : null
   },
 
   async login(email, password) {
@@ -740,7 +756,7 @@ export const desktopCashierApi = {
       })
       refreshAuthorizationBarcodeCache(activeRuntime).catch(() => {})
     }
-    return { user: auth.record }
+    return { user: { ...auth.record, imageUrl: cashierProfileImageUrl(auth.record, activeRuntime.pb) } }
   },
 
   async loginWithBarcode(barcode) {
@@ -790,7 +806,10 @@ export const desktopCashierApi = {
           if (account?.id) await cashierDb.quickLoginAccounts.delete(account.id)
           throw new Error('This cashier account is inactive. Ask an administrator to reactivate it before logging in.')
         }
-        account = toCachedQuickLoginAccount(record)
+        account = {
+          ...toCachedQuickLoginAccount(record),
+          imageUrl: cashierProfileImageUrl(record, activeRuntime.pb),
+        }
         // Refresh only this cashier. Clearing the full cache here would remove
         // every other cashier after one successful barcode login.
         await cashierDb.quickLoginAccounts.put(account).catch(() => {})
@@ -808,6 +827,8 @@ export const desktopCashierApi = {
       role: 'cashier',
       status: 'active',
       cashierBarcode: account.cashierBarcode,
+      imageUrl: account.imageUrl || '',
+      profileImage: account.profileImage || '',
     }
 
     const activeRuntime = await runtime()

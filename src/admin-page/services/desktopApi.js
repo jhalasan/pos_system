@@ -734,6 +734,11 @@ async function cacheUsers(records) {
       quick_login_enabled: Boolean(record.quick_login_enabled),
       cashierBarcode: record.void_barcode || record.cashierBarcode || '',
       void_barcode: record.void_barcode || record.cashierBarcode || '',
+      profile_img: record.profile_img || cachedUsers[index]?.profile_img || '',
+      imageUrl: (() => {
+        const image = Array.isArray(record.profile_img) ? record.profile_img[0] : record.profile_img
+        return image ? pb.files.getURL(record, image, { thumb: '100x100' }) : (cachedUsers[index]?.imageUrl || '')
+      })(),
       emailVisibility: Boolean(record.emailVisibility),
       updated: record.updated || new Date().toISOString(),
     })))

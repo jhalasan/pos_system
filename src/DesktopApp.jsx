@@ -1,4 +1,4 @@
-import { Component, lazy, Suspense, useState } from 'react'
+import { Component, lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
 import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
@@ -70,6 +70,21 @@ export default function DesktopApp() {
       return null
     }
   })
+
+  useEffect(() => {
+    if (!cashierUser?.id) return
+    const signedInCashierId = cashierUser.id
+    let active = true
+    cashierApi.currentUser?.().then((currentUser) => {
+      if (!active || !currentUser || String(currentUser.id) !== String(signedInCashierId)) return
+      setCashierUser((existingUser) => {
+        const refreshedUser = { ...existingUser, ...currentUser }
+        sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(refreshedUser))
+        return refreshedUser
+      })
+    }).catch(() => {})
+    return () => { active = false }
+  }, [cashierUser?.id])
 
   const handleLogin = (user) => {
     sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(user))

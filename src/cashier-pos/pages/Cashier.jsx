@@ -2984,7 +2984,15 @@ const Cashier = ({ onLogout, user }) => {
         <div className={styles['header-actions']}>
           <ConnectionStatusBar scope="cashier" placement="header" />
           {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Active</span>}
-          {user && <div className={styles['cashier-operator']}><span>Signed in as</span><strong>{user.name || user.email}</strong></div>}
+          {user && (
+            <div className={styles['cashier-operator']}>
+              <span className={styles['cashier-avatar']} aria-hidden="true">
+                <b>{String(user.name || user.email || 'C').trim().charAt(0).toUpperCase()}</b>
+                {user.imageUrl && <img src={user.imageUrl} alt="" onError={(event) => { event.currentTarget.style.display = 'none'; }} />}
+              </span>
+              <span className={styles['cashier-operator-copy']}><small>Signed in as</small><strong>{user.name || user.email}</strong></span>
+            </div>
+          )}
         </div>
       </div>
 
