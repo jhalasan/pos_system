@@ -146,6 +146,7 @@ export default function AdminLayout() {
               {' - '}
               {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
             </span>
+            <ConnectionStatusBar scope="admin" cloudOnly={isAdminWeb} placement="header" />
             <div className="notification-wrap">
               <button className="icon-btn" title="Notifications" onClick={toggleNotifications}>
                 <IconBell size={17} />
@@ -180,7 +181,7 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
-        <ConnectionStatusBar scope="admin" cloudOnly={isAdminWeb} />
+        <ConnectionStatusBar scope="admin" cloudOnly={isAdminWeb} placement="banner" />
 
         <main className="content">
           <Outlet />

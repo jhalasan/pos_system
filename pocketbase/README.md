@@ -12,5 +12,6 @@ This schema includes the fields required by the POS backend:
 - `users.quick_login_enabled`
 - `sales.transaction_no` using daily sequence format `YYYYMMDD0001`
 - unique `idx_sales_transaction_no` index to prevent duplicate transaction numbers
+- cascading deletion of a sale's dependent `sale_items`
 
 The backend expects these fields to exist and no longer creates them automatically at runtime.

@@ -72,11 +72,31 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
   }
 
   async function handleSync() {
+    if (syncing) return
     setSyncing(true)
+    setShowSyncCenter(true)
+    globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+      detail: { scope: 'admin', state: 'running', message: 'Checking local changes and cloud connection...' },
+    }))
     try {
       const result = await api.syncNow()
       setSyncQueue(await api.syncQueueDetails())
       setShowSyncCenter(true)
+      const uploaded = result.uploaded || 0
+      const failed = result.failed || 0
+      const pending = result.pending || 0
+      const warnings = result.warnings || []
+      const finalState = failed > 0 ? 'failed' : (warnings.length > 0 && pending > 0 ? 'waiting' : 'succeeded')
+      const finalMessage = failed > 0
+        ? `Cloud sync finished with ${failed} failed item(s).`
+        : warnings.length > 0 && pending > 0
+          ? `Cloud sync checked. ${pending} item(s) will retry automatically.`
+          : uploaded > 0
+            ? `Cloud sync complete. Uploaded ${uploaded} item(s).`
+            : 'Cloud sync complete. Everything is up to date.'
+      globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+        detail: { scope: 'admin', state: finalState, message: finalMessage },
+      }))
       if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
         flash((result.warnings || []).length > 0
           ? `Cloud uploads complete. ${result.pending || 0} pending; catalog refresh will retry automatically.`
@@ -87,7 +107,11 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
         flash(`Cloud sync complete. Uploaded ${result.uploaded || 0}, failed ${result.failed || 0}.`)
       }
     } catch (error) {
-      flash(error.message || 'Unable to sync right now.')
+      const message = error.message || 'Unable to sync right now.'
+      globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+        detail: { scope: 'admin', state: 'failed', message },
+      }))
+      flash(message)
     } finally {
       setSyncing(false)
     }
@@ -191,9 +215,13 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
           style={{ width: '100%' }}
           title={collapsed ? 'Sync to Cloud' : undefined}
           onClick={handleSync}
+          disabled={syncing}
+          aria-busy={syncing}
         >
-          <IconCloud size={18} />
-          <span className="nav-text">Sync to Cloud</span>
+          {syncing
+            ? <span className="sync-button-spinner" aria-hidden="true" />
+            : <span className="sync-button-icon"><IconCloud size={18} /></span>}
+          <span className="nav-text">{syncing ? 'Syncing...' : 'Sync to Cloud'}</span>
         </button>}
         {!isAdminWeb && <NavLink to="/admin/settings" className="nav-item" onClick={onNavigate} title={collapsed ? 'Settings' : undefined}>
           <IconSettings size={18} />
@@ -209,6 +237,12 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       {showSyncCenter && (
         <Modal className="sync-center-modal" title="Sync Center" onClose={() => { setShowSyncCenter(false); setSelectedConflict(null) }}>
           <div className="sync-center-toolbar"><div><strong>Local changes awaiting cloud upload</strong><small>Sales and stock changes remain safe on this terminal while offline.</small></div><div className="sync-center-toolbar-actions">{syncQueue.some(isDiscardableProductFailure) && <button className="btn btn-outline btn-sm" onClick={discardAllFailedProducts} disabled={discarding}>{discarding ? 'Discarding…' : 'Discard Failed Products'}</button>}<button className="btn btn-primary btn-sm" onClick={handleSync} disabled={syncing}>{syncing ? 'Retrying…' : 'Retry All'}</button></div></div>
+          {syncing && (
+            <div className="sync-center-loading" role="status" aria-live="polite">
+              <span className="sync-center-spinner" aria-hidden="true" />
+              <div><strong>Syncing with cloud...</strong><small>Checking queued sales, stock changes, and the latest catalog. Please keep Nexa POS open.</small></div>
+            </div>
+          )}
           <div className="sync-center-summary">
             <div><strong>{syncQueue.length}</strong><span>Total</span></div>
             <div><strong>{syncQueue.filter((op) => op.status === 'pending').length}</strong><span>Waiting</span></div>

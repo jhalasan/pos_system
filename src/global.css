@@ -210,6 +210,8 @@ ul { list-style: none; }
 .connection-status-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
 .connection-status-bar.online { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
 .connection-status-bar.online .connection-status-dot { background: #22c55e; }
+.connection-status-bar.success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.connection-status-bar.success .connection-status-dot { background: #22c55e; }
 .connection-status-bar.offline { color: #9a3412; background: #fff7ed; border-color: #fed7aa; }
 .connection-status-bar.offline .connection-status-dot { background: #f97316; }
 .connection-status-bar.syncing { color: #1d4ed8; background: #eff6ff; border-color: #bfdbfe; }
@@ -217,6 +219,7 @@ ul { list-style: none; }
 .connection-status-bar.warning { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .connection-status-bar.warning .connection-status-dot { background: #f59e0b; }
 .connection-status-bar.compact { min-height: 0; padding: 0; border: 0; background: transparent; }
+.connection-status-bar.connection-status-pill { min-height:28px; padding:5px 10px; border:1px solid #bbf7d0; border-radius:999px; background:#f0fdf4; white-space:nowrap; }
 @keyframes connection-pulse { 50% { opacity: .35; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) { .connection-status-bar.syncing .connection-status-dot { animation: none; } }
 .card-p-sm { padding: 12px; }

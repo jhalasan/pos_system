@@ -1969,22 +1969,32 @@ export const desktopAdminApi = {
     }
   },
   async downloadOfflineData() {
+    if (!pb.authStore.isValid || pb.authStore.record?.role !== 'admin') {
+      throw new Error('An online admin login is required to download offline data. Connect this PC to the internet, log out, and sign in again before retrying.')
+    }
     await this.syncNow()
     try {
-      await refreshAdminLocalCache({ pb })
+      const catalog = await refreshAdminLocalCache({ pb, requireCatalog: true })
       const staff = await pb.collection('users').getFullList({
         filter: 'status != "inactive"',
         sort: 'name,email',
         requestKey: null,
       })
+      if (staff.length === 0) {
+        throw new Error('The cloud returned zero staff accounts. Check the users collection list rule and confirm this terminal is connected to the correct PocketBase database.')
+      }
       await cacheUsers(await ensureQuickLoginEmailVisibility(staff))
       await this.authorizationBarcodes()
       await copyAdminProductCatalogToCashier()
+      const readiness = await this.offlineReadiness()
+      if (readiness.products === 0 || readiness.cashierProducts === 0 || readiness.categories === 0 || readiness.users === 0) {
+        throw new Error(`Cloud data was received but the local cache is incomplete (${catalog.products} products and ${catalog.categories} categories received). Close other Nexa POS windows on this PC and try again.`)
+      }
+      return readiness
     } catch (error) {
       rememberPocketBaseRateLimit(error)
-      throw new Error(`Unable to download the product catalog for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })
+      throw new Error(`Unable to prepare this PC for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })
     }
-    return this.offlineReadiness()
   },
   async resetLocalData({ scope = 'full', confirmation = '' } = {}) {
     assertAdmin()

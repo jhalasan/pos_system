@@ -5,7 +5,7 @@ function storedStatus(scope) {
   catch { return null }
 }
 
-export default function ConnectionStatusBar({ scope = 'system', compact = false, cloudOnly = false }) {
+export default function ConnectionStatusBar({ scope = 'system', compact = false, cloudOnly = false, placement = 'default' }) {
   const [online, setOnline] = useState(() => navigator.onLine)
   const [syncStatus, setSyncStatus] = useState(() => (
     scope === 'system'
@@ -31,6 +31,15 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
     }
   }, [scope])
 
+  useEffect(() => {
+    if (syncStatus?.state !== 'succeeded') return undefined
+    const timeoutId = window.setTimeout(() => {
+      setSyncStatus(null)
+      if (scope !== 'system') localStorage.removeItem(`nexa_sync_status_${scope}`)
+    }, 5000)
+    return () => window.clearTimeout(timeoutId)
+  }, [scope, syncStatus])
+
   const status = useMemo(() => {
     if (cloudOnly) {
       return online
@@ -42,14 +51,18 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
     }
     if (syncStatus?.state === 'running') return { tone: 'syncing', label: 'Syncing', detail: syncStatus.message || 'Sending local changes to cloud.' }
     if (['failed', 'waiting'].includes(syncStatus?.state)) return { tone: 'warning', label: 'Sync pending', detail: syncStatus.message || 'Cloud sync will retry automatically.' }
-    return { tone: 'online', label: 'Online', detail: syncStatus?.message || 'Cloud connection available.' }
+    if (syncStatus?.state === 'succeeded') return { tone: 'success', label: 'Sync complete', detail: syncStatus.message || 'Everything is up to date.' }
+    return { tone: 'online', label: 'Online', detail: syncStatus?.message || '' }
   }, [cloudOnly, online, syncStatus])
 
+  if (placement === 'header' && status.tone !== 'online') return null
+  if (placement === 'banner' && status.tone === 'online') return null
+
   return (
-    <div className={`connection-status-bar ${status.tone}${compact ? ' compact' : ''}`} role="status">
+    <div className={`connection-status-bar ${status.tone}${compact || placement === 'header' ? ' compact' : ''}${placement === 'header' ? ' connection-status-pill' : ''}`} role="status">
       <span className="connection-status-dot" />
       <strong>{status.label}</strong>
-      {!compact && <span>{status.detail}</span>}
+      {!compact && status.detail && <span>{status.detail}</span>}
     </div>
   )
 }

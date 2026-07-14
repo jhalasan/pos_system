@@ -5,6 +5,7 @@ import { rememberPocketBaseRateLimit, withPocketBaseRateLimitLock } from '../../
 export async function refreshAdminLocalCache({
   baseUrl = import.meta.env.VITE_POCKETBASE_URL,
   pb = baseUrl ? new PocketBase(baseUrl) : null,
+  requireCatalog = false,
 } = {}) {
   if (!pb) throw new Error('VITE_POCKETBASE_URL is required to refresh the admin cache.')
 
@@ -18,6 +19,10 @@ export async function refreshAdminLocalCache({
         requestKey: null,
       }),
     ])
+
+    if (requireCatalog && products.length === 0) {
+      throw new Error('The cloud returned zero products. Confirm this terminal is online, signed in with an active admin account, and connected to the correct PocketBase database.')
+    }
 
     await replaceCategoriesFromCloud(categories)
     await replaceProductsFromCloud(products, pb)

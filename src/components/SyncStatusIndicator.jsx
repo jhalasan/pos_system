@@ -39,9 +39,12 @@ export default function SyncStatusIndicator({ scope }) {
   useEffect(() => {
     if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required'].includes(status.state)) return undefined
 
-    const timeoutId = window.setTimeout(() => setStatus(null), 5000)
+    const timeoutId = window.setTimeout(() => {
+      setStatus(null)
+      localStorage.removeItem(`nexa_sync_status_${scope}`)
+    }, 5000)
     return () => window.clearTimeout(timeoutId)
-  }, [status])
+  }, [scope, status])
 
   if (!status) return null
 

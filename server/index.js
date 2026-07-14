@@ -53,6 +53,15 @@ function parseOrigin(origin) {
   }
 }
 
+function requestHost(req) {
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
+  return forwardedHost || req.get('host') || ''
+}
+
+function isSameRequestOrigin(req, parsedOrigin) {
+  return Boolean(parsedOrigin && requestHost(req).toLowerCase() === parsedOrigin.host.toLowerCase())
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
@@ -65,23 +74,26 @@ const upload = multer({
   },
 })
 
-app.use(cors({
-  origin(origin, callback) {
-    const parsedOrigin = parseOrigin(origin)
-    if (
-      !origin ||
-      allowedOrigins.includes(origin) ||
-      (allowDevelopmentOrigins && ngrokHostPattern.test(origin)) ||
-      (allowDevelopmentOrigins && ngrokAppPattern.test(origin)) ||
-      (allowDevelopmentOrigins && parsedOrigin && ['http:', 'https:'].includes(parsedOrigin.protocol) && localNetworkHostPattern.test(parsedOrigin.hostname))
-    ) {
-      callback(null, true)
-      return
-    }
-    callback(new Error(`Origin ${origin} is not allowed by CORS.`))
-  },
-  credentials: true,
-  exposedHeaders: ['Authorization', 'Location', 'X-PocketBase-Token'],
+app.use(cors((req, callback) => {
+  callback(null, {
+    origin(origin, originCallback) {
+      const parsedOrigin = parseOrigin(origin)
+      if (
+        !origin ||
+        allowedOrigins.includes(origin) ||
+        isSameRequestOrigin(req, parsedOrigin) ||
+        (allowDevelopmentOrigins && ngrokHostPattern.test(origin)) ||
+        (allowDevelopmentOrigins && ngrokAppPattern.test(origin)) ||
+        (allowDevelopmentOrigins && parsedOrigin && ['http:', 'https:'].includes(parsedOrigin.protocol) && localNetworkHostPattern.test(parsedOrigin.hostname))
+      ) {
+        originCallback(null, true)
+        return
+      }
+      originCallback(new Error(`Origin ${origin} is not allowed by CORS.`))
+    },
+    credentials: true,
+    exposedHeaders: ['Authorization', 'Location', 'X-PocketBase-Token'],
+  })
 }))
 
 if (!isVercelAdminPortal) app.use('/api/pocketbase', createProxyMiddleware({

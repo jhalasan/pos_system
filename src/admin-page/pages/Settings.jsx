@@ -47,6 +47,7 @@ export default function Settings() {
   })
   const { data: readiness, setData: setReadiness, loading: readinessLoading } = useApi(api.offlineReadiness, emptyReadiness)
   const [downloadingOfflineData, setDownloadingOfflineData] = useState(false)
+  const [offlineDownloadMessage, setOfflineDownloadMessage] = useState('')
   const [offlineTestRunning, setOfflineTestRunning] = useState(false)
   const [resetScope, setResetScope] = useState('catalog')
   const [resettingLocalData, setResettingLocalData] = useState(false)
@@ -192,11 +193,16 @@ export default function Settings() {
 
   async function downloadOfflineData() {
     setDownloadingOfflineData(true)
+    setOfflineDownloadMessage('Connecting to the cloud and preparing the latest terminal data...')
     try {
       const result = await api.downloadOfflineData()
       setReadiness(result)
+      setOfflineDownloadMessage(result.ready
+        ? 'Download complete. The latest catalog and offline access data are ready.'
+        : 'Download complete. Review the remaining offline-readiness items below.')
       flash(result.ready ? 'Offline data is ready on this terminal.' : 'Download finished, but some offline requirements are still incomplete.')
     } catch (err) {
+      setOfflineDownloadMessage(err.message || 'Unable to download the latest offline data.')
       flash(err.message || 'Unable to download offline data.')
     } finally {
       setDownloadingOfflineData(false)
@@ -736,11 +742,21 @@ export default function Settings() {
               ))}
             </div>
 
-            <div className="offline-readiness-actions">
+            {offlineDownloadMessage && (
+              <div className={`offline-download-status ${downloadingOfflineData ? 'loading' : ''}`} role="status" aria-live="polite">
+                {downloadingOfflineData && <span className="sync-center-spinner" aria-hidden="true" />}
+                <div>
+                  <strong>{downloadingOfflineData ? 'Downloading latest offline data...' : 'Offline data refresh finished'}</strong>
+                  <small>{offlineDownloadMessage}</small>
+                  {downloadingOfflineData && <span>Products, categories, staff access, approvals, and cached transaction data are being refreshed. Please keep Nexa POS open.</span>}
+                </div>
+              </div>
+            )}
+            <div className="offline-readiness-actions" aria-busy={downloadingOfflineData}>
               <button className="btn btn-primary" onClick={downloadOfflineData} disabled={downloadingOfflineData}>
-                <IconDownload size={16} /> {downloadingOfflineData ? 'Downloading…' : 'Download Latest Data for Offline Use'}
+                <span className={downloadingOfflineData ? 'sync-button-icon spinning' : 'sync-button-icon'}><IconDownload size={16} /></span> {downloadingOfflineData ? 'Downloading Latest Data...' : 'Download Latest Data for Offline Use'}
               </button>
-              <button className="btn btn-outline" onClick={runOfflineSelfTest} disabled={offlineTestRunning}>{offlineTestRunning ? 'Testing Local System…' : 'Run Offline Self-Test'}</button>
+              <button className="btn btn-outline" onClick={runOfflineSelfTest} disabled={offlineTestRunning || downloadingOfflineData}>{offlineTestRunning ? 'Testing Local System…' : 'Run Offline Self-Test'}</button>
             </div>
             {offlineTest && <div className={`offline-test-results ${offlineTest.passed ? 'passed' : 'failed'}`}>
               <div><strong>{offlineTest.passed ? 'Offline self-test passed' : 'Offline setup needs attention'}</strong><small>Tested {new Date(offlineTest.testedAt).toLocaleString('en-PH')}</small></div>
@@ -763,14 +779,14 @@ export default function Settings() {
                 <p>Use refresh for normal updates. Reset only when cached terminal data is stale, corrupted, or assigned to another device.</p>
               </div>
               <div className="offline-cache-controls">
-                <select className="select" value={resetScope} onChange={(event) => setResetScope(event.target.value)} disabled={resettingLocalData}>
+                <select className="select" value={resetScope} onChange={(event) => setResetScope(event.target.value)} disabled={resettingLocalData || downloadingOfflineData}>
                   <option value="catalog">Reset product and category cache</option>
                   <option value="logins">Reset cached staff access</option>
                   <option value="receipts">Reset cached receipts</option>
                   <option value="sync-status">Clear old sync status</option>
                   <option value="full">Full terminal cache reset</option>
                 </select>
-                <button className="btn btn-danger" onClick={resetLocalData} disabled={resettingLocalData || readiness.pending > 0 || readiness.failed > 0}>{resettingLocalData ? 'Resetting…' : 'Reset Selected Cache'}</button>
+                <button className="btn btn-danger" onClick={resetLocalData} disabled={resettingLocalData || downloadingOfflineData || readiness.pending > 0 || readiness.failed > 0}>{resettingLocalData ? 'Resetting…' : 'Reset Selected Cache'}</button>
               </div>
               {(readiness.pending > 0 || readiness.failed > 0) && <small className="readiness-danger">Reset is locked until all pending and failed synchronization items are resolved.</small>}
               <small>This does not delete PocketBase records. A catalog, login, or full reset automatically downloads fresh data when online.</small>

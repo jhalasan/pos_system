@@ -611,10 +611,16 @@ const Cashier = ({ onLogout, user }) => {
     ), 0)
   ), [cashierAuditEntry.denominations]);
   const auditCountMode = cashierAuditEntry.countMode || 'manual';
+  const auditCashBeginning = Number(cashierAuditEntry.cashBeginning || shiftOpeningCash);
+  const auditExpectedCash = auditCashBeginning + completedCashSales + shiftCashIn - shiftCashOut;
+  const manualAuditActualValue = cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand;
+  const auditHasActualCount = auditCountMode === 'denomination'
+    ? Object.values(cashierAuditEntry.denominations || {}).some((count) => String(count).trim() !== '')
+    : String(manualAuditActualValue || '').trim() !== '';
   const auditActualCashEnding = auditCountMode === 'denomination'
     ? auditDenominationTotal
-    : Number(cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand || 0);
-  const auditVariance = auditActualCashEnding - expectedShiftCash;
+    : Number(manualAuditActualValue || 0);
+  const auditVariance = auditHasActualCount ? auditActualCashEnding - auditExpectedCash : null;
   const shiftCloseDenominationTotal = useMemo(() => (
     DENOMINATIONS.reduce((sum, denomination) => (
       sum + ((Number(shiftCloseDenominations[denomination]) || 0) * denomination)
@@ -1161,7 +1167,7 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
     const cashBeginning = Number(cashierAuditEntry.cashBeginning);
-    const cashEnding = Number(cashierAuditEntry.cashEnding || expectedShiftCash);
+    const cashEnding = Number(cashierAuditEntry.cashEnding || auditExpectedCash);
     const countMode = cashierAuditEntry.countMode || 'manual';
     const denominationBreakdown = DENOMINATIONS
       .map((denomination) => ({
@@ -1178,6 +1184,11 @@ const Cashier = ({ onLogout, user }) => {
     const actualCashEnding = countMode === 'denomination'
       ? auditDenominationTotal
       : Number(cashierAuditEntry.actualCashEnding || cashOnHand);
+
+    if (!auditHasActualCount) {
+      setCashierAuditMessage('Enter the actual cash ending before saving the audit.')
+      return;
+    }
 
     if (![cashBeginning, cashEnding, cashOnHand, actualCashEnding].every((value) => Number.isFinite(value) && value >= 0)) {
       setCashierAuditMessage('Enter valid cash beginning, ending, actual ending, and on-hand amounts.');
@@ -1201,12 +1212,12 @@ const Cashier = ({ onLogout, user }) => {
         cashSales: completedCashSales,
         cashIn: shiftCashIn,
         cashOut: shiftCashOut,
-        expectedCash: expectedShiftCash,
+        expectedCash: auditExpectedCash,
         cashEnding,
         actualCash: actualCashEnding,
         cashOnHand,
         denominationTotal: auditDenominationTotal,
-        variance: actualCashEnding - expectedShiftCash,
+        variance: actualCashEnding - auditExpectedCash,
         countMode,
         denominations: denominationBreakdown,
         note: cashierAuditEntry.note || '',
@@ -1216,7 +1227,7 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Audit',
-        detail: withDevice(`Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, actual PHP ${actualCashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}, automatic cash count PHP ${auditDenominationTotal.toFixed(2)}, count mode ${countMode}${breakdownText ? `, breakdown ${breakdownText}` : ''}, variance PHP ${(actualCashEnding - expectedShiftCash).toFixed(2)}.`),
+        detail: withDevice(`Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${auditExpectedCash.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, actual PHP ${actualCashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}, automatic cash count PHP ${auditDenominationTotal.toFixed(2)}, count mode ${countMode}${breakdownText ? `, breakdown ${breakdownText}` : ''}, variance PHP ${(actualCashEnding - auditExpectedCash).toFixed(2)}.`),
       });
       appendCashCountHistory({
         type: 'cash-audit',
@@ -1227,10 +1238,10 @@ const Cashier = ({ onLogout, user }) => {
         cashSales: completedCashSales,
         cashIn: shiftCashIn,
         cashOut: shiftCashOut,
-        expectedCash: expectedShiftCash,
+        expectedCash: auditExpectedCash,
         actualCash: actualCashEnding,
         cashOnHand,
-        variance: actualCashEnding - expectedShiftCash,
+        variance: actualCashEnding - auditExpectedCash,
         countMode,
         denominations: denominationBreakdown,
         deviceId,
@@ -2931,12 +2942,13 @@ const Cashier = ({ onLogout, user }) => {
           )}
         </div>
         <div className={styles['header-actions']}>
+          <ConnectionStatusBar scope="cashier" placement="header" />
           {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Active</span>}
           {user && <div className={styles['cashier-operator']}><span>Signed in as</span><strong>{user.name || user.email}</strong></div>}
         </div>
       </div>
 
-      <ConnectionStatusBar scope="cashier" />
+      <ConnectionStatusBar scope="cashier" placement="banner" />
 
       <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
         <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>
@@ -2995,10 +3007,6 @@ const Cashier = ({ onLogout, user }) => {
               <strong>{itemCount}</strong>
             </div>
             <div>
-              <span>Subtotal</span>
-              <strong>{money(subtotal)}</strong>
-            </div>
-            <div>
               <span>Total</span>
               <strong>{money(total)}</strong>
             </div>
@@ -3045,7 +3053,6 @@ const Cashier = ({ onLogout, user }) => {
           <div className={styles['add-product-section']}>
             <div className={styles['section-title-row']}>
               <h3 className={styles['section-title']}>Add Product</h3>
-              <span className={styles['transaction-label']}>Transaction No. {activeTxn.transactionNo}</span>
             </div>
 
             <div className={styles['input-group']}>
@@ -3210,7 +3217,7 @@ const Cashier = ({ onLogout, user }) => {
               <h3 className={styles['section-title']}>Payment</h3>
               <div className={styles['register-tools']}>
                 <span className={styles['register-status']}>
-                  {cashRegisterOpen ? 'Open Command Sent · Awaiting Confirmation' : 'Physical Status Unavailable'}
+                  {cashRegisterOpen ? 'Open command sent · awaiting confirmation' : 'Drawer status unavailable'}
                 </span>
                 {cashRegisterOpen && (
                   <button
@@ -3223,6 +3230,8 @@ const Cashier = ({ onLogout, user }) => {
                 )}
               </div>
             </div>
+
+            <div className={styles['payment-scroll-content']}>
 
             {isLockedTxn && (
               <div className={styles['payment-complete-card']}>
@@ -3307,6 +3316,8 @@ const Cashier = ({ onLogout, user }) => {
                 </div>
               </div>
             )}
+
+            </div>
 
             <Button
               variant="primary"
@@ -4613,11 +4624,12 @@ const Cashier = ({ onLogout, user }) => {
                   </div>
                 </div>
                 <div className={styles['audit-summary-grid']}>
+                  <div><span>Cash Beginning</span><strong>{money(auditCashBeginning)}</strong></div>
                   <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
                   <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
                   <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
-                  <div><span>Expected Ending</span><strong>{money(expectedShiftCash)}</strong></div>
-                  <div><span>Variance</span><strong className={auditVariance < 0 ? styles.negative : auditVariance > 0 ? styles.positive : ''}>{money(auditVariance)}</strong></div>
+                  <div><span>Expected Ending</span><strong>{money(auditExpectedCash)}</strong></div>
+                  <div><span>Variance</span><strong className={auditVariance === null ? '' : auditVariance < 0 ? styles.negative : auditVariance > 0 ? styles.positive : ''}>{auditVariance === null ? 'Not counted' : money(auditVariance)}</strong></div>
                 </div>
                 <div className={styles['cash-flow-type-row']}>
                   <button
@@ -4652,7 +4664,7 @@ const Cashier = ({ onLogout, user }) => {
                     min="0"
                     step="0.01"
                     placeholder="0.00"
-                    value={cashierAuditEntry.cashEnding || expectedShiftCash.toFixed(2)}
+                    value={cashierAuditEntry.cashEnding || auditExpectedCash.toFixed(2)}
                     onChange={(e) => updateCashierAuditEntry('cashEnding', e.target.value)}
                     disabled={cashierAuditSaving}
                   />

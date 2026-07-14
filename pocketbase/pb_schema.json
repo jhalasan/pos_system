@@ -492,7 +492,7 @@
         "type": "text"
       },
       {
-        "cascadeDelete": false,
+        "cascadeDelete": true,
         "collectionId": "pbc_2697449135",
         "help": "",
         "hidden": false,

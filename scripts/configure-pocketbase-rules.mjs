@@ -105,6 +105,7 @@ await updateCollection('sale_items', {
   viewRule: readRule,
   createRule: cashierRule,
 })
+await patchField('sale_items', 'sale_id', { cascadeDelete: true })
 
 await updateCollection('stock_movements', {
   listRule: readRule,

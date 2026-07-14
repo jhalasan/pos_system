@@ -178,6 +178,18 @@ ul { list-style: none; }
 .sync-center-toolbar > div { display:grid; gap:3px; }
 .sync-center-toolbar small { color:var(--text-muted); }
 .sync-center-toolbar .sync-center-toolbar-actions { display:flex; flex-direction:row; gap:8px; }
+.sync-center-loading { display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:14px; border:1px solid #bfdbfe; border-radius:10px; background:#eff6ff; color:#1d4ed8; }
+.sync-center-loading > div { display:grid; gap:3px; }
+.sync-center-loading small { color:#475569; }
+.sync-center-spinner { width:22px; height:22px; flex:0 0 auto; border:3px solid #bfdbfe; border-top-color:#2563eb; border-radius:50%; animation:sync-spin .75s linear infinite; }
+.sync-button-icon { display:inline-flex; }
+.sync-button-icon.spinning { animation:sync-spin .9s linear infinite; }
+.sync-button-spinner { width:16px; height:16px; flex:0 0 auto; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:sync-spin .75s linear infinite; }
+@keyframes sync-spin { to { transform:rotate(360deg); } }
+.offline-download-status { display:flex; align-items:flex-start; gap:12px; margin:16px 0; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
+.offline-download-status.loading { border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8; }
+.offline-download-status > div { display:grid; gap:4px; }
+.offline-download-status small, .offline-download-status span { color:var(--text-muted); font-size:12px; }
 .sync-discard-btn { align-self:center; white-space:nowrap; }
 .permission-grid { border:1px solid var(--border); border-radius:10px; padding:14px; }
 .permission-grid legend { padding:0 6px; font-weight:800; }
