@@ -4,7 +4,7 @@
   flex-direction: column;
   width: 100%;
   height: 100vh;
-  background-color: #f3f4f6;
+  background: #f1f4f9;
   color: #0f172a;
 }
 
@@ -19,9 +19,11 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
+  min-height: 68px;
+  padding: 10px 22px;
   background-color: #ffffff;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 8px rgba(15, 23, 42, .05);
   position: sticky;
   top: 0;
   z-index: 20;
@@ -30,9 +32,31 @@
 .header-left {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.cashier-brand-mark {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, .08);
+}
+
+.cashier-brand-mark img { width: 28px; height: 28px; object-fit: cover; }
+.cashier-brand-copy { display: grid; gap: 1px; }
+.cashier-brand-copy > span {
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .11em;
+  text-transform: uppercase;
 }
 
 .header-actions {
@@ -77,11 +101,24 @@
 }
 
 .header-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #030213;
+  font-size: 19px;
+  font-weight: 800;
+  color: #101828;
   margin: 0;
 }
+
+.cashier-operator {
+  display: grid;
+  gap: 1px;
+  min-width: 150px;
+  padding: 7px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  text-align: right;
+}
+.cashier-operator span { color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.cashier-operator strong { max-width: 210px; overflow: hidden; color: #0f172a; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 
 .cashier-name {
   font-size: 14px;
@@ -130,7 +167,7 @@
 }
 
 .transaction-tabs-bar {
-  background-color: #e9edf3;
+  background: #e9eef6;
   min-height: 52px;
   padding: 8px 48px;
   display: grid;
@@ -307,8 +344,8 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 35%);
   flex: 1;
-  gap: 24px;
-  padding: 24px 48px;
+  gap: 20px;
+  padding: 22px 40px 32px;
   overflow-y: auto;
   align-items: start;
 }
@@ -333,9 +370,9 @@
   gap: 10px;
   padding: 12px;
   border: 1px solid #dbeafe;
-  border-radius: 8px;
+  border-radius: 12px;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.06);
 }
 
 .transaction-summary-strip div {
@@ -504,9 +541,9 @@
   flex-direction: column;
   gap: 5px;
   padding: 12px 10px;
-  border-right: 1px solid #dbe1ea;
-  background: #fff;
-  box-shadow: 4px 0 14px rgba(15, 23, 42, .04);
+  border-right: 1px solid #2c3547;
+  background: linear-gradient(180deg, #202838 0%, #1b2230 100%);
+  box-shadow: 5px 0 18px rgba(15, 23, 42, .12);
   transition: width .2s ease;
 }
 
@@ -518,10 +555,10 @@
   align-items: center;
   gap: 11px;
   padding: 9px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
-  color: #334155;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #c8d0df;
   font-size: 13px;
   font-weight: 700;
   text-align: left;
@@ -530,17 +567,17 @@
   overflow: hidden;
 }
 
-.cashier-sidebar button:hover { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; box-shadow: 0 2px 6px rgba(37, 99, 235, .08); }
-.cashier-sidebar button.active { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; box-shadow: inset 3px 0 0 #2563eb; }
+.cashier-sidebar button:hover { border-color: rgba(255,255,255,.09); background: rgba(255,255,255,.07); color: #fff; box-shadow: none; }
+.cashier-sidebar button.active { border-color: rgba(129,140,248,.55); background: linear-gradient(135deg, #4f46e5, #5b50e8); color: #fff; box-shadow: 0 8px 18px rgba(79,70,229,.25); }
 .cashier-sidebar button:disabled { opacity: .55; cursor: not-allowed; }
 .cashier-sidebar button svg, .sidebar-symbol { flex: 0 0 18px; }
 .cashier-sidebar.collapsed button { width: 44px; padding: 9px 13px; }
 .cashier-sidebar.collapsed button span:not(.sidebar-symbol),
 .cashier-sidebar.collapsed button strong { display: none; }
-.sidebar-toggle { border: 0 !important; border-bottom: 1px solid #e2e8f0 !important; border-radius: 0 !important; margin-bottom: 5px; box-shadow: none !important; }
+.sidebar-toggle { border: 0 !important; border-bottom: 1px solid rgba(255,255,255,.09) !important; border-radius: 0 !important; margin-bottom: 7px; color: #fff !important; box-shadow: none !important; }
 .sidebar-symbol { font-size: 16px; font-weight: 900; text-align: center; }
-.cashier-sidebar .sidebar-logout { margin-top: auto; color: #b91c1c; }
-.cashier-sidebar .sidebar-logout:hover { background: #fef2f2; color: #991b1b; }
+.cashier-sidebar .sidebar-logout { margin-top: auto; border-color: rgba(248,113,113,.15); color: #fca5a5; }
+.cashier-sidebar .sidebar-logout:hover { border-color: rgba(248,113,113,.32); background: rgba(220,38,38,.16); color: #fecaca; }
 
 .sidebar-offset { margin-left: 220px; transition: margin-left .2s ease; }
 .sidebar-collapsed-offset { margin-left: 64px; transition: margin-left .2s ease; }
@@ -1302,9 +1339,9 @@
 .add-product-section {
   background-color: #ffffff;
   padding: 24px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.055);
   position: relative;
 }
 
@@ -1465,9 +1502,9 @@
 .cart-section {
   background-color: #ffffff;
   padding: 24px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.055);
   flex: 1;
   display: flex;
   flex-direction: column;
@@ -1725,9 +1762,9 @@
 .payment-card {
   background-color: #ffffff;
   padding: 24px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.075);
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -2021,6 +2058,12 @@
   .cashier-header {
     padding: 12px 16px;
   }
+
+  .cashier-brand-copy > span { display: none; }
+  .cashier-operator { min-width: 0; padding: 6px 9px; }
+  .cashier-operator span { display: none; }
+  .cashier-operator strong { max-width: 130px; }
+  .shared-drawer-badge { display: none; }
 
   .header-left {
     min-width: 0;

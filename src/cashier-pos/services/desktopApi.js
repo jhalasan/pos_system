@@ -404,6 +404,13 @@ function localTransactionNumber() {
   return `${day}${String(terminalCode).padStart(2, '0')}${String(Date.now()).slice(-4)}`
 }
 
+function canUseOfflineLoginFallback(error) {
+  return error?.status === 0
+    || isPocketBaseRateLimit(error)
+    || error instanceof TypeError
+    || /network|fetch|timeout|offline|connection/i.test(String(error?.message || ''))
+}
+
 async function refreshAuthorizationBarcodeCache(activeRuntime) {
   const records = await activeRuntime.pb.collection('authorization_barcodes').getFullList({
     expand: 'generated_by',
@@ -684,8 +691,10 @@ export const desktopCashierApi = {
       auth = { record: cachedUser, offline: true }
     } else {
       auth = await activeRuntime.login(email, password).catch(async (error) => {
-        const cachedUser = await cachedCashierLogin(email, password)
-        if (cachedUser) return { record: cachedUser, offline: true }
+        if (canUseOfflineLoginFallback(error)) {
+          const cachedUser = await cachedCashierLogin(email, password)
+          if (cachedUser) return { record: cachedUser, offline: true }
+        }
         rememberPocketBaseRateLimit(error)
         throw new Error(loginErrorMessage(error))
       })
@@ -756,18 +765,30 @@ export const desktopCashierApi = {
       }
     }
 
-    if (!account && (!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
+      let cloudChecked = false
       const record = await activeRuntime.pb.collection('users').getFirstListItem(
         activeRuntime.pb.filter('(void_barcode = {:code} || cashierBarcode = {:code}) && role = "cashier" && status != "inactive"', { code }),
         { requestKey: null },
-      ).catch((error) => {
+      ).then((result) => {
+        cloudChecked = true
+        return result
+      }).catch((error) => {
+        if (error?.status === 404) {
+          cloudChecked = true
+          return null
+        }
         rememberPocketBaseRateLimit(error)
+        if (!canUseOfflineLoginFallback(error)) throw error
         return null
       })
       if (record) {
         account = toCachedQuickLoginAccount(record)
         await cacheQuickLoginAccounts([record]).catch(() => {})
+      } else if (cloudChecked) {
+        if (account?.id) await cashierDb.quickLoginAccounts.delete(account.id)
+        throw new Error('This cashier barcode is no longer active. Download the latest staff access data or ask an administrator for a valid login.')
       }
     }
 
@@ -961,6 +982,13 @@ export const desktopCashierApi = {
   },
 
   async completeSale(sale) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+      const activeRuntime = await runtime()
+      await activeRuntime.refreshProducts().catch((error) => {
+        rememberPocketBaseRateLimit(error)
+        if (!canUseOfflineLoginFallback(error)) throw error
+      })
+    }
     const queued = await finalizeSaleLocally({
       ...sale,
       transactionNo: sale.transactionNo || localTransactionNumber(),

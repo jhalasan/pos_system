@@ -24,7 +24,7 @@
     "pb:reset:legacy-catalog": "node scripts/reset-to-legacy-catalog.mjs --apply",
     "pb:migrate": "node scripts/backfill-base-quantity.mjs",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
-    "test:offline": "node --test tests/cashier-activity-log-sync.test.js tests/offline-product-catalog.test.js tests/offline-restart-persistence.test.js tests/offline-two-terminal-sync.test.js tests/product-delete-sync.test.js tests/return-disposition.test.js tests/stock-availability.test.js tests/stock-conversion.test.js tests/transaction-log-sort.test.js",
+    "test:offline": "node --test tests/cashier-activity-log-sync.test.js tests/offline-product-catalog.test.js tests/offline-restart-persistence.test.js tests/offline-two-terminal-sync.test.js tests/out-of-stock-sale.test.js tests/product-delete-sync.test.js tests/return-disposition.test.js tests/stock-availability.test.js tests/stock-conversion.test.js tests/transaction-log-sort.test.js",
     "test:vercel": "node --test tests/admin-vercel-boundary.test.js",
     "preview": "vite preview",
     "tauri": "tauri",

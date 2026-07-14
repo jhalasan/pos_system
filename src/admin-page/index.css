@@ -328,24 +328,26 @@ ul { list-style: none; }
 .role-foot { margin-top: 30px; color: var(--text-faint); font-size: 13px; }
 
 .login-card {
-  width: 100%; max-width: 400px;
+  width: 100%; max-width: 480px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
   box-shadow: var(--shadow);
-  padding: 34px 32px;
+  padding: 42px 40px;
 }
 .login-card .brand-mark { width: 52px; height: 52px; font-size: 25px; margin-bottom: 14px; }
 .login-card .brand-logo-full {
   display: block;
-  width: 210px;
-  height: 88px;
+  width: 240px;
+  height: 100px;
   object-fit: contain;
   margin: 0 auto 10px;
 }
-.login-card h2 { font-size: 21px; font-weight: 700; text-align: center; }
-.login-card .tag { text-align: center; color: var(--text-muted); font-size: 13px; margin: 6px 0 24px; }
-.login-form { display: flex; flex-direction: column; gap: 16px; }
+.login-card h2 { font-size: 24px; font-weight: 700; text-align: center; }
+.login-card .tag { text-align: center; color: var(--text-muted); font-size: 14px; margin: 8px 0 28px; line-height: 1.5; }
+.login-form { display: flex; flex-direction: column; gap: 18px; }
+.login-card .input { min-height: 46px; font-size: 14px; }
+.login-card .btn-block { min-height: 46px; font-size: 14px; }
 .login-error {
   background: var(--danger-soft); color: var(--danger);
   font-size: 12px; font-weight: 600;
@@ -444,6 +446,12 @@ ul { list-style: none; }
 }
 .admin-login-back:hover { background: #f9fafb; border-color: #9ca3af; }
 .admin-login-back:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+@media (max-width: 520px) {
+  .auth-wrap { padding: 20px 16px; }
+  .login-card { padding: 36px 28px; }
+  .login-card .brand-logo-full { width: 220px; height: 92px; }
+}
 
 /* ============================================================
    ADMIN LAYOUT
@@ -602,6 +610,12 @@ ul { list-style: none; }
   color: #fff;
   box-shadow: none;
   transform: none;
+}
+.sidebar .sidebar-foot .nav-item.active {
+  background: linear-gradient(135deg, var(--primary), #6558f5);
+  border-color: rgba(129, 140, 248, .72);
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, .22);
 }
 .sidebar .sidebar-foot .nav-item.danger {
   background: rgba(255,255,255,.06);

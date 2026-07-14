@@ -2251,19 +2251,21 @@ const Cashier = ({ onLogout, user }) => {
         if (item.id !== id) return item;
         const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1
         const availableBase = getRemainingStock(item, activeTransaction, item.id)
-        const maxAvailableQty = Math.max(1, Math.floor(availableBase / conversion));
-        const maxQty = Math.max(1, Math.min(maxAvailableQty, Math.floor(requested)));
+        const maxAvailableQty = Math.max(0, Math.floor(availableBase / conversion));
+        const maxQty = Math.max(0, Math.min(maxAvailableQty, Math.floor(requested)));
 
         if (requested > maxQty) {
           showNotification(`Only ${maxQty} ${pluralUnit(item.unit, maxQty)} available for ${item.name}.`);
         }
+
+        if (maxQty === 0) return null;
 
         return {
           ...item,
           quantity: maxQty,
           total: item.price * maxQty,
         };
-      }),
+      }).filter(Boolean),
     });
   };
 
@@ -2385,6 +2387,7 @@ const Cashier = ({ onLogout, user }) => {
       showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed.`);
       return completedTxn;
     } catch (err) {
+      await loadProducts();
       showNotification(err.message || 'Unable to complete transaction.');
       throw err;
     }
@@ -2914,14 +2917,22 @@ const Cashier = ({ onLogout, user }) => {
     <div className={styles['cashier-layout']}>
       <div className={styles['cashier-header']}>
         <div className={styles['header-left']}>
-          <h2 className={styles['header-title']}>Cashier POS</h2>
-          {user && <span className={styles['cashier-name']}>({user.name || user.email})</span>}
+          <div className={styles['cashier-brand-mark']}>
+            <img src="/branding/nexa-systems-mark.jpg" alt="" aria-hidden="true" />
+          </div>
+          <div className={styles['cashier-brand-copy']}>
+            <span>NEXA Systems</span>
+            <h2 className={styles['header-title']}>Cashier POS</h2>
+          </div>
           {developerModeSettings.enabled && (
             <span className={styles['developer-mode-badge']}>
               Developer Mode
             </span>
           )}
-          {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Session Active</span>}
+        </div>
+        <div className={styles['header-actions']}>
+          {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Active</span>}
+          {user && <div className={styles['cashier-operator']}><span>Signed in as</span><strong>{user.name || user.email}</strong></div>}
         </div>
       </div>
 
@@ -2929,7 +2940,7 @@ const Cashier = ({ onLogout, user }) => {
 
       <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
         <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>
-          <span className={styles['sidebar-symbol']}>☰</span><strong>Menu</strong>
+          <span className={styles['sidebar-symbol']}>☰</span><strong>Sales Menu</strong>
         </button>
         <button type="button" onClick={handleNewTransaction}><Plus size={18} /><span>New Transaction</span></button>
         <button type="button" className={showHistory ? styles.active : ''} onClick={handleOpenHistory}><ClockHistory size={18} /><span>{withShortcut('History', 'history')}</span></button>
