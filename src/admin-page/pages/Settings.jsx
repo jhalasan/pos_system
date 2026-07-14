@@ -754,7 +754,10 @@ export default function Settings() {
             )}
             <div className="offline-readiness-actions" aria-busy={downloadingOfflineData}>
               <button className="btn btn-primary" onClick={downloadOfflineData} disabled={downloadingOfflineData}>
-                <span className={downloadingOfflineData ? 'sync-button-icon spinning' : 'sync-button-icon'}><IconDownload size={16} /></span> {downloadingOfflineData ? 'Downloading Latest Data...' : 'Download Latest Data for Offline Use'}
+                {downloadingOfflineData
+                  ? <span className="sync-button-spinner" aria-hidden="true" />
+                  : <span className="sync-button-icon"><IconDownload size={16} /></span>}
+                <span>{downloadingOfflineData ? 'Downloading data...' : 'Download Latest Data for Offline Use'}</span>
               </button>
               <button className="btn btn-outline" onClick={runOfflineSelfTest} disabled={offlineTestRunning || downloadingOfflineData}>{offlineTestRunning ? 'Testing Local System…' : 'Run Offline Self-Test'}</button>
             </div>

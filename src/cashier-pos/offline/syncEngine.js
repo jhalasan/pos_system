@@ -407,6 +407,19 @@ export class CashierSyncEngine extends EventTarget {
     return record?.id || ''
   }
 
+  async resolveCashierId(value) {
+    const original = await this.existingRelationId('users', value)
+    if (original) return original
+
+    const authenticated = this.pb.authStore?.record
+    if (authenticated?.role === 'cashier' && authenticated?.status !== 'inactive') {
+      const current = await this.existingRelationId('users', authenticated.id)
+      if (current) return current
+    }
+
+    throw new Error('The queued cashier account no longer exists. Sign out, then sign in with an active cashier account and sync again.')
+  }
+
   async resolveCashMovementCashier(payload, sessionId) {
     const directCashier = await this.existingRelationId('users', payload.cashier_id)
     if (directCashier) return directCashier
@@ -432,6 +445,12 @@ export class CashierSyncEngine extends EventTarget {
       if (terminalCashier) return terminalCashier
     }
 
+    const authenticated = this.pb.authStore?.record
+    if (authenticated?.role === 'cashier' && authenticated?.status !== 'inactive') {
+      const currentCashier = await this.existingRelationId('users', authenticated.id)
+      if (currentCashier) return currentCashier
+    }
+
     throw new Error('The cashier account for this cash movement no longer exists, and no matching drawer session could be found.')
   }
 
@@ -444,6 +463,7 @@ export class CashierSyncEngine extends EventTarget {
     if (cloudSessionId) payload.session_id = cloudSessionId
 
     if (op.type === 'openCashRegisterSession') {
+      payload.cashier_id = await this.resolveCashierId(payload.cashier_id)
       const created = await this.pb.collection('cash_register_sessions').create(payload, { requestKey: op.id })
       await cashierDb.settings.put({ key: `cashSession:${op.entityId}`, value: created.id })
     } else if (op.type === 'closeCashRegisterSession') {
@@ -480,6 +500,10 @@ export class CashierSyncEngine extends EventTarget {
         }, { requestKey: `${op.id}:minimal` })
       }
     } else if (op.type === 'recordCashAudit') {
+      payload.cashier_id = await this.resolveCashierId(payload.cashier_id)
+      const sessionId = await this.existingRelationId('cash_register_sessions', payload.session_id)
+      if (sessionId) payload.session_id = sessionId
+      else delete payload.session_id
       await this.pb.collection('cash_audits').create(payload, { requestKey: op.id })
     } else if (op.type === 'activityLog') {
       const activityPayload = await activityLogPayloadForSync(
@@ -534,30 +558,32 @@ export class CashierSyncEngine extends EventTarget {
   }
 
   async uploadSale(sale) {
+    const cashierId = await this.resolveCashierId(sale.cashierId)
+    const resolvedSale = cashierId === sale.cashierId ? sale : { ...sale, cashierId }
     let cloudSale
     try {
-      cloudSale = await this.pb.collection('sales').create(cloudSalePayload(sale), {
-        requestKey: `sale:${sale.clientSaleId}`,
+      cloudSale = await this.pb.collection('sales').create(cloudSalePayload(resolvedSale), {
+        requestKey: `sale:${resolvedSale.clientSaleId}`,
       })
     } catch (error) {
       if (error?.status !== 400 && error?.status !== 409) throw error
 
-      cloudSale = await findExistingCloudSale(this.pb, sale)
+      cloudSale = await findExistingCloudSale(this.pb, resolvedSale)
 
       if (!cloudSale) throw error
     }
 
-    const { items: cloudSaleItems } = await ensureCloudSaleItems(this.pb, sale, cloudSale)
+    const { items: cloudSaleItems } = await ensureCloudSaleItems(this.pb, resolvedSale, cloudSale)
     // Always verify the stock movement. A previous attempt may have created
     // the sale and line items but failed before deducting inventory. The
     // movement reference check inside ensureCloudStockDeduction keeps retries
     // idempotent and applies the converted base-unit quantity exactly once.
-    await ensureCloudStockDeduction(this.pb, sale, cloudSaleItems)
+    await ensureCloudStockDeduction(this.pb, resolvedSale, cloudSaleItems)
 
-    const detail = saleActivityDetail(sale)
+    const detail = saleActivityDetail(resolvedSale)
     const existingLog = await this.pb.collection('activity_logs').getFirstListItem(
       this.pb.filter('user_id = {:cashierId} && action_type = "Sale" && description = {:detail}', {
-        cashierId: sale.cashierId,
+        cashierId: resolvedSale.cashierId,
         detail,
       }),
       { requestKey: null },
@@ -565,18 +591,18 @@ export class CashierSyncEngine extends EventTarget {
 
     if (!existingLog) {
       await this.pb.collection('activity_logs').create({
-        user_id: sale.cashierId,
+        user_id: resolvedSale.cashierId,
         action_type: 'Sale',
         description: detail,
-        timestamp: sale.createdAt || new Date().toISOString(),
-      }, { requestKey: `activity:${sale.clientSaleId}` }).catch(() => null)
+        timestamp: resolvedSale.createdAt || new Date().toISOString(),
+      }, { requestKey: `activity:${resolvedSale.clientSaleId}` }).catch(() => null)
     }
 
     if (Number(sale.discountAmount) > 0 || Number(sale.discountPercent) > 0) {
       const discountDetail = `Applied ${Number(sale.discountPercent || 0)}% discount (${Number(sale.discountAmount || 0).toFixed(2)} off ${Number(sale.subtotalAmount || sale.totalAmount || 0).toFixed(2)}) on transaction ${sale.transactionNo}`
       const existingDiscountLog = await this.pb.collection('activity_logs').getFirstListItem(
         this.pb.filter('user_id = {:cashierId} && action_type = "Discount" && description = {:detail}', {
-          cashierId: sale.cashierId,
+          cashierId: resolvedSale.cashierId,
           detail: discountDetail,
         }),
         { requestKey: null },
@@ -584,11 +610,11 @@ export class CashierSyncEngine extends EventTarget {
 
       if (!existingDiscountLog) {
         await this.pb.collection('activity_logs').create({
-          user_id: sale.cashierId,
+          user_id: resolvedSale.cashierId,
           action_type: 'Discount',
           description: discountDetail,
-          timestamp: sale.createdAt || new Date().toISOString(),
-        }, { requestKey: `discount:${sale.clientSaleId}` }).catch(() => null)
+          timestamp: resolvedSale.createdAt || new Date().toISOString(),
+        }, { requestKey: `discount:${resolvedSale.clientSaleId}` }).catch(() => null)
       }
     }
 

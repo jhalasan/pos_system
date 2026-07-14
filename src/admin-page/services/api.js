@@ -1,7 +1,11 @@
 import { desktopAdminApi } from './desktopApi'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
+// Prefer the compile-time target, but also recognize the native runtime. This
+// prevents a packaged Tauri build with a missing/overridden Vite target from
+// silently using web-only placeholder methods for offline data management.
 const isDesktopApp = import.meta.env.VITE_APP_TARGET === 'cashier-desktop'
+  || Boolean(globalThis.__TAURI_INTERNALS__ || globalThis.__TAURI__)
 const ADMIN_TOKEN_KEY = 'nexa_admin_token'
 
 function parseJson(text) {
