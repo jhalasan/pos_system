@@ -11,6 +11,7 @@ import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { peso } from '../services/api'
+import { localDateKey } from '../utils/localDate'
 
 const emptyAnalytics = {
   stats: { totalRevenue: 0, transactionCount: 0, averageSale: 0, cashSales: 0, gcashSales: 0, unitsSold: 0, voidCount: 0 },
@@ -82,8 +83,8 @@ export default function Analytics() {
     if (datePreset !== 'all' && datePreset !== 'custom') fromDate.setDate(fromDate.getDate() - (Number(datePreset) - 1))
     const filters = {
       source: dataSource,
-      from: datePreset === 'custom' ? customFrom : (datePreset === 'all' ? '' : fromDate.toISOString().slice(0, 10)),
-      to: datePreset === 'custom' ? customTo : (datePreset === 'all' ? '' : now.toISOString().slice(0, 10)),
+      from: datePreset === 'custom' ? customFrom : (datePreset === 'all' ? '' : localDateKey(fromDate)),
+      to: datePreset === 'custom' ? customTo : (datePreset === 'all' ? '' : localDateKey(now)),
     }
     void api.dashboard(filters).then((result) => {
       setData(result)

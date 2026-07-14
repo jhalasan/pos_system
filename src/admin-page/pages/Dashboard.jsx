@@ -7,6 +7,7 @@ import LineChart from '../components/charts/LineChart'
 import { IconAlert, IconBox, IconCheck, IconCloud, IconDownload, IconPlus, IconScan } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { localDateKey } from '../utils/localDate'
 
 const emptyDashboard = {
   stats: { dailySales: 0, monthlySales: 0, totalRevenue: 0, criticalStock: 0, transactionCount: 0, averageSale: 0, cashSales: 0, gcashSales: 0 },
@@ -46,7 +47,7 @@ export default function Dashboard() {
     const now = new Date()
     const from = new Date(now)
     if (range !== 'all') from.setDate(from.getDate() - (Number(range) - 1))
-    const filters = { source, from: range === 'all' ? '' : from.toISOString().slice(0, 10), to: range === 'all' ? '' : now.toISOString().slice(0, 10) }
+    const filters = { source, from: range === 'all' ? '' : localDateKey(from), to: range === 'all' ? '' : localDateKey(now) }
     void api.dashboard(filters)
       .then((result) => {
         if (!active) return

@@ -11,22 +11,23 @@ import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/services/receiptPrinter'
 import GCashPayments from './GCashPayments'
 import { sortTransactionRecords } from '../utils/transactionLogUtils'
+import { localDateKey } from '../utils/localDate'
 
 const PAGE_SIZE = 10
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10)
+  return localDateKey()
 }
 
 function monthStartDate() {
   const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+  return localDateKey(new Date(now.getFullYear(), now.getMonth(), 1))
 }
 
 function lastDaysDate(days) {
   const date = new Date()
   date.setDate(date.getDate() - days)
-  return date.toISOString().slice(0, 10)
+  return localDateKey(date)
 }
 
 function formatDate(value) {

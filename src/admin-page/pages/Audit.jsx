@@ -11,6 +11,7 @@ import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { currentAdminUser } from '../auth'
 import { buildShiftCloseReceiptText } from '../../cashier-pos/services/receiptPrinter'
+import { localDateKey } from '../utils/localDate'
 
 const AUDIT_REVIEW_KEY = 'nexa_reviewed_cash_audits'
 const PAGE_SIZE = 10
@@ -62,18 +63,18 @@ function localCashCountLogs() {
 }
 
 function todayDate() {
-  return new Date().toISOString().slice(0, 10)
+  return localDateKey()
 }
 
 function monthStartDate() {
   const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10)
+  return localDateKey(new Date(now.getFullYear(), now.getMonth(), 1))
 }
 
 function lastDaysDate(days) {
   const date = new Date()
   date.setDate(date.getDate() - days)
-  return date.toISOString().slice(0, 10)
+  return localDateKey(date)
 }
 
 function filterDates(range, customFrom, customTo) {
