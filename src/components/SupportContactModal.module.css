@@ -8,6 +8,7 @@
 .contacts a { color: var(--primary, #2563eb); font-weight: 700; }
 .contacts span { color: var(--text-muted, #64748b); }
 .success { margin-bottom: 16px; padding: 12px; border-radius: 8px; background: var(--success-soft, #dcfce7); color: var(--success, #166534); font-size: 13px; }
+.error { margin-bottom: 16px; padding: 12px; border-radius: 8px; background: var(--danger-soft, #fee2e2); color: var(--danger, #b91c1c); font-size: 13px; }
 .form { display: grid; gap: 16px; }
 .form label { display: grid; gap: 7px; color: var(--text, #334155); font-size: 13px; font-weight: 700; }
 .form select, .form textarea, .form input[type='file'] { width: 100%; border: 1px solid var(--border, #cbd5e1); border-radius: 8px; padding: 11px 12px; background: var(--surface, #fff); color: var(--text, #0f172a); font: inherit; }
@@ -21,4 +22,5 @@
 .cancel, .submit { border-radius: 8px; padding: 10px 16px; cursor: pointer; font-weight: 700; }
 .cancel { border: 1px solid var(--border, #cbd5e1); background: var(--surface, #fff); color: var(--text, #334155); }
 .submit { border: 1px solid var(--primary, #2563eb); background: var(--primary, #2563eb); color: #fff; }
+.cancel:disabled, .submit:disabled { opacity: .6; cursor: wait; }
 @media (max-width: 560px) { .previews { grid-template-columns: repeat(2, minmax(0,1fr)); } }

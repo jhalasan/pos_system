@@ -254,6 +254,7 @@ function loadReviewedAudits() {
 export default function Audit() {
   const { data: receipts, loading: receiptsLoading } = useApi(api.receipts, [])
   const { data: logs, loading: logsLoading } = useApi(api.activityLogs, [])
+  const { data: currentCashiers, loading: cashiersLoading } = useApi(api.cashiers, [])
   const effectiveLogs = useMemo(() => {
     const cloudLogs = logs || []
     const fallbackLogs = [...localCashCountLogs(), ...localSessionEndLogs()]
@@ -518,9 +519,19 @@ export default function Audit() {
   ), [effectiveLogs, inRange])
 
   const search = query.trim().toLowerCase()
+  const currentCashierNames = useMemo(() => new Set(
+    (currentCashiers || [])
+      .filter((cashier) => cashier.status !== 'inactive' && !cashier.deleted)
+      .flatMap((cashier) => [cashier.name, cashier.email])
+      .map((value) => String(value || '').trim().toLowerCase())
+      .filter(Boolean),
+  ), [currentCashiers])
   const filteredAuditRows = useMemo(() => {
-    if (!search) return auditRows
-    return auditRows.filter((row) => [
+    const activeRows = cashiersLoading
+      ? auditRows
+      : auditRows.filter((row) => currentCashierNames.has(String(row.cashierName || '').trim().toLowerCase()))
+    if (!search) return activeRows
+    return activeRows.filter((row) => [
       row.cashierName,
       row.status?.text,
       row.flags.join(' '),
@@ -534,7 +545,7 @@ export default function Audit() {
       row.actualCashEnding,
       row.variance,
     ].some((value) => String(value || '').toLowerCase().includes(search)))
-  }, [auditRows, search])
+  }, [auditRows, cashiersLoading, currentCashierNames, search])
 
   const filteredCashCountRows = useMemo(() => {
     if (!search) return cashCountRows

@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
+import nodemailer from 'nodemailer'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import path from 'node:path'
 import fs from 'node:fs'
@@ -44,6 +45,7 @@ const ngrokAppPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i
 const localNetworkHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})$/i
 const isVercelAdminPortal = Boolean(process.env.VERCEL || process.env.ADMIN_WEB_ONLY === 'true')
 const allowDevelopmentOrigins = process.env.NODE_ENV !== 'production' && !isVercelAdminPortal
+const desktopOrigins = new Set(['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost'])
 
 function parseOrigin(origin) {
   try {
@@ -74,6 +76,18 @@ const upload = multer({
   },
 })
 
+const supportUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024, files: 5 },
+  fileFilter: (_req, file, cb) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype)) {
+      cb(new Error('Support attachments must be JPEG, PNG, or WEBP images.'))
+      return
+    }
+    cb(null, true)
+  },
+})
+
 app.use(cors((req, callback) => {
   callback(null, {
     origin(origin, originCallback) {
@@ -81,6 +95,7 @@ app.use(cors((req, callback) => {
       if (
         !origin ||
         allowedOrigins.includes(origin) ||
+        desktopOrigins.has(origin) ||
         isSameRequestOrigin(req, parsedOrigin) ||
         (allowDevelopmentOrigins && ngrokHostPattern.test(origin)) ||
         (allowDevelopmentOrigins && ngrokAppPattern.test(origin)) ||
@@ -123,6 +138,47 @@ app.use(express.json())
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)
 }
+
+app.post('/api/support/tickets', supportUpload.array('attachments', 5), asyncRoute(async (req, res) => {
+  const smtpHost = String(process.env.SMTP_HOST || '').trim()
+  const smtpUser = String(process.env.SMTP_USER || '').trim()
+  const smtpPass = String(process.env.SMTP_PASS || '').trim()
+  const recipient = String(process.env.SUPPORT_EMAIL_TO || process.env.VITE_SUPPORT_EMAIL || smtpUser).trim()
+  if (!smtpHost || !smtpUser || !smtpPass || !recipient) {
+    return res.status(503).json({ error: 'Direct support email is not configured on the server.' })
+  }
+
+  const ticketId = String(req.body?.id || '').trim().slice(0, 80)
+  const source = String(req.body?.source || 'POS System').trim().slice(0, 120)
+  const reason = String(req.body?.reason || 'Other').trim().slice(0, 160)
+  const description = String(req.body?.description || '').trim().slice(0, 10000)
+  if (!ticketId || !description) return res.status(400).json({ error: 'Ticket ID and description are required.' })
+
+  const totalAttachmentBytes = (req.files || []).reduce((sum, file) => sum + file.size, 0)
+  if (totalAttachmentBytes > 3.5 * 1024 * 1024) {
+    return res.status(413).json({ error: 'Combined support attachments must be 3.5 MB or smaller.' })
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: Number(process.env.SMTP_PORT || 465),
+    secure: String(process.env.SMTP_SECURE || 'true').toLowerCase() !== 'false',
+    auth: { user: smtpUser, pass: smtpPass },
+  })
+  await transporter.sendMail({
+    from: process.env.SUPPORT_EMAIL_FROM || `NEXA POS Support <${smtpUser}>`,
+    to: recipient,
+    replyTo: smtpUser,
+    subject: `[${ticketId}] ${reason}`,
+    text: `Ticket: ${ticketId}\nSource: ${source}\nReason: ${reason}\nCreated: ${new Date().toISOString()}\n\n${description}`,
+    attachments: (req.files || []).map((file) => ({
+      filename: file.originalname,
+      content: file.buffer,
+      contentType: file.mimetype,
+    })),
+  })
+  return res.status(201).json({ id: ticketId, delivered: true })
+}))
 
 async function listRecords(collection, query = '') {
   const params = Object.fromEntries(new URLSearchParams(query.replace(/^\?/, '')))
