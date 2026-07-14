@@ -1155,22 +1155,31 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const syncResult = await cashierApi.syncNow();
       if ((syncResult?.pending || 0) > 0) {
-        const leaveWithPendingSales = await requestConfirmation({
-          title: 'Transactions Still Syncing',
-          message: `${syncResult.pending} transaction(s) are still waiting for cloud sync. Other terminals may not have the latest stock yet.`,
-          confirmLabel: 'Log Out Anyway',
-          tone: 'danger',
+        const queue = await cashierApi.syncQueueSummary().catch(() => ({
+          pending: syncResult.pending,
+          failed: syncResult.failed || 0,
+          sales: syncResult.pending,
+        }));
+        const saleCount = Number(queue.sales) || 0;
+        const operationCount = Math.max(0, (Number(queue.pending) || 0) + (Number(queue.failed) || 0) - saleCount);
+        const queueParts = [
+          saleCount > 0 ? `${saleCount} transaction${saleCount === 1 ? '' : 's'}` : '',
+          operationCount > 0 ? `${operationCount} session or activity update${operationCount === 1 ? '' : 's'}` : '',
+        ].filter(Boolean).join(' and ');
+        await requestConfirmation({
+          title: 'End of Day Saved on This Terminal',
+          message: `The drawer close and cash count are safely stored locally. ${queueParts || `${syncResult.pending} update(s)`} still ${saleCount + operationCount === 1 ? 'needs' : 'need'} cloud sync and will retry after the next online sign-in.`,
+          confirmLabel: 'Continue to Login',
+          hideCancel: true,
         });
-        if (!leaveWithPendingSales) return false;
       }
     } catch (error) {
-      const leaveWithoutSync = await requestConfirmation({
-        title: 'Cloud Sync Incomplete',
-        message: `End of day was saved locally, but synchronization could not finish: ${error.message || 'Connection unavailable'}.`,
-        confirmLabel: 'Log Out Anyway',
-        tone: 'danger',
+      await requestConfirmation({
+        title: 'End of Day Saved Offline',
+        message: `The drawer close and cash count are safely stored on this terminal. Cloud synchronization could not finish: ${error.message || 'connection unavailable'}. It will retry after the next online sign-in.`,
+        confirmLabel: 'Continue to Login',
+        hideCancel: true,
       });
-      if (!leaveWithoutSync) return false;
     }
 
     if (onLogout) {
@@ -4983,11 +4992,11 @@ const Cashier = ({ onLogout, user }) => {
 
       <Modal
         isOpen={Boolean(confirmation)}
-        onClose={() => resolveConfirmation(false)}
+        onClose={() => resolveConfirmation(confirmation?.hideCancel ? true : false)}
         title={confirmation?.title || 'Please Confirm'}
         footer={(
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={() => resolveConfirmation(false)}>Cancel</button>
+            {!confirmation?.hideCancel && <button className="btn btn-outline" onClick={() => resolveConfirmation(false)}>Cancel</button>}
             <button
               className={`btn ${confirmation?.tone === 'danger' ? 'btn-danger' : 'btn-primary'}`}
               onClick={() => resolveConfirmation(true)}
