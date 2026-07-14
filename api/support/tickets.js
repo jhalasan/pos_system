@@ -69,9 +69,13 @@ export default async function handler(req, res) {
     })
     return res.status(201).json({ id: ticketId, delivered: true })
   } catch (error) {
+    const isAttachmentError = error?.code?.startsWith?.('LIMIT_')
+    const isSmtpAuthError = error?.code === 'EAUTH' || /535[- ]5\.7\.8|username and password not accepted/i.test(error?.message || '')
     const message = error?.code === 'LIMIT_FILE_SIZE'
       ? 'Each support attachment must be 2 MB or smaller.'
-      : (error?.message || 'Unable to send the support email.')
-    return res.status(error?.code?.startsWith?.('LIMIT_') ? 413 : 500).json({ error: message })
+      : isSmtpAuthError
+        ? 'The support email service is not authenticated. Ask the system administrator to update the Gmail App Password in Vercel.'
+        : 'The support email could not be sent right now. Please try again later.'
+    return res.status(isAttachmentError ? 413 : 502).json({ error: message })
   }
 }

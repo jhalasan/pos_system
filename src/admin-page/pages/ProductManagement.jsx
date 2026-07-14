@@ -495,7 +495,10 @@ export default function ProductManagement() {
                 const barcodes = getProductBarcodes(p)
                 const breakdown = getInventoryBreakdown(p)
                 const remainderBreakdown = getInventoryRemainderBreakdown(p)
-                const hasMultipleUnits = Boolean((p.hasMultipleUnits ?? p.has_multiple_units) || breakdown.length > 1)
+                // Legacy records can have the multi-unit flag set even when
+                // only one base selling unit exists. A breakdown is useful
+                // only when there are multiple actual unit rows to display.
+                const hasMultipleUnits = breakdown.length > 1
                 const inventoryLabel = primaryInventoryLabel(p)
                 const isExpanded = expandedProducts.has(p.id)
                 const stockToneClass = isOutOfStock || p.status === 'critical'

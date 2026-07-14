@@ -165,18 +165,27 @@ app.post('/api/support/tickets', supportUpload.array('attachments', 5), asyncRou
     secure: String(process.env.SMTP_SECURE || 'true').toLowerCase() !== 'false',
     auth: { user: smtpUser, pass: smtpPass },
   })
-  await transporter.sendMail({
-    from: process.env.SUPPORT_EMAIL_FROM || `NEXA POS Support <${smtpUser}>`,
-    to: recipient,
-    replyTo: smtpUser,
-    subject: `[${ticketId}] ${reason}`,
-    text: `Ticket: ${ticketId}\nSource: ${source}\nReason: ${reason}\nCreated: ${new Date().toISOString()}\n\n${description}`,
-    attachments: (req.files || []).map((file) => ({
-      filename: file.originalname,
-      content: file.buffer,
-      contentType: file.mimetype,
-    })),
-  })
+  try {
+    await transporter.sendMail({
+      from: process.env.SUPPORT_EMAIL_FROM || `NEXA POS Support <${smtpUser}>`,
+      to: recipient,
+      replyTo: smtpUser,
+      subject: `[${ticketId}] ${reason}`,
+      text: `Ticket: ${ticketId}\nSource: ${source}\nReason: ${reason}\nCreated: ${new Date().toISOString()}\n\n${description}`,
+      attachments: (req.files || []).map((file) => ({
+        filename: file.originalname,
+        content: file.buffer,
+        contentType: file.mimetype,
+      })),
+    })
+  } catch (error) {
+    const isAuthError = error?.code === 'EAUTH' || /535[- ]5\.7\.8|username and password not accepted/i.test(error?.message || '')
+    return res.status(502).json({
+      error: isAuthError
+        ? 'The support email service is not authenticated. Ask the system administrator to update the Gmail App Password on the server.'
+        : 'The support email could not be sent right now. Please try again later.',
+    })
+  }
   return res.status(201).json({ id: ticketId, delivered: true })
 }))
 
