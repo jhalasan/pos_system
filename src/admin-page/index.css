@@ -2185,6 +2185,8 @@ table.data tbody tr.unit-breakdown-row:hover {
 .transaction-log-table th,
 .transaction-log-table td {
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .transaction-log-table th:nth-child(1),
 .transaction-log-table td:nth-child(1) {
@@ -2564,6 +2566,9 @@ table.data tbody tr.unit-breakdown-row:hover {
   table.data {
     min-width: 680px;
   }
+  table.data.transaction-log-table {
+    min-width: 1120px;
+  }
   table.data thead th,
   table.data tbody td {
     padding: 10px 12px;
@@ -2656,6 +2661,9 @@ table.data tbody tr.unit-breakdown-row:hover {
   }
   table.data {
     min-width: 620px;
+  }
+  table.data.transaction-log-table {
+    min-width: 1120px;
   }
   .page-head {
     flex-direction: column;
