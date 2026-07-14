@@ -769,7 +769,7 @@ export const desktopCashierApi = {
       const activeRuntime = await runtime()
       let cloudChecked = false
       const record = await activeRuntime.pb.collection('users').getFirstListItem(
-        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier" && status != "inactive"', { code }),
+        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier"', { code }),
         { requestKey: null },
       ).then((result) => {
         cloudChecked = true
@@ -786,11 +786,16 @@ export const desktopCashierApi = {
         return null
       })
       if (record) {
+        if (record.status === 'inactive') {
+          if (account?.id) await cashierDb.quickLoginAccounts.delete(account.id)
+          throw new Error('This cashier account is inactive. Ask an administrator to reactivate it before logging in.')
+        }
         account = toCachedQuickLoginAccount(record)
-        await cacheQuickLoginAccounts([record]).catch(() => {})
-      } else if (cloudChecked) {
-        if (account?.id) await cashierDb.quickLoginAccounts.delete(account.id)
-        throw new Error('This cashier barcode is no longer active. Download the latest staff access data or ask an administrator for a valid login.')
+        // Refresh only this cashier. Clearing the full cache here would remove
+        // every other cashier after one successful barcode login.
+        await cashierDb.quickLoginAccounts.put(account).catch(() => {})
+      } else if (cloudChecked && !account) {
+        throw new Error('Cashier barcode was not found. Download the latest staff access data or ask an administrator to verify the barcode.')
       }
     }
 
