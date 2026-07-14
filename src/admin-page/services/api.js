@@ -172,6 +172,7 @@ const webApi = {
   discardAllFailedProductSync: async () => ({ discarded: 0, productsRemoved: 0 }),
   offlineReadiness: async () => ({ ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }),
   downloadOfflineData: async () => ({ ready: false }),
+  resetLocalData: async () => { throw new Error('Local terminal reset is available in the desktop application only.') },
   importStatus: () => request('/system/import-status'),
   backups: () => request('/system/backups'),
   backupPolicy: () => request('/system/backup-policy'),
@@ -182,5 +183,5 @@ const webApi = {
 }
 
 export const api = isDesktopApp
-  ? { ...desktopAdminApi, importStatus: webApi.importStatus, backups: webApi.backups, backupPolicy: webApi.backupPolicy, runAutomaticBackup: webApi.runAutomaticBackup, maintenanceReport: webApi.maintenanceReport, createBackup: webApi.createBackup, restoreBackup: webApi.restoreBackup }
+  ? { ...desktopAdminApi, importStatus: webApi.importStatus, backups: webApi.backups, backupPolicy: webApi.backupPolicy, runAutomaticBackup: webApi.runAutomaticBackup, createBackup: webApi.createBackup, restoreBackup: webApi.restoreBackup }
   : webApi

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
 import { IconUsers, IconUserPlus, IconScan, IconTrash, IconEdit, IconImage, IconDownload } from '../components/Icons'
@@ -349,12 +350,7 @@ export default function CashierManagement() {
   }, [barcodePreview, printSettings.copies])
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Staff Management" subtitle={`Loading ${staffNoun.toLowerCase()} accounts...`} />
-        <div className="card"><div className="empty"><h4>{`Loading ${staffNounPlural.toLowerCase()}`}</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Staff Management" message={`Loading ${staffNoun.toLowerCase()} accounts…`} />
   }
 
   if (error) {

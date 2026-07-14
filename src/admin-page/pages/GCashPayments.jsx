@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import { IconDownload, IconPeso, IconSearch, IconWallet } from '../components/Icons'
 import { api, peso } from '../services/api'
@@ -150,12 +151,7 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
   }
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="GCash Payments" subtitle="Loading GCash payment records..." />
-        <div className="card"><div className="empty"><h4>Loading GCash payments</h4></div></div>
-      </>
-    )
+    return <PageLoader title="GCash Payments" message="Loading GCash payment records…" />
   }
 
   if (error) {

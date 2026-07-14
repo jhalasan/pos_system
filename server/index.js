@@ -1521,7 +1521,7 @@ function dashboardSaleSource(sale = {}) {
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
-  let sales = await listRecords('sales', '?filter=status!="voided"&perPage=500')
+  let sales = await listRecords('sales', '?perPage=500')
   let saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
   const source = String(req.query.source || 'all')
   const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : null
@@ -1558,16 +1558,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     })
     .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
   const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
-  const monthlySaleIds = new Set(completedSales
-    .filter((sale) => new Date(sale.created_at || sale.created) >= monthStart)
-    .map((sale) => sale.id))
   const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
-  const monthlyStockOut = saleItems
-    .filter((item) => {
-      const saleId = Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id
-      return monthlySaleIds.has(saleId)
-    })
-    .reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0)
+  const selectedUnitsSold = saleItems.reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0)
 
   const criticalStockProducts = products
     .filter(isCriticalStock)
@@ -1660,11 +1652,13 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
       averageSale: completedSales.length ? totalRevenue / completedSales.length : 0,
       cashSales: paymentTotals.cash,
       gcashSales: paymentTotals.gcash,
+      unitsSold: selectedUnitsSold,
+      voidCount: sales.filter((sale) => (sale.status || 'completed') === 'voided').length,
     },
     criticalAlerts,
     productInOut: [
       { label: 'Current Stock', value: currentStockUnits, color: '#4f46e5' },
-      { label: 'Units Sold', value: monthlyStockOut, color: '#16a34a' },
+      { label: 'Units Sold', value: selectedUnitsSold, color: '#16a34a' },
     ],
     topProducts,
     hourlySales,

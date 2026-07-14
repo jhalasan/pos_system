@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import ProductModal from '../components/ProductModal'
 import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTrash, IconDownload, IconPrint } from '../components/Icons'
@@ -1276,12 +1277,7 @@ export default function Inventory() {
   )
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Inventory Scanner" subtitle="Loading inventory..." />
-        <div className="card"><div className="empty"><h4>Loading inventory</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Inventory Scanner" message="Loading inventory…" />
   }
 
   if (error) {

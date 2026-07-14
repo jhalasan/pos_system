@@ -1,7 +1,18 @@
+use tauri::Manager;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(8));
+                finish_startup(&app_handle);
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            complete_startup,
             select_export_folder,
             write_export_file,
             save_print_file,
@@ -12,6 +23,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Nexa POS Cashier");
+}
+
+fn finish_startup(app: &tauri::AppHandle) {
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+    if let Some(splash) = app.get_webview_window("splashscreen") {
+        let _ = splash.close();
+    }
+}
+
+#[tauri::command]
+fn complete_startup(app: tauri::AppHandle) {
+    finish_startup(&app);
 }
 
 #[tauri::command]

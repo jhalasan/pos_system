@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import BrandedLoader from '../../components/BrandedLoader'
 import Modal from '../components/Modal'
 import { IconBarcode, IconCheck, IconLock, IconPlus, IconShield, IconTag, IconTrash } from '../components/Icons'
 import { currentAdminUser } from '../auth'
@@ -444,10 +445,7 @@ export default function BarcodeTools() {
 
             <div className="section-sub">Authorization Barcodes</div>
             {authLoading ? (
-              <div className="empty" style={{ padding: '34px 20px' }}>
-                <div className="em-icon"><IconShield size={24} /></div>
-                <h4>Loading authorization barcodes</h4>
-              </div>
+              <BrandedLoader compact message="Loading authorization barcodes…" />
             ) : authError ? (
               <div className="empty" style={{ padding: '34px 20px' }}>
                 <div className="em-icon"><IconLock size={24} /></div>

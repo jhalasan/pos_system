@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
 import { IconPlus, IconSearch, IconEdit, IconTrash, IconArchive, IconImage, IconDownload, IconPrint } from '../components/Icons'
@@ -361,12 +362,7 @@ export default function ProductManagement() {
   }
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Product Management" subtitle="Loading product catalog..." />
-        <div className="card"><div className="empty"><h4>Loading products</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Product Management" message="Loading product catalog…" />
   }
 
   if (error) {

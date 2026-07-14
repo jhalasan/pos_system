@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
 import { IconArrowSwap, IconBarcode, IconDownload, IconPrint, IconReceipt, IconSearch } from '../components/Icons'
@@ -275,12 +276,7 @@ export default function TransactionLogs() {
   }
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Transaction Logs" subtitle="Loading transaction history..." />
-        <div className="card"><div className="empty"><h4>Loading transactions</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Transaction Logs" message="Loading transaction history…" />
   }
 
   if (error) {

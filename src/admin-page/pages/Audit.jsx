@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import StatCard from '../components/StatCard'
 import Modal from '../components/Modal'
 import { IconDollar, IconDownload, IconList, IconSearch, IconUsers } from '../components/Icons'
@@ -621,12 +622,7 @@ export default function Audit() {
   }
 
   if (receiptsLoading || logsLoading) {
-    return (
-      <>
-        <PageHeader title="Audit" subtitle="Loading cashier audit data..." />
-        <div className="card"><div className="empty"><h4>Loading audit records</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Audit" message="Loading cashier audit data…" />
   }
 
   return (

@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import Modal from '../components/Modal'
 import { IconDownload, IconList, IconSearch } from '../components/Icons'
 import { api } from '../services/api'
@@ -198,12 +199,7 @@ export default function ActivityLogs() {
   }
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Activity Logs" subtitle="Loading activity logs..." />
-        <div className="card"><div className="empty"><h4>Loading logs</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Activity Logs" message="Loading activity logs…" />
   }
 
   if (error) {

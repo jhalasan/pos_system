@@ -2,293 +2,339 @@
 
 ## 1. Overview
 
-NEXA POS is a point-of-sale and inventory management system designed for retail stores. It allows staff to:
+NEXA POS is an offline-ready point-of-sale and inventory system for retail stores. It supports:
 
-- Log in as an admin or cashier
-- Manage products and inventory
-- Record sales quickly with barcode scanning
-- Accept cash and GCash payments
-- View sales reports and transaction history
-- Print receipts and inventory reports
-
----
+- Admin and cashier workspaces
+- Barcode-based sales and inventory scanning
+- Cash and GCash payments
+- Product, category, stock, and staff management
+- Refunds, exchanges, voids, and receipt reprinting
+- Reports, transaction history, audit logs, and activity logs
+- Local offline operation with queued cloud synchronization
+- Database backups, restore, and maintenance checks
 
 ## 2. Getting Started
 
-### 2.1 Opening the System
+### 2.1 Choose a workspace
 
-1. Start the application using the normal run instructions for your environment.
-2. Open the web or desktop app in your browser.
-3. You will see the role selection screen.
+On the role-selection screen, choose:
 
-### 2.2 Choosing a Role
+- **Admin** for products, inventory, staff, analytics, logs, settings, and data administration.
+- **Cashier** for sales, payments, receipts, returns, and shift operations.
 
-- Admin: Use this role for store management, inventory, reports, and system settings.
-- Cashier: Use this role for processing customer sales at the counter.
+The connection indicator shows whether the terminal is online, offline, or synchronizing. Offline does not mean that local work is lost; supported changes are stored on the terminal and uploaded when a connection returns.
 
----
+### 2.2 Admin login
 
-## 3. Logging In
+1. Select **Continue as Admin**.
+2. Enter the admin email and password, or select an available quick-login profile.
+3. Select **Login**.
 
-### 3.1 Admin Login
+### 2.3 Cashier login
 
-1. Click Admin on the role selection page.
-2. Enter your admin credentials.
-3. Press Login.
-4. You will be taken to the admin dashboard.
+1. Select **Open Cashier POS**.
+2. Choose **Barcode** or **Email**.
+3. Scan or enter the cashier barcode, or enter the cashier email and password.
+4. Complete the login.
 
-### 3.2 Cashier Login
+Offline cashier login works only after that cashier profile has been downloaded to the terminal while online.
 
-You can sign in using either of these methods:
+## 3. Admin Workspace
 
-- Barcode login: Scan the cashier barcode or enter the cashier code.
-- Email login: Enter your cashier email and password.
+### 3.1 Dashboard
 
-After a successful login, the cashier POS screen opens.
+The dashboard is the main operational overview. Use the source and date filters to separate live POS activity from legacy or test data. Depending on available records, it shows:
 
----
+- Today's sales, transaction count, average sale, and payment totals
+- Critical and out-of-stock products
+- Inventory health
+- Recent transactions
+- Top products and categories
+- Seven-day sales movement
+- Data-quality and synchronization warnings
 
-## 4. Admin User Guide
+Dashboard cards and quick actions open the related administration pages.
 
-### 4.1 Dashboard
+### 3.2 Product Management
 
-The dashboard shows important business information at a glance:
+Use Product Management to:
 
-- Daily sales
-- Monthly sales
-- Total revenue
-- Critical stock alerts
-- Top-selling products
+- Add and edit products
+- Create and assign categories
+- Set barcodes, prices, stock limits, and selling units
+- Archive or delete products
+- Export or print the inventory catalog
+- Review missing barcodes, uncategorized items, invalid prices, negative inventory, and duplicate barcodes
 
-Use the dashboard to quickly identify low stock items and sales trends.
+The list displays 20 products at a time. Use **See more products** to load another group. Search and filters apply before additional products are loaded.
 
-### 4.2 Inventory Management
+Available sorting includes:
 
-From the inventory page, you can:
+- Name A–Z or Z–A
+- Stock low to high or high to low
+- Product stock status
 
-- View all products in stock
-- Check low-stock and out-of-stock items
-- Record stock-in entries
-- Record stock-out entries
-- Export inventory data
-- Print inventory reports
+#### Product status
+
+- **In Stock**: quantity is above the configured low-stock level.
+- **Low Stock**: quantity is at or below the configured low-stock level.
+- **Critical Stock**: only a very small quantity remains.
+- **Out of Stock**: quantity is zero.
+- **Archived**: hidden from normal selling and active-product views but retained for historical records.
+
+Prefer archiving a product that appears in transaction history. Delete only incorrect or unused records.
+
+### 3.3 Inventory
 
 #### Stock In
 
-1. Scan or search for the product.
-2. Enter the quantity.
-3. Select the correct unit if applicable.
-4. Confirm the stock entry.
+1. Open **Inventory**.
+2. Scan or search for the product.
+3. Select the correct unit.
+4. Enter the received quantity.
+5. Review the base-unit equivalent when multiple units are configured.
+6. Confirm the stock entry.
 
 #### Stock Out
 
-1. Scan or search for the product.
-2. Enter the quantity removed.
-3. Choose the reason for removal if needed.
-4. Confirm the stock-out entry.
+1. Open **Inventory** and choose the stock-out workflow.
+2. Scan or search for the product.
+3. Select the unit and quantity being removed.
+4. Enter the reason when requested.
+5. Confirm the stock-out entry.
 
-### 4.3 Product Management
+#### Physical Reconciliation / Stock Adjustment
 
-Use Product Management to maintain your catalog.
+Use reconciliation when a physical count differs from the quantity stored in NEXA POS. Do not use it for normal purchases or sales.
 
-You can:
+1. Open **Inventory > Physical Reconciliation**.
+2. Select the product.
+3. Enter the actual physical count.
+4. Select an adjustment reason and add a useful note.
+5. Review the system quantity, physical quantity, and variance.
+6. Approve the adjustment.
 
-- Add a new product
-- Edit existing product details
-- Delete products
-- Assign categories
-- Set price and unit information
-- Add barcodes for scanning
+The adjustment changes the quantity to the physical count and records the previous quantity, new quantity, variance, reason, user, and time. When offline, it remains queued until synchronization succeeds.
 
-#### Best Practices
+Recommended reasons include damaged stock, expired stock, counting correction, supplier discrepancy, or shrinkage. Investigate large or repeated variances rather than repeatedly adjusting them without explanation.
 
-- Use clear product names.
-- Make sure each product has a barcode when possible.
-- Keep categories consistent.
-- Update prices when they change.
+### 3.4 Staff and Cashier Management
 
-### 4.4 Categories
+Admins can add, edit, activate, or deactivate cashier and manager accounts. Cashier barcodes may be generated for quick login.
 
-Categories help keep the catalog organized.
+Cashier permissions include:
 
-To create a category:
+- Process sales
+- Reprint receipts
+- Request refunds
+- Request exchanges
+- Request transaction voids
+- Record cash in/out
 
-1. Open Product Management.
-2. Click Create Category.
-3. Enter the category name.
-4. Save it.
+Disabling a permission removes that function from the cashier. Protected actions still require manager approval even when the cashier has permission to request them.
 
-### 4.5 Cashier Management
+After changing staff details or permissions, synchronize and refresh offline data on every terminal that needs the updated access.
 
-Admins can manage cashier accounts and access rights. Use this section to:
+### 3.5 Analytics, Transactions, Audit, and Activity Logs
 
-- View cashier users
-- Add or update cashier accounts
-- Maintain login access
+- **Analytics** shows sales and inventory trends and can be filtered by date and data source.
+- **Transaction Logs** contains completed, voided, refunded, and adjusted sales where available.
+- **Audit** is used for protected or business-sensitive events.
+- **Activity Logs** records system actions such as logins, product changes, stock adjustments, and sales activity.
 
-### 4.6 Reports and Analytics
+Use **All Time** when older records do not appear under the default date filter. Export options create a file from the currently available report data.
 
-Use analytics and transaction logs to review:
+## 4. Cashier Workspace
 
-- Sales performance
-- Payment trends
-- Transaction history
-- Audit records
+### 4.1 Process a sale
 
-These pages are useful for end-of-day review and store monitoring.
+1. Scan a barcode or search for a product.
+2. Select the correct selling unit when prompted.
+3. Adjust the quantity if needed.
+4. Review the cart and totals.
+5. Select **Pay** or **Complete Transaction**.
+6. Choose **Cash** or **GCash** and enter the required payment information.
+7. Confirm payment and print the receipt if required.
 
-### 4.7 Settings
+The system prevents a sale when there is not enough available stock for the selected unit.
 
-The settings area is used for system configuration and operational preferences. Review these settings carefully before changing values.
+### 4.2 Receipts
 
----
+Completed receipts are stored in transaction history. A cashier with receipt-reprint permission can open a transaction and print another copy.
 
-## 5. Cashier User Guide
+### 4.3 Refunds and exchanges
 
-### 5.1 Starting a Sale
+Refunds, exchanges, and voids require the related cashier permission and manager authorization.
 
-1. Log in to the cashier POS screen.
-2. Confirm you are on the sales screen.
-3. Scan a product barcode or search for the product.
-4. Enter the quantity if needed.
-5. The item appears in the transaction cart.
+For a refund or exchange, choose the returned-item disposition:
 
-### 5.2 Adding Products
+- **Return to available stock** for unopened or sellable merchandise.
+- **Do not restock (damaged/expired)** when the item must not be sold again.
 
-You can add products by:
+The selected disposition is saved with the adjustment. Never return damaged, expired, contaminated, or incomplete goods to available inventory.
 
-- Scanning the barcode
-- Searching by product name
-- Selecting from the product list
+### 4.4 Cash flow and shift closing
 
-If the product has multiple selling units, choose the correct unit before confirming.
+Use Cash Flow to record authorized cash-in and cash-out activity. At the end of a shift:
 
-### 5.3 Editing Quantity or Removing Items
+1. Finish or cancel any open sale.
+2. Review completed transactions and expected cash.
+3. Count the drawer.
+4. Record the closing information and print any required shift report.
+5. Synchronize pending changes when a connection is available.
+6. Log out.
 
-If a customer changes their order:
+## 5. Offline Operation and Synchronization
 
-- Update the quantity in the transaction
-- Remove an item if it is no longer needed
+### 5.1 Prepare a terminal for offline use
 
-### 5.4 Payment
+While connected to the network:
 
-When the sale is ready:
+1. Open **Settings > Offline Readiness**.
+2. Select **Download Latest Data for Offline Use**.
+3. Confirm the terminal, product catalog, categories, staff login profiles, and manager approval methods are available.
+4. Select **Run Offline Self-Test**.
+5. Confirm the result says **Ready for Offline Use**.
 
-1. Click Pay or Complete Transaction.
-2. Choose the payment method:
-   - Cash
-   - GCash
-3. Enter the amount received if needed.
-4. Confirm the payment.
+**Offline Data Incomplete** means one or more required items have not been cached or the self-test has not passed. Review the failed step, reconnect, download again, and repeat the test.
 
-The system will complete the transaction and create a receipt.
+### 5.2 Working offline
 
-### 5.5 Receipts
+When offline:
 
-After a sale is completed:
+- Cached products remain searchable and sellable.
+- Authorized staff can use cached login methods.
+- Sales, stock changes, returns, and supported logs are stored locally.
+- The status bar shows that uploads are waiting for a connection.
 
-- A receipt can be printed
-- A digital receipt record is stored in the transaction history
+Do not clear browser/app data or uninstall the application while changes are pending. Doing so can remove unsynchronized local records.
 
-If a customer needs a duplicate receipt, use the receipt or transaction history option.
+### 5.3 Sync Center
 
-### 5.6 Ending a Shift
+Select **Sync to Cloud** to open Sync Center. It shows waiting, failed, and conflicting local changes.
 
-At the end of the day or shift, follow the shift close process if available in your store setup. This usually includes:
+- **Retry All** retries pending and failed uploads.
+- **Use Cloud**, **Use Local**, or **Review Fields** resolves a data conflict.
+- **Discard** and **Discard Failed Products** remove obsolete failed product changes and their local cached copies.
 
-- Checking total cash collected
-- Reviewing completed sales
-- Printing the shift close receipt
-- Recording cash count information
+Discard is intended for products that were deliberately removed from PocketBase or for unwanted test products. It does not recreate the cloud record and cannot be undone. Never discard sales, stock movements, or legitimate client changes merely to remove a warning.
 
----
+When the queue reaches zero, the interface updates to **Everything is synchronized**.
 
-## 6. Common Tasks
+### 5.4 Local cache maintenance
 
-### 6.1 Adding a New Product
+Use **Settings > Offline Readiness > Local Cache Maintenance** only when cached terminal data is stale or troubleshooting requires a fresh local copy. You can reset the product and category cache, cached staff access, cached receipts, old sync status, or all terminal cache data.
 
-1. Go to Product Management.
-2. Click Add Product.
-3. Enter the product name, barcode, category, price, and quantity.
-4. Save the product.
+Before a reset:
 
-### 6.2 Restocking Inventory
+1. Open **Sync to Cloud** and confirm there are no waiting, failed, or conflicting changes.
+2. Stay online if the product or staff cache must be downloaded again immediately.
+3. Select the smallest reset scope that addresses the problem.
+4. Enter the exact confirmation **RESET TERMINAL**.
 
-1. Open Inventory.
-2. Choose Stock In.
-3. Scan or search the product.
-4. Enter the quantity.
-5. Confirm the update.
+The reset does not delete PocketBase cloud records, the terminal identity, printer settings, or application preferences. Product and staff reset options automatically download a fresh offline copy when the terminal is online. The application refuses to reset local data while sales or synchronization operations remain queued.
 
-### 6.3 Handling Out-of-Stock Items
+## 6. Data Administration
 
-- Check the inventory page for items marked out of stock.
-- Restock the item as soon as possible.
-- Inform the admin if a product is frequently unavailable.
+Open **Settings > Data Administration** for legacy import monitoring, backups, restore, and maintenance checks.
 
-### 6.4 Reviewing Sales
+### 6.1 Legacy import monitor
 
-Use the reports and transaction log pages to review:
+The monitor shows the import mode, planned products and sales, and completion state. **Incomplete / stopped** means an import did not reach its normal completion marker; it does not automatically mean imported records are corrupt. Review the import output and recent errors before rerunning it.
 
-- Daily sales
-- Transaction details
-- Payment methods
-- Large or unusual transactions
+### 6.2 Backups
 
----
+- **Run Scheduled Backup** applies the configured automatic-backup policy.
+- **Create Backup** creates a manual PocketBase backup.
+- Automatic backups run at the displayed interval and retain the displayed number of files.
+
+Create a backup before imports, bulk cleanup, schema changes, or major catalog corrections. Backup controls require the local API service and a reachable PocketBase server.
+
+### 6.3 Restore
+
+Restore replaces current PocketBase data with the selected backup.
+
+1. Ensure all terminals have synchronized or stopped entering data.
+2. Select the correct backup.
+3. Enter the exact confirmation requested by the screen.
+4. Restore and allow PocketBase to restart.
+5. Reopen the application and download current offline data to each terminal.
+
+Records created after the selected backup may be lost. Restore only with administrator authorization.
+
+### 6.4 Database maintenance report
+
+The maintenance report checks for duplicate barcodes, invalid prices, invalid stock, uncategorized products, and orphaned sale items. It is read-only and does not automatically modify records. Create a backup before making bulk corrections.
 
 ## 7. Troubleshooting
 
-### Problem: I cannot log in
+### Dashboard or another page remains on Loading
 
-- Confirm your username or password is correct.
-- Make sure the system is running.
-- Refresh the page and try again.
-- Contact the administrator if the account is locked or not recognized.
+1. Check the connection indicator.
+2. Wait for any current synchronization to finish.
+3. Navigate away and return once.
+4. Restart the application if the page remains stuck.
+5. Run the offline self-test and contact support if the problem repeats.
 
-### Problem: Barcode scanner is not working
+### Cannot log in offline
 
-- Check that the scanner is connected and powered.
-- Make sure the barcode is clear and readable.
-- Try typing the barcode manually if necessary.
-- Confirm the product barcode exists in the system.
+- Reconnect and download the latest offline data.
+- Confirm the staff account is active.
+- Confirm the terminal has a cached login profile.
+- For protected actions, confirm a manager or authorization barcode is cached.
 
-### Problem: Receipt does not print
+### Barcode does not scan
 
-- Check the printer connection.
-- Ensure the printer is online.
-- Confirm the correct printer settings are selected.
-- Try again after refreshing the page.
+- Confirm the scanner is connected and sending keyboard input.
+- Clean or reprint unreadable labels.
+- Type the barcode manually.
+- Confirm the barcode belongs to the correct product and selling unit.
 
-### Problem: Inventory is not updating
+### Inventory is incorrect
 
-- Confirm the stock entry or stock-out entry was saved.
-- Refresh the page and check the product details again.
-- If the issue persists, contact support.
+- Review recent stock and transaction logs.
+- Confirm the correct selling-unit conversion was used.
+- Perform a physical count.
+- Use Physical Reconciliation with a reason and note when an adjustment is justified.
 
----
+### Sync remains failed
 
-## 8. Best Practices
+- Open Sync Center and read the error on the failed record.
+- Correct missing fields such as price or category, then retry.
+- Confirm the cloud server is reachable and the user is still authorized.
+- Discard a failed product operation only when the cloud product was intentionally deleted or the local record is unwanted test data.
 
-- Keep product information accurate and up to date.
-- Scan items carefully to avoid duplicate or incorrect entries.
-- Review stock levels regularly.
-- Close transactions properly and confirm payments.
-- Report technical issues promptly.
+### Backup request fails
 
----
+- Start the local API service if it is not running.
+- Confirm PocketBase is reachable and the administrator credentials are configured.
+- Retry after a rate-limit or temporary hosting error has cleared.
+
+### Receipt does not print
+
+- Confirm the printer is powered on and connected.
+- Check the selected printer and paper size.
+- Try browser printing or saving to PDF.
+- Reopen the transaction and use receipt reprint if permitted.
+
+## 8. Daily Best Practices
+
+- Synchronize and run the offline readiness check before opening the store.
+- Keep product names, barcodes, categories, prices, and unit conversions accurate.
+- Use Stock In and Stock Out for normal movement; reserve reconciliation for verified count differences.
+- Record a clear reason for refunds, voids, exchanges, and stock adjustments.
+- Review failed synchronization items before closing the shift.
+- Create backups before imports, cleanup, or structural changes.
+- Never share admin, manager, or authorization credentials.
+- Do not use production client data for automated end-to-end testing.
 
 ## 9. Support
 
-For technical support or account issues, contact your system administrator or support team.
-# Data Quality and Administration
+When contacting support, provide:
 
-- **Activity Logs** opens with **All Time** selected and shows the number of records today and in total.
-- **Analytics** can be filtered by date and by Live POS, Legacy Import, Sample/Test, or all sources.
-- **Product Management** shows data-quality warnings, supports bulk category and lifecycle updates, and keeps archived products available for historical records.
-- **Inventory > Physical Reconciliation** compares the system quantity with a physical count and records an approved variance adjustment.
-- **Settings > Data Administration** shows legacy-import reports and provides guarded PocketBase backup and restore controls. Always create a backup before importing, cleaning, or changing the schema. Restore requires typing the exact confirmation shown on screen.
-
-## Dashboard
-
-The dashboard is the operational starting point for administrators. Use its source and date filters to separate live POS activity from legacy or sample data. It shows transaction count, average sale, cash and GCash totals, inventory health, recent transactions, top products and categories, data-quality warnings, and synchronization health. Dashboard cards open the related administration page, while the quick actions provide direct access to products, inventory, analytics, transaction logs, settings, and cloud synchronization.
+- Terminal name and ID
+- Date and approximate time of the problem
+- Current online/offline and sync status
+- The exact error message
+- Transaction number, product name, or barcode involved
+- A screenshot that does not expose passwords or private credentials

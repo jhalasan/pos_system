@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import DonutChart from '../components/charts/DonutChart'
 import LineChart from '../components/charts/LineChart'
-import { IconAlert, IconBox, IconCloud, IconPlus, IconScan } from '../components/Icons'
+import { IconAlert, IconBox, IconCheck, IconCloud, IconDownload, IconPlus, IconScan } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 
@@ -15,12 +16,30 @@ const emptyDashboard = {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { data: readiness } = useApi(api.offlineReadiness, {})
+  const { data: readiness, setData: setReadiness } = useApi(api.offlineReadiness, {})
   const [data, setData] = useState(emptyDashboard)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [source, setSource] = useState('live')
   const [range, setRange] = useState('30')
+  const [refreshingReadiness, setRefreshingReadiness] = useState(false)
+  const [readinessMessage, setReadinessMessage] = useState('')
+
+  async function refreshOfflineReadiness() {
+    setRefreshingReadiness(true)
+    setReadinessMessage('')
+    try {
+      await api.downloadOfflineData()
+      const test = await api.offlineSelfTest()
+      localStorage.setItem('nexa_offline_self_test', JSON.stringify(test))
+      setReadiness(await api.offlineReadiness())
+      setReadinessMessage(test.passed ? 'Offline data refreshed and self-test passed.' : 'Refresh completed, but offline setup still needs attention.')
+    } catch (refreshError) {
+      setReadinessMessage(refreshError.message || 'Unable to refresh offline data.')
+    } finally {
+      setRefreshingReadiness(false)
+    }
+  }
 
   useEffect(() => {
     let active = true
@@ -45,12 +64,17 @@ export default function Dashboard() {
     return () => { active = false }
   }, [range, source])
 
-  if (loading) return <><PageHeader title="Dashboard" subtitle="Loading dashboard data…" /><div className="card"><div className="empty"><h4>Loading dashboard</h4></div></div></>
+  if (loading) return <PageLoader title="Dashboard" message="Loading dashboard data…" />
   if (error) return <><PageHeader title="Dashboard" subtitle="Operational overview." /><div className="card"><div className="empty"><h4>Unable to load dashboard</h4><p>{error}</p></div></div></>
 
   const stats = data.stats || emptyDashboard.stats
   const healthTotal = (data.inventoryHealth || []).reduce((sum, item) => sum + Number(item.value || 0), 0)
   const qualityTotal = Object.values(data.dataQuality || {}).reduce((sum, value) => sum + Number(value || 0), 0)
+  const offlineTest = (() => {
+    try { return JSON.parse(localStorage.getItem('nexa_offline_self_test') || 'null') }
+    catch { return null }
+  })()
+  const terminalReady = Boolean(readiness?.ready && offlineTest?.passed)
 
   return (
     <>
@@ -81,6 +105,27 @@ export default function Dashboard() {
         <button className="dashboard-attention" onClick={() => navigate('/admin/products')}><IconBox size={20} /><span><strong>{qualityTotal} data-quality warnings</strong><small>{data.dataQuality?.generatedBarcodes || 0} generated barcodes · {data.dataQuality?.uncategorized || 0} uncategorized · {data.dataQuality?.nonPositivePrices || 0} price issues</small></span></button>
         <button className={`dashboard-attention ${readiness?.failed ? 'danger' : ''}`} onClick={() => navigate('/admin/settings')}><IconCloud size={20} /><span><strong>{readiness?.failed || 0} failed · {readiness?.pending || 0} pending sync</strong><small>Last sync: {readiness?.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</small></span></button>
       </div>
+
+      <section className={`card dashboard-readiness ${terminalReady ? 'ready' : 'attention'}`}>
+        <div className="dashboard-readiness-head">
+          <span className="dashboard-readiness-icon">{terminalReady ? <IconCheck size={20} /> : <IconAlert size={20} />}</span>
+          <div><h3>Terminal Readiness</h3><p>{terminalReady ? 'This terminal is prepared to continue during a network interruption.' : 'Complete the offline setup before relying on this terminal without internet.'}</p></div>
+          <span className="dashboard-readiness-badge">{terminalReady ? 'Ready for Offline Use' : 'Needs Attention'}</span>
+        </div>
+        <div className="dashboard-readiness-metrics">
+          <div><span>Terminal</span><strong>{readiness?.terminalName || 'This terminal'}</strong></div>
+          <div><span>Cached catalog</span><strong>{Number(readiness?.cashierProducts || 0).toLocaleString()} products</strong></div>
+          <div><span>Cashier access</span><strong>{readiness?.offlineCashierBarcodeLogins || 0} barcode · {readiness?.offlineCashierPasswordLogins || 0} password</strong></div>
+          <div><span>Manager approvals</span><strong>{readiness?.managerApprovals || 0} methods</strong></div>
+          <div><span>Sync queue</span><strong className={readiness?.failed ? 'readiness-danger' : ''}>{readiness?.pending || 0} pending · {readiness?.failed || 0} failed</strong></div>
+          <div><span>Last successful sync</span><strong>{readiness?.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</strong></div>
+        </div>
+        <div className="dashboard-readiness-actions">
+          {readinessMessage && <span className={terminalReady ? 'success' : ''}>{readinessMessage}</span>}
+          <button className="btn btn-outline btn-sm" onClick={() => navigate('/admin/settings?tab=offline')}>View Offline Readiness</button>
+          <button className="btn btn-primary btn-sm" onClick={refreshOfflineReadiness} disabled={refreshingReadiness}><IconDownload size={15} /> {refreshingReadiness ? 'Refreshing…' : 'Refresh Offline Data'}</button>
+        </div>
+      </section>
 
       <div className="dashboard-main-grid">
         <div className="card"><div className="panel-head"><div><h3>Inventory Health</h3><span className="sub">Distribution across {healthTotal.toLocaleString()} products</span></div></div><div className="panel-body"><DonutChart data={data.inventoryHealth || []} centerLabel="Products" /></div></div>

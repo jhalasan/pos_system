@@ -922,16 +922,15 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
 
   const productLookup = buildProductLookup(products)
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
-  const monthlySaleIds = new Set(completedSales.filter((sale) => saleDate(sale) >= monthStart).map((sale) => sale.id))
   const productSales = new Map()
-  let monthlyStockOut = 0
+  let selectedUnitsSold = 0
 
   for (const item of saleItems) {
     const saleId = firstRelation(item.sale_id ?? item.saleId)
     if (!completedSaleIds.has(saleId)) continue
 
     const quantity = Number(item.quantity_sold ?? item.quantity) || 0
-    if (monthlySaleIds.has(saleId)) monthlyStockOut += quantity
+    selectedUnitsSold += quantity
     const product = resolveSaleItemProduct(item, productLookup)
     const productId = product?.id || firstRelation(item.product_id ?? item.productId)
     if (!productId) continue
@@ -1020,11 +1019,13 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
       averageSale: completedSales.length ? totalRevenue / completedSales.length : 0,
       cashSales: paymentTotals.cash,
       gcashSales: paymentTotals.gcash,
+      unitsSold: selectedUnitsSold,
+      voidCount: sales.filter((sale) => (sale.status || 'completed') === 'voided').length,
     },
     criticalAlerts,
     productInOut: [
       { label: 'Current Stock', value: currentStockUnits, color: '#16a34a' },
-      { label: 'Units Sold', value: monthlyStockOut, color: '#ef4444' },
+      { label: 'Units Sold', value: selectedUnitsSold, color: '#ef4444' },
     ],
     topProducts: [...productSales.values()]
       .filter((product) => product.units > 0)
@@ -1916,7 +1917,15 @@ export const desktopAdminApi = {
       cashierDb.receiptCache.count(),
       cashierDb.settings.toArray(),
     ])
-    const offlineCashierLogins = cashierSettings.filter((item) => String(item.key).startsWith('cashierLogin:')).length
+    const offlineCashierPasswordLogins = cashierSettings.filter((item) => String(item.key).startsWith('cashierLogin:')).length
+    const offlineCashierBarcodeLogins = await adminDb.users.filter((user) => (
+      user.role === 'cashier'
+      && user.status !== 'inactive'
+      && !user.deleted
+      && Boolean(String(user.cashierBarcode || user.void_barcode || '').trim())
+      && !String(user.cashierBarcode || user.void_barcode || '').startsWith('92')
+    )).count()
+    const offlineCashierLogins = offlineCashierPasswordLogins + offlineCashierBarcodeLogins
     const offlineManagerPasswords = cashierSettings.filter((item) => String(item.key).startsWith('managerApproval:')).length
     const managerBarcodes = await adminDb.users.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92') && user.status !== 'inactive').count()
     const pending = adminPending + pendingSales + cashierPending
@@ -1950,6 +1959,8 @@ export const desktopAdminApi = {
       authorizationBarcodes,
       managerApprovals: authorizationBarcodes + managerBarcodes + offlineManagerPasswords,
       offlineCashierLogins,
+      offlineCashierPasswordLogins,
+      offlineCashierBarcodeLogins,
       receipts,
       pending,
       failed,
@@ -1961,12 +1972,74 @@ export const desktopAdminApi = {
     await this.syncNow()
     try {
       await refreshAdminLocalCache({ pb })
+      const staff = await pb.collection('users').getFullList({
+        filter: 'status != "inactive"',
+        sort: 'name,email',
+        requestKey: null,
+      })
+      await cacheUsers(await ensureQuickLoginEmailVisibility(staff))
+      await this.authorizationBarcodes()
       await copyAdminProductCatalogToCashier()
     } catch (error) {
       rememberPocketBaseRateLimit(error)
       throw new Error(`Unable to download the product catalog for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })
     }
     return this.offlineReadiness()
+  },
+  async resetLocalData({ scope = 'full', confirmation = '' } = {}) {
+    assertAdmin()
+    await startAdminRuntime()
+    await initializeCashierDb()
+    if (confirmation !== 'RESET TERMINAL') throw new Error('Reset confirmation did not match RESET TERMINAL.')
+
+    const [adminQueue, cashierOperations, cashierSales] = await Promise.all([
+      adminDb.pendingOps.count(),
+      cashierDb.pendingOps.count(),
+      cashierDb.pendingSales.count(),
+    ])
+    const queued = adminQueue + cashierOperations + cashierSales
+    if (queued > 0) throw new Error(`Cannot reset local data while ${queued} change(s) are waiting, failed, or conflicting. Synchronize or resolve them first.`)
+
+    const allowedScopes = new Set(['catalog', 'logins', 'receipts', 'sync-status', 'full'])
+    if (!allowedScopes.has(scope)) throw new Error('Unknown local-data reset option.')
+    await recordActivity('Settings', `Reset local terminal data (${scope}) on ${getTerminalName()}.`)
+
+    if (scope === 'catalog' || scope === 'full') {
+      await Promise.all([
+        adminDb.transaction('rw', adminDb.products, adminDb.categories, async () => {
+          await adminDb.products.clear()
+          await adminDb.categories.clear()
+        }),
+        cashierDb.products.clear(),
+      ])
+    }
+    if (scope === 'logins' || scope === 'full') {
+      await adminDb.users.filter((user) => user.role !== 'admin').delete()
+      await cashierDb.quickLoginAccounts.clear()
+      const credentialKeys = (await cashierDb.settings.toArray())
+        .filter((item) => /^(cashierLogin:|cashierSyncAuth:|managerApproval:)/.test(String(item.key)))
+        .map((item) => item.key)
+      await cashierDb.settings.bulkDelete(credentialKeys)
+    }
+    if (scope === 'receipts' || scope === 'full') {
+      await Promise.all([cashierDb.receiptCache.clear(), cashierDb.completedSales.clear()])
+    }
+    if (scope === 'sync-status' || scope === 'full') {
+      for (const key of ['nexa_sync_status_admin', 'nexa_sync_status_cashier', 'nexa_offline_self_test']) {
+        globalThis.localStorage?.removeItem(key)
+      }
+    }
+    if (scope === 'full') {
+      await Promise.all([
+        adminDb.authorizationBarcodes.clear(),
+        adminDb.supportTickets.clear(),
+      ])
+    }
+
+    const shouldRefresh = ['catalog', 'logins', 'full'].includes(scope)
+      && (!globalThis.navigator || globalThis.navigator.onLine)
+    if (shouldRefresh) await this.downloadOfflineData()
+    return { scope, refreshed: shouldRefresh, readiness: await this.offlineReadiness() }
   },
   async offlineSelfTest() {
     await startAdminRuntime()
@@ -1989,11 +2062,39 @@ export const desktopAdminApi = {
       { key: 'adminCatalog', label: 'Admin product catalog', passed: readiness.products > 0, detail: `${readiness.products} products available locally.` },
       { key: 'cashierCatalog', label: 'Cashier product catalog', passed: readiness.cashierProducts > 0, detail: `${readiness.cashierProducts} products available at checkout.` },
       { key: 'staff', label: 'Staff accounts', passed: readiness.users > 0, detail: `${readiness.users} active accounts cached.` },
-      { key: 'cashierLogin', label: 'Offline cashier login', passed: readiness.offlineCashierLogins > 0, detail: `${readiness.offlineCashierLogins} offline login profiles cached.` },
+      { key: 'cashierLogin', label: 'Offline cashier login', passed: readiness.offlineCashierLogins > 0, detail: `${readiness.offlineCashierBarcodeLogins || 0} barcode and ${readiness.offlineCashierPasswordLogins || 0} password login profile(s) cached.` },
       { key: 'approval', label: 'Manager approval', passed: readiness.managerApprovals > 0, detail: `${readiness.managerApprovals} approval methods cached.` },
       { key: 'queue', label: 'Sync queue integrity', passed: readiness.failed === 0, detail: readiness.failed ? `${readiness.failed} failed operations need attention.` : `${readiness.pending} changes can safely wait for sync.` },
     ]
     return { passed: checks.every((check) => check.passed), testedAt: new Date().toISOString(), checks }
+  },
+  async maintenanceReport() {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const [products, receipts] = await Promise.all([
+      adminDb.products.filter((product) => !product.deleted).toArray(),
+      cashierDb.receiptCache.toArray(),
+    ])
+    const barcodeGroups = new Map()
+    for (const product of products) {
+      const barcode = String(product.barcode || '').trim()
+      if (!barcode) continue
+      barcodeGroups.set(barcode, [...(barcodeGroups.get(barcode) || []), product])
+    }
+    const productIds = new Set(products.map((product) => product.id))
+    const receiptItems = receipts.flatMap((receipt) => receipt.items || receipt.value?.items || [])
+    return {
+      checkedAt: new Date().toISOString(),
+      source: 'Local terminal cache',
+      products: products.length,
+      duplicateBarcodes: [...barcodeGroups.entries()]
+        .filter(([, records]) => records.length > 1)
+        .map(([barcode, records]) => ({ barcode, count: records.length, products: records.map((record) => record.name) })),
+      invalidPrices: products.filter((product) => !Number.isFinite(Number(product.price)) || Number(product.price) <= 0).map((product) => ({ id: product.id, name: product.name })),
+      invalidStock: products.filter((product) => !Number.isFinite(Number(product.qty)) || Number(product.qty) < 0).map((product) => ({ id: product.id, name: product.name })),
+      uncategorized: products.filter((product) => !String(product.category || product.categoryId || '').trim()).map((product) => ({ id: product.id, name: product.name })),
+      orphanSaleItems: receiptItems.filter((item) => item.productId && !productIds.has(item.productId)).length,
+    }
   },
   async latestAuthorizationBarcode() {
     await startAdminRuntime()

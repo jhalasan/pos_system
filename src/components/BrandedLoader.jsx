@@ -1,6 +1,6 @@
-export default function BrandedLoader({ message = 'Loading NEXA POS…' }) {
+export default function BrandedLoader({ message = 'Loading NEXA POS…', compact = false }) {
   return (
-    <div className="app-loading" role="status" aria-live="polite">
+    <div className={`app-loading${compact ? ' compact' : ''}`} role="status" aria-live="polite">
       <div className="nexa-loader">
         <div className="nexa-loader-ring">
           <img src="/branding/nexa-systems-mark.jpg" alt="" aria-hidden="true" />

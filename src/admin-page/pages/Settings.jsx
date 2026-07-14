@@ -1,5 +1,8 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
+import BrandedLoader from '../../components/BrandedLoader'
 import Modal from '../components/Modal'
 import { IconDownload, IconSettings, IconUsers } from '../components/Icons'
 import { api } from '../services/api'
@@ -21,6 +24,7 @@ import { getDeveloperModeSettings, isDeveloperPinValid, saveDeveloperModeSetting
 const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
 export default function Settings() {
+  const [searchParams] = useSearchParams()
   const {
     data: admins,
     setData: setAdmins,
@@ -36,10 +40,15 @@ export default function Settings() {
   const [developerPinInput, setDeveloperPinInput] = useState('')
   const [developerPinModalOpen, setDeveloperPinModalOpen] = useState(false)
   const [developerPinError, setDeveloperPinError] = useState('')
-  const [activeTab, setActiveTab] = useState('general')
+  const [activeTab, setActiveTab] = useState(() => {
+    const requested = searchParams.get('tab')
+    return ['general', 'developer', 'offline', 'data'].includes(requested) ? requested : 'general'
+  })
   const { data: readiness, setData: setReadiness, loading: readinessLoading } = useApi(api.offlineReadiness, emptyReadiness)
   const [downloadingOfflineData, setDownloadingOfflineData] = useState(false)
   const [offlineTestRunning, setOfflineTestRunning] = useState(false)
+  const [resetScope, setResetScope] = useState('catalog')
+  const [resettingLocalData, setResettingLocalData] = useState(false)
   const [offlineTest, setOfflineTest] = useState(() => {
     try { return JSON.parse(localStorage.getItem('nexa_offline_self_test') || 'null') } catch { return null }
   })
@@ -193,6 +202,35 @@ export default function Settings() {
     }
   }
 
+  async function resetLocalData() {
+    const labels = {
+      catalog: 'downloaded product and category catalogs',
+      logins: 'cached cashier and manager login profiles',
+      receipts: 'cached receipts and local transaction history',
+      'sync-status': 'saved sync messages and offline self-test result',
+      full: 'all downloaded terminal data',
+    }
+    const confirmation = prompt(`Reset ${labels[resetScope]}?\n\nCloud records, terminal identity, printer settings, and application preferences will not be deleted.\n\nType exactly: RESET TERMINAL`)
+    if (confirmation !== 'RESET TERMINAL') return flash('Local reset cancelled; confirmation did not match.')
+    setResettingLocalData(true)
+    try {
+      const result = await api.resetLocalData({ scope: resetScope, confirmation })
+      setReadiness(result.readiness)
+      if (['sync-status', 'full'].includes(resetScope)) setOfflineTest(null)
+      if (result.refreshed) {
+        const test = await api.offlineSelfTest()
+        setOfflineTest(test)
+        localStorage.setItem('nexa_offline_self_test', JSON.stringify(test))
+        setReadiness(await api.offlineReadiness())
+      }
+      flash(result.refreshed ? 'Local data reset, refreshed, and tested.' : 'Selected local cache was cleared.')
+    } catch (resetError) {
+      flash(resetError.message || 'Unable to reset local data.')
+    } finally {
+      setResettingLocalData(false)
+    }
+  }
+
   async function loadDataAdministration() {
     setActiveTab('data')
     setDataAdminLoading(true)
@@ -252,12 +290,7 @@ export default function Settings() {
   }
 
   if (loading || adminsLoading) {
-    return (
-      <>
-        <PageHeader title="Settings" subtitle="Loading account settings..." />
-        <div className="card"><div className="empty"><h4>Loading settings</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Settings" message="Loading account settings…" />
   }
 
   return (
@@ -491,7 +524,7 @@ export default function Settings() {
           <div className="card">
             <div className="panel-head"><div><h3>Legacy Import Monitor</h3><span className="sub">Dry-run totals, completion state, progress, and recent errors.</span></div><button className="btn btn-outline" onClick={loadDataAdministration} disabled={dataAdminLoading}>Refresh</button></div>
             <div className="panel-body">
-              {importStatusError ? <div className="alert warning"><strong>Import monitor unavailable</strong><span>{importStatusError}</span></div> : dataAdminLoading && !importStatus ? <p>Loading…</p> : (
+              {importStatusError ? <div className="alert warning"><strong>Import monitor unavailable</strong><span>{importStatusError}</span></div> : dataAdminLoading && !importStatus ? <BrandedLoader compact message="Loading import status…" /> : (
                 <>
                   <div className="offline-terminal-summary">
                     <div><span>Mode</span><strong>{importStatus?.result?.mode || importStatus?.dryRun?.mode || 'Not started'}</strong></div>
@@ -519,7 +552,7 @@ export default function Settings() {
             <div className="panel-body">
               {!maintenanceReport ? <div className="empty"><h4>Maintenance report unavailable</h4><p>Start the local API service and run the checks again.</p></div> : <>
                 <div className="offline-terminal-summary"><div><span>Products checked</span><strong>{maintenanceReport.products}</strong></div><div><span>Duplicate barcodes</span><strong className={maintenanceReport.duplicateBarcodes.length ? 'readiness-danger' : ''}>{maintenanceReport.duplicateBarcodes.length}</strong></div><div><span>Invalid prices</span><strong className={maintenanceReport.invalidPrices.length ? 'readiness-danger' : ''}>{maintenanceReport.invalidPrices.length}</strong></div><div><span>Uncategorized</span><strong>{maintenanceReport.uncategorized.length}</strong></div></div>
-                <div className="maintenance-summary"><span>Invalid stock: <strong>{maintenanceReport.invalidStock.length}</strong></span><span>Orphan sale items: <strong>{maintenanceReport.orphanSaleItems}</strong></span><span>Checked: <strong>{new Date(maintenanceReport.checkedAt).toLocaleString('en-PH')}</strong></span></div>
+                <div className="maintenance-summary"><span>Invalid stock: <strong>{maintenanceReport.invalidStock.length}</strong></span><span>Orphan sale items: <strong>{maintenanceReport.orphanSaleItems}</strong></span>{maintenanceReport.source && <span>Source: <strong>{maintenanceReport.source}</strong></span>}<span>Checked: <strong>{new Date(maintenanceReport.checkedAt).toLocaleString('en-PH')}</strong></span></div>
                 {(maintenanceReport.duplicateBarcodes.length > 0 || maintenanceReport.invalidPrices.length > 0 || maintenanceReport.invalidStock.length > 0) && <div className="alert warning"><strong>Review recommended</strong><span>Resolve catalog warnings in Product Management. Create a backup before bulk corrections.</span></div>}
               </>}
             </div>
@@ -655,7 +688,7 @@ export default function Settings() {
               const steps = [
                 ['Terminal identified', Boolean(readiness.terminalId), readiness.terminalName || 'This terminal'],
                 ['Catalog downloaded', readiness.products > 0 && readiness.cashierProducts > 0, `${readiness.cashierProducts || 0} cashier products`],
-                ['Offline staff access prepared', readiness.users > 0 && readiness.offlineCashierLogins > 0, `${readiness.offlineCashierLogins || 0} cashier logins`],
+                ['Offline staff access prepared', readiness.users > 0 && readiness.offlineCashierLogins > 0, `${readiness.offlineCashierBarcodeLogins || 0} barcode · ${readiness.offlineCashierPasswordLogins || 0} password`],
                 ['Manager approval prepared', readiness.managerApprovals > 0, `${readiness.managerApprovals || 0} approval methods`],
                 ['Offline self-test passed', Boolean(offlineTest?.passed), offlineTest?.testedAt ? new Date(offlineTest.testedAt).toLocaleString('en-PH') : 'Not tested'],
               ]
@@ -679,7 +712,7 @@ export default function Settings() {
                 ['Cashier product catalog', readiness.cashierProducts, readiness.cashierProducts > 0],
                 ['Categories', readiness.categories, readiness.categories > 0],
                 ['Staff accounts', readiness.users, readiness.users > 0],
-                ['Cashier offline logins', readiness.offlineCashierLogins, readiness.offlineCashierLogins > 0],
+                ['Cashier offline logins', `${readiness.offlineCashierBarcodeLogins || 0} barcode · ${readiness.offlineCashierPasswordLogins || 0} password`, readiness.offlineCashierLogins > 0],
                 ['Manager approvals', readiness.managerApprovals, readiness.managerApprovals > 0],
                 ['Authorization barcodes', readiness.authorizationBarcodes, true],
                 ['Cached transactions', readiness.receipts, true],
@@ -713,6 +746,24 @@ export default function Settings() {
                 ))}
               </div>
             )}
+            <div className="offline-cache-maintenance">
+              <div>
+                <strong>Local Cache Maintenance</strong>
+                <p>Use refresh for normal updates. Reset only when cached terminal data is stale, corrupted, or assigned to another device.</p>
+              </div>
+              <div className="offline-cache-controls">
+                <select className="select" value={resetScope} onChange={(event) => setResetScope(event.target.value)} disabled={resettingLocalData}>
+                  <option value="catalog">Reset product and category cache</option>
+                  <option value="logins">Reset cached staff access</option>
+                  <option value="receipts">Reset cached receipts</option>
+                  <option value="sync-status">Clear old sync status</option>
+                  <option value="full">Full terminal cache reset</option>
+                </select>
+                <button className="btn btn-danger" onClick={resetLocalData} disabled={resettingLocalData || readiness.pending > 0 || readiness.failed > 0}>{resettingLocalData ? 'Resetting…' : 'Reset Selected Cache'}</button>
+              </div>
+              {(readiness.pending > 0 || readiness.failed > 0) && <small className="readiness-danger">Reset is locked until all pending and failed synchronization items are resolved.</small>}
+              <small>This does not delete PocketBase records. A catalog, login, or full reset automatically downloads fresh data when online.</small>
+            </div>
           </div>
         </div>
       )}

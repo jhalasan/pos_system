@@ -1,4 +1,5 @@
 import PageHeader from '../components/PageHeader'
+import PageLoader from '../components/PageLoader'
 import DonutChart from '../components/charts/DonutChart'
 import BarChart from '../components/charts/BarChart'
 import LineChart from '../components/charts/LineChart'
@@ -8,8 +9,11 @@ import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { peso } from '../services/api'
 
 const emptyAnalytics = {
+  stats: { totalRevenue: 0, transactionCount: 0, averageSale: 0, cashSales: 0, gcashSales: 0, unitsSold: 0, voidCount: 0 },
   productInOut: [],
   topProducts: [],
   hourlySales: [],
@@ -58,6 +62,7 @@ const salesRanges = {
 }
 
 export default function Analytics() {
+  const navigate = useNavigate()
   const { data, setData, loading, error } = useApi(api.dashboard, emptyAnalytics)
   const { data: fsnProducts } = useApi(api.fsnInventory, [])
   const [exporting, setExporting] = useState(false)
@@ -69,6 +74,7 @@ export default function Analytics() {
   const [datePreset, setDatePreset] = useState('30')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const [lastUpdated, setLastUpdated] = useState('')
 
   useEffect(() => {
     const now = new Date()
@@ -79,7 +85,10 @@ export default function Analytics() {
       from: datePreset === 'custom' ? customFrom : (datePreset === 'all' ? '' : fromDate.toISOString().slice(0, 10)),
       to: datePreset === 'custom' ? customTo : (datePreset === 'all' ? '' : now.toISOString().slice(0, 10)),
     }
-    void api.dashboard(filters).then(setData)
+    void api.dashboard(filters).then((result) => {
+      setData(result)
+      setLastUpdated(new Date().toISOString())
+    })
   }, [customFrom, customTo, dataSource, datePreset, setData])
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
   const activeSalesRange = salesRanges[salesRange] || salesRanges.hourlySales
@@ -92,12 +101,26 @@ export default function Analytics() {
     : selectedFsn === 'Slow-moving'
       ? slowProducts
       : nonMovingProducts
+  const stats = data.stats || emptyAnalytics.stats
+  const sourceLabel = { live: 'Live POS', legacy: 'Legacy Import', sample: 'Sample/Test', all: 'All Sources' }[dataSource]
+  const rangeLabel = datePreset === 'custom'
+    ? `${customFrom || 'Start'} to ${customTo || 'Today'}`
+    : ({ 1: 'Today', 7: 'Last 7 Days', 30: 'Last 30 Days', all: 'All Time' }[datePreset] || 'Selected Range')
+  const salesTrend = datePreset === '1' ? stats.dailySalesTrend : datePreset === '30' ? stats.monthlySalesTrend : null
 
   async function exportReport() {
     setExporting(true)
     setExportStatus('Exporting...')
     try {
-      const result = await exportCsv(`analytics-report-${new Date().toISOString().slice(0, 10)}.csv`, [
+      const safeScope = `${dataSource}-${datePreset === 'custom' ? `${customFrom || 'start'}-${customTo || 'today'}` : datePreset}`
+      const result = await exportCsv(`analytics-${analyticsTab}-${safeScope}-${new Date().toISOString().slice(0, 10)}.csv`, [
+        ['Filters', 'Data source', sourceLabel],
+        ['Filters', 'Date range', rangeLabel],
+        ['KPI', 'Gross sales', stats.totalRevenue],
+        ['KPI', 'Transactions', stats.transactionCount],
+        ['KPI', 'Average sale', stats.averageSale],
+        ['KPI', 'Units sold', stats.unitsSold],
+        ['KPI', 'Voided transactions', stats.voidCount],
         ['Section', 'Label', 'Value'],
         ...data.productInOut.map((item) => ['Product In/Out', item.label, item.value]),
         ...data.topProducts.map((item) => ['Top Products', item.name, item.units]),
@@ -115,12 +138,7 @@ export default function Analytics() {
   }
 
   if (loading) {
-    return (
-      <>
-        <PageHeader title="Analytics" subtitle="Loading analytics..." />
-        <div className="card"><div className="empty"><h4>Loading analytics</h4></div></div>
-      </>
-    )
+    return <PageLoader title="Analytics" message="Loading analytics…" />
   }
 
   if (error) {
@@ -144,6 +162,11 @@ export default function Analytics() {
       </PageHeader>
       {exportStatus && <div className="export-status">{exportStatus}</div>}
 
+      <div className="scan-mode-row analytics-tabs analytics-tabs-sticky" role="tablist" aria-label="Analytics sections">
+        <button type="button" className={`scan-mode ${analyticsTab === 'sales' ? 'active' : ''}`} onClick={() => setAnalyticsTab('sales')} role="tab" aria-selected={analyticsTab === 'sales'}>Sales Analytics</button>
+        <button type="button" className={`scan-mode ${analyticsTab === 'movement' ? 'active' : ''}`} onClick={() => setAnalyticsTab('movement')} role="tab" aria-selected={analyticsTab === 'movement'}>Inventory Movement</button>
+      </div>
+
       <div className="card analytics-filter-card">
         <div className="toolbar">
           <select className="select" value={dataSource} onChange={(event) => setDataSource(event.target.value)} aria-label="Analytics data source">
@@ -162,29 +185,23 @@ export default function Analytics() {
           {datePreset === 'custom' && <input className="input" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} />}
           {datePreset === 'custom' && <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />}
           <span className="count">{data.analyticsMeta?.salesCount || 0} matching sale(s)</span>
+          <span className="analytics-filter-summary">{sourceLabel} · {rangeLabel}</span>
+          <button className="btn btn-outline btn-sm" onClick={() => { void api.dashboard({ source: dataSource, from: data.analyticsMeta?.from || '', to: data.analyticsMeta?.to || '' }).then((result) => { setData(result); setLastUpdated(new Date().toISOString()) }) }}>Refresh</button>
         </div>
       </div>
 
-      <div className="scan-mode-row analytics-tabs" role="tablist" aria-label="Analytics sections">
-        <button
-          type="button"
-          className={`scan-mode ${analyticsTab === 'sales' ? 'active' : ''}`}
-          onClick={() => setAnalyticsTab('sales')}
-          role="tab"
-          aria-selected={analyticsTab === 'sales'}
-        >
-          Sales Analytics
-        </button>
-        <button
-          type="button"
-          className={`scan-mode ${analyticsTab === 'movement' ? 'active' : ''}`}
-          onClick={() => setAnalyticsTab('movement')}
-          role="tab"
-          aria-selected={analyticsTab === 'movement'}
-        >
-          Inventory Movement
-        </button>
+      <div className="analytics-kpi-grid">
+        {[
+          ['Gross Sales', peso(stats.totalRevenue), salesTrend, 'Revenue in selected range'],
+          ['Transactions', Number(stats.transactionCount || 0).toLocaleString(), null, 'Completed sales'],
+          ['Average Sale', peso(stats.averageSale), null, 'Revenue per transaction'],
+          ['Units Sold', Number(stats.unitsSold || 0).toLocaleString(), null, 'Across all products'],
+          ['Cash Sales', peso(stats.cashSales), null, 'Cash payments'],
+          ['GCash Sales', peso(stats.gcashSales), null, `${stats.voidCount || 0} voided transaction(s)`],
+        ].map(([label, value, comparison, detail]) => <div className="analytics-kpi" key={label}><span>{label}</span><strong>{value}</strong>{comparison !== null && <b className={comparison >= 0 ? 'up' : 'down'}>{comparison >= 0 ? '▲' : '▼'} {Math.abs(comparison)}% vs previous period</b>}<small>{detail}</small></div>)}
       </div>
+
+      <div className="analytics-update-line">Last updated: {lastUpdated ? new Date(lastUpdated).toLocaleString('en-PH') : 'Not recorded'}</div>
 
       {analyticsTab === 'sales' && (
         <>
@@ -206,7 +223,7 @@ export default function Analytics() {
               </div>
               <div className="panel-body">
                 {data.topProducts.length === 0 ? (
-                  <div className="empty"><h4>No sales data yet</h4><p>Top products will appear after sales are recorded.</p></div>
+                  <div className="empty analytics-empty"><h4>No sales in the selected period</h4><p>Try a wider date range or include another data source.</p><div><button className="btn btn-outline btn-sm" onClick={() => setDatePreset('all')}>Expand Date Range</button><button className="btn btn-outline btn-sm" onClick={() => setDataSource('all')}>View All Sources</button><button className="btn btn-primary btn-sm" onClick={() => navigate('/admin/transaction-logs')}>Transaction Logs</button></div></div>
                 ) : (
                   <div className="rank-list">
                     {data.topProducts.map((p, i) => (
@@ -239,13 +256,19 @@ export default function Analytics() {
             </div>
             <div className="panel-body">
               {activeSalesData.length === 0 ? (
-                <div className="empty"><h4>{activeSalesRange.empty}</h4></div>
+                <div className="empty analytics-empty"><h4>{activeSalesRange.empty}</h4><p>No matching revenue was recorded for {sourceLabel.toLowerCase()}.</p><div><button className="btn btn-outline btn-sm" onClick={() => setDatePreset('all')}>Expand Date Range</button><button className="btn btn-primary btn-sm" onClick={() => navigate('/admin/transaction-logs')}>View Transactions</button></div></div>
               ) : activeSalesRange.chart === 'bar' ? (
                 <BarChart data={activeSalesData} color={activeSalesRange.color} unit=" PHP" />
               ) : (
                 <LineChart data={activeSalesData} color={activeSalesRange.color} />
               )}
             </div>
+          </div>
+
+          <div className="analytics-detail-grid">
+            <div className="card"><div className="panel-head"><h3>Payment Mix</h3><span className="sub">Selected range revenue</span></div><div className="panel-body"><DonutChart data={data.paymentBreakdown || []} centerLabel="Revenue" /></div></div>
+            <div className="card"><div className="panel-head"><h3>Top Categories</h3><span className="sub">By units sold</span></div><div className="panel-body compact-list">{(data.topCategories || []).length ? data.topCategories.map((item, index) => <div className="analytics-list-row" key={item.name}><span><strong>{index + 1}. {item.name}</strong><small>{stats.unitsSold ? Math.round((item.units / stats.unitsSold) * 100) : 0}% of units sold</small></span><b>{item.units}</b></div>) : <div className="empty"><h4>No category sales yet</h4></div>}</div></div>
+            <div className="card"><div className="panel-head"><h3>Products Needing Attention</h3><span className="sub">Movement-based actions</span></div><div className="panel-body compact-list"><button onClick={() => { setAnalyticsTab('movement'); setSelectedFsn('Slow-moving') }}><span><strong>{slowProducts.length} slow-moving</strong><small>Review pricing or placement</small></span></button><button onClick={() => { setAnalyticsTab('movement'); setSelectedFsn('Non-moving') }}><span><strong>{nonMovingProducts.length} non-moving</strong><small>No sale for 90+ days or never sold</small></span></button><button onClick={() => navigate('/admin/products')}><span><strong>Open product health</strong><small>Review stock and catalog warnings</small></span></button></div></div>
           </div>
         </>
       )}

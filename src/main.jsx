@@ -19,3 +19,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     </AppErrorBoundary>
   </React.StrictMode>,
 )
+
+if (import.meta.env.VITE_APP_TARGET === 'cashier-desktop') {
+  window.setTimeout(() => {
+    const invoke = window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke
+    invoke?.('complete_startup').catch(() => {})
+  }, 650)
+}
