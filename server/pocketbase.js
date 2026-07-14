@@ -79,6 +79,45 @@ export async function authenticateAdminUser(email, password) {
   return authenticateRoleUser(email, password, 'admin')
 }
 
+export async function authenticateAdminToken(token) {
+  const value = String(token || '').trim()
+  if (!value) {
+    const error = new Error('Authentication is required.')
+    error.status = 401
+    throw error
+  }
+
+  const authClient = new PocketBase(PB_URL)
+  authClient.autoCancellation(false)
+  authClient.authStore.save(value)
+
+  const authData = await authClient.collection('users').authRefresh().catch(() => {
+    const error = new Error('Your admin session is invalid or has expired.')
+    error.status = 401
+    throw error
+  })
+  const record = authData.record
+
+  if (record?.role !== 'admin') {
+    const error = new Error('Only admin accounts can access this area.')
+    error.status = 403
+    throw error
+  }
+  if (record?.status === 'inactive') {
+    const error = new Error('This account is inactive.')
+    error.status = 403
+    throw error
+  }
+
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name || record.email,
+    role: record.role,
+    status: record.status || 'active',
+  }
+}
+
 export async function authenticateRoleUser(email, password, requiredRole) {
   const authClient = new PocketBase(PB_URL)
   authClient.autoCancellation(false)
@@ -118,5 +157,6 @@ export async function authenticateRoleUser(email, password, requiredRole) {
     name: record.name || record.email,
     role: record.role,
     status: record.status,
+    token: authData.token,
   }
 }

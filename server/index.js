@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
 import {
   authenticateAdminUser,
+  authenticateAdminToken,
   authenticateRoleUser,
   pb,
   pbCollection,
@@ -41,6 +42,8 @@ const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:1420,http
 const ngrokHostPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.dev$/i
 const ngrokAppPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i
 const localNetworkHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})$/i
+const isVercelAdminPortal = Boolean(process.env.VERCEL || process.env.ADMIN_WEB_ONLY === 'true')
+const allowDevelopmentOrigins = process.env.NODE_ENV !== 'production' && !isVercelAdminPortal
 
 function parseOrigin(origin) {
   try {
@@ -68,9 +71,9 @@ app.use(cors({
     if (
       !origin ||
       allowedOrigins.includes(origin) ||
-      ngrokHostPattern.test(origin) ||
-      ngrokAppPattern.test(origin) ||
-      (parsedOrigin && ['http:', 'https:'].includes(parsedOrigin.protocol) && localNetworkHostPattern.test(parsedOrigin.hostname))
+      (allowDevelopmentOrigins && ngrokHostPattern.test(origin)) ||
+      (allowDevelopmentOrigins && ngrokAppPattern.test(origin)) ||
+      (allowDevelopmentOrigins && parsedOrigin && ['http:', 'https:'].includes(parsedOrigin.protocol) && localNetworkHostPattern.test(parsedOrigin.hostname))
     ) {
       callback(null, true)
       return
@@ -81,7 +84,7 @@ app.use(cors({
   exposedHeaders: ['Authorization', 'Location', 'X-PocketBase-Token'],
 }))
 
-app.use('/api/pocketbase', createProxyMiddleware({
+if (!isVercelAdminPortal) app.use('/api/pocketbase', createProxyMiddleware({
   target: PB_PROXY_TARGET,
   changeOrigin: true,
   pathRewrite: (path) => `/api${path}`,
@@ -693,8 +696,17 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
 
   const user = await authenticateAdminUser(email, password)
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to admin dashboard' })
-  res.json({ ok: true, user })
+  const { token, ...safeUser } = user
+  res.json({ ok: true, user: safeUser, token })
 }))
+
+app.use('/api/cashier', (req, res, next) => {
+  if (!isVercelAdminPortal) {
+    next()
+    return
+  }
+  res.status(404).json({ error: 'Cashier services are not available in the remote admin portal.' })
+})
 
 app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
   const email = String(req.body?.email || '').trim()
@@ -726,6 +738,26 @@ app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
 
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS using barcode' })
   res.json({ ok: true, user })
+}))
+
+const publicAdminPaths = new Set([
+  '/health',
+  '/auth/login',
+])
+
+app.use('/api', asyncRoute(async (req, res, next) => {
+  if (req.path.startsWith('/cashier/') || publicAdminPaths.has(req.path)) {
+    next()
+    return
+  }
+
+  const authorization = String(req.headers.authorization || '')
+  const token = authorization.toLowerCase().startsWith('bearer ')
+    ? authorization.slice(7).trim()
+    : ''
+  req.adminUser = await authenticateAdminToken(token)
+  res.setHeader('Cache-Control', 'private, no-store')
+  next()
 }))
 
 app.get('/api/products', asyncRoute(async (_req, res) => {
@@ -1823,20 +1855,27 @@ app.use((req, res, next) => {
 
 app.use((error, _req, res, next) => {
   void next
-  console.error(error)
-  res.status(error.status || 500).json({
+  const status = error.status || 500
+  if (status >= 500) console.error(error)
+  res.status(status).json({
     error: error.message || 'Server error',
     details: error.details,
   })
 })
 
-app.listen(PORT, () => {
-  console.log(`Admin API listening on http://localhost:${PORT}`)
-  console.log(`For LAN testing, open http://<this-computer-ip>:${PORT}`)
-  if (AUTO_BACKUP_ENABLED) {
-    const initialBackupTimer = setTimeout(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), 30000)
-    initialBackupTimer.unref?.()
-    const backupTimer = setInterval(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), AUTO_BACKUP_INTERVAL_MS)
-    backupTimer.unref?.()
-  }
-})
+export { app }
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Admin API listening on http://localhost:${PORT}`)
+    console.log(`For LAN testing, open http://<this-computer-ip>:${PORT}`)
+    if (AUTO_BACKUP_ENABLED) {
+      const initialBackupTimer = setTimeout(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), 30000)
+      initialBackupTimer.unref?.()
+      const backupTimer = setInterval(() => runAutomaticBackup().catch((error) => console.error('Automatic backup failed:', error.message)), AUTO_BACKUP_INTERVAL_MS)
+      backupTimer.unref?.()
+    }
+  })
+}
+
+export default app

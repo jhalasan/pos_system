@@ -5,6 +5,7 @@ import { IconLock } from '../components/Icons'
 import { api } from '../services/api'
 
 const QUICK_LOGIN_CACHE_KEY = 'nexa_admin_quick_accounts'
+const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
 
 function displayName(account) {
   const email = String(account?.email || '').trim()
@@ -57,7 +58,7 @@ export default function Login() {
       }
     }
 
-    loadQuickAccounts()
+    if (!isAdminWeb) loadQuickAccounts()
     return () => { ignore = true }
   }, [])
 
@@ -160,13 +161,13 @@ export default function Login() {
               Forgot Password?
             </button>
           </div>
-          <button
+          {!isAdminWeb && <button
             type="button"
             className="admin-login-back"
             onClick={() => nav('/')}
           >
             Back to Role Selection
-          </button>
+          </button>}
         </form>
       </div>
     </div>

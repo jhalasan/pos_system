@@ -20,6 +20,7 @@ const titles = {
   logs: 'Activity Logs',
   settings: 'Settings',
 }
+const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
 
 export default function AdminLayout() {
   const { pathname } = useLocation()
@@ -179,7 +180,7 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
-        <ConnectionStatusBar scope="admin" />
+        <ConnectionStatusBar scope="admin" cloudOnly={isAdminWeb} />
 
         <main className="content">
           <Outlet />
@@ -200,7 +201,7 @@ export default function AdminLayout() {
           <span>Top</span>
         </button>
       )}
-      <SyncStatusIndicator scope="admin" />
+      {!isAdminWeb && <SyncStatusIndicator scope="admin" />}
       <SupportContactModal open={supportOpen} onClose={() => setSupportOpen(false)} source="Admin Control Panel" />
     </div>
   )

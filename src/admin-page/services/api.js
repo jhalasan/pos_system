@@ -2,6 +2,7 @@ import { desktopAdminApi } from './desktopApi'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 const isDesktopApp = import.meta.env.VITE_APP_TARGET === 'cashier-desktop'
+const ADMIN_TOKEN_KEY = 'nexa_admin_token'
 
 function parseJson(text) {
   try {
@@ -18,9 +19,13 @@ async function request(path, options = {}) {
     res = await fetch(`${API_URL}${path}`, {
       ...options,
       headers: isFormData
-        ? { ...(options.headers || {}) }
+        ? {
+            ...(sessionStorage.getItem(ADMIN_TOKEN_KEY) ? { Authorization: `Bearer ${sessionStorage.getItem(ADMIN_TOKEN_KEY)}` } : {}),
+            ...(options.headers || {}),
+          }
         : {
             'Content-Type': 'application/json',
+            ...(sessionStorage.getItem(ADMIN_TOKEN_KEY) ? { Authorization: `Bearer ${sessionStorage.getItem(ADMIN_TOKEN_KEY)}` } : {}),
             ...(options.headers || {}),
           },
     })
@@ -34,6 +39,11 @@ async function request(path, options = {}) {
   const parsed = parseJson(text)
 
   if (!res.ok) {
+    if (res.status === 401) {
+      sessionStorage.removeItem('nexa_admin_auth')
+      sessionStorage.removeItem('nexa_admin_user')
+      sessionStorage.removeItem(ADMIN_TOKEN_KEY)
+    }
     throw new Error(parsed?.error || text || `Request failed with HTTP ${res.status}.`)
   }
 
@@ -101,6 +111,7 @@ export const defaultCategories = [
 
 const webApi = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  logout: () => sessionStorage.removeItem(ADMIN_TOKEN_KEY),
   adminQuickLoginAccounts: () => request('/auth/quick-login-accounts'),
   dashboard: (filters = {}) => {
     const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value))

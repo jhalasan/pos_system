@@ -1,17 +1,29 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const DEFAULT_POCKETBASE_URL = 'https://nexasystems.pockethost.io'
 const DEFAULT_RECEIPT_PRINTER_NAME = 'XP-58H'
 const DEFAULT_RECEIPT_COPIES = '2'
+const projectRoot = path.dirname(fileURLToPath(import.meta.url))
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const isCashierBuild = mode === 'cashier'
-  const appTarget = isCashierBuild ? 'cashier-desktop' : ''
+  const isAdminWebBuild = mode === 'admin-web'
+  const appTarget = isCashierBuild ? 'cashier-desktop' : (isAdminWebBuild ? 'admin-web' : '')
+  const appEntry = isCashierBuild
+    ? 'src/DesktopApp.jsx'
+    : (isAdminWebBuild ? 'src/AdminWebApp.jsx' : 'src/App.jsx')
 
   return {
     plugins: [react()],
+    resolve: {
+      alias: {
+        '@app-target': path.resolve(projectRoot, appEntry),
+      },
+    },
     clearScreen: false,
     define: {
       'import.meta.env.VITE_APP_TARGET': JSON.stringify(process.env.VITE_APP_TARGET || appTarget),

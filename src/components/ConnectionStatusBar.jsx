@@ -5,7 +5,7 @@ function storedStatus(scope) {
   catch { return null }
 }
 
-export default function ConnectionStatusBar({ scope = 'system', compact = false }) {
+export default function ConnectionStatusBar({ scope = 'system', compact = false, cloudOnly = false }) {
   const [online, setOnline] = useState(() => navigator.onLine)
   const [syncStatus, setSyncStatus] = useState(() => (
     scope === 'system'
@@ -32,13 +32,18 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false 
   }, [scope])
 
   const status = useMemo(() => {
+    if (cloudOnly) {
+      return online
+        ? { tone: 'online', label: 'Online', detail: 'Remote admin portal connected.' }
+        : { tone: 'offline', label: 'Offline', detail: 'Remote changes require an internet connection.' }
+    }
     if (!online || ['offline', 'auth-required'].includes(syncStatus?.state)) {
       return { tone: 'offline', label: 'Offline', detail: 'Changes are saved locally and will sync later.' }
     }
     if (syncStatus?.state === 'running') return { tone: 'syncing', label: 'Syncing', detail: syncStatus.message || 'Sending local changes to cloud.' }
     if (['failed', 'waiting'].includes(syncStatus?.state)) return { tone: 'warning', label: 'Sync pending', detail: syncStatus.message || 'Cloud sync will retry automatically.' }
     return { tone: 'online', label: 'Online', detail: syncStatus?.message || 'Cloud connection available.' }
-  }, [online, syncStatus])
+  }, [cloudOnly, online, syncStatus])
 
   return (
     <div className={`connection-status-bar ${status.tone}${compact ? ' compact' : ''}`} role="status">

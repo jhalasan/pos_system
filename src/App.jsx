@@ -8,6 +8,7 @@ import './global.css';
 import './admin-page/index.css';
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth';
+const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web';
 const AdminLogin = lazy(() => import('./admin-page/pages/Login'));
 const Dashboard = lazy(() => import('./admin-page/pages/Dashboard'));
 const Inventory = lazy(() => import('./admin-page/pages/Inventory'));
@@ -51,7 +52,9 @@ function App() {
       <Suspense fallback={<BrandedLoader message="Opening screen…" />}>
       <Routes>
         {/* Role Selection Route */}
-        <Route path="/" element={<RoleSelection />} />
+        <Route path="/" element={isAdminWeb
+          ? <Navigate to={isAuthed() ? '/admin/dashboard' : '/admin-login'} replace />
+          : <RoleSelection />} />
 
         {/* Admin Login Route */}
         <Route
@@ -86,11 +89,11 @@ function App() {
           <Route path="audit" element={<Audit />} />
           <Route path="receipts" element={<Navigate to="transaction-logs" replace />} />
           <Route path="logs" element={<ActivityLogs />} />
-          <Route path="settings" element={<Settings />} />
+          {!isAdminWeb && <Route path="settings" element={<Settings />} />}
         </Route>
 
         {/* Cashier Login Route */}
-        <Route
+        {!isAdminWeb && <Route
           path="/login"
           element={
             isAuthenticated ? (
@@ -99,10 +102,10 @@ function App() {
               <CashierLogin onLogin={handleLogin} />
             )
           }
-        />
+        />}
 
         {/* Cashier POS Route */}
-        <Route
+        {!isAdminWeb && <Route
           path="/cashier"
           element={
             isAuthenticated ? (
@@ -111,12 +114,12 @@ function App() {
               <Navigate to="/login" replace />
             )
           }
-        />
+        />}
 
         {/* 404 Route */}
         <Route
           path="*"
-          element={<Navigate to="/" replace />}
+          element={<Navigate to={isAdminWeb ? '/admin/dashboard' : '/'} replace />}
         />
       </Routes>
       </Suspense>

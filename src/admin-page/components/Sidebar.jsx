@@ -21,6 +21,7 @@ const navItems = [
   { to: '/admin/audit', label: 'Audit', icon: IconList },
   { to: '/admin/logs', label: 'Activity Logs', icon: IconList },
 ]
+const isAdminWeb = import.meta.env.VITE_APP_TARGET === 'admin-web'
 
 export default function Sidebar({ open = false, collapsed = false, onNavigate = () => {} }) {
   const nav = useNavigate()
@@ -162,9 +163,9 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
         <div>
           <div className="nm">NEXA POS</div>
           <div className="sb">Admin Control Panel</div>
-          <button type="button" className="terminal-name" onClick={renameTerminal} title="Rename this terminal">
-            {terminalName}
-          </button>
+          {isAdminWeb
+            ? <span className="terminal-name">Remote Admin</span>
+            : <button type="button" className="terminal-name" onClick={renameTerminal} title="Rename this terminal">{terminalName}</button>}
         </div>
       </div>
 
@@ -185,7 +186,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       </nav>
 
       <div className="sidebar-foot">
-        <button
+        {!isAdminWeb && <button
           className="nav-item"
           style={{ width: '100%' }}
           title={collapsed ? 'Sync to Cloud' : undefined}
@@ -193,11 +194,11 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
         >
           <IconCloud size={18} />
           <span className="nav-text">Sync to Cloud</span>
-        </button>
-        <NavLink to="/admin/settings" className="nav-item" onClick={onNavigate} title={collapsed ? 'Settings' : undefined}>
+        </button>}
+        {!isAdminWeb && <NavLink to="/admin/settings" className="nav-item" onClick={onNavigate} title={collapsed ? 'Settings' : undefined}>
           <IconSettings size={18} />
           <span className="nav-text">Settings</span>
-        </NavLink>
+        </NavLink>}
         <button className="nav-item danger" style={{ width: '100%' }} onClick={handleLogout} title={collapsed ? 'Logout' : undefined}>
           <IconLogout size={18} />
           <span className="nav-text">Logout</span>
