@@ -26,6 +26,7 @@ export const IconSearch = (p) => <Svg {...p}><circle cx="11" cy="11" r="7" /><pa
 export const IconPlus = (p) => <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>
 export const IconEdit = (p) => <Svg {...p}><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></Svg>
 export const IconTrash = (p) => <Svg {...p}><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></Svg>
+export const IconArchive = (p) => <Svg {...p}><path d="M3 5h18v4H3z" /><path d="M5 9v11h14V9" /><path d="M9 13h6" /></Svg>
 export const IconClose = (p) => <Svg {...p}><path d="M18 6 6 18M6 6l12 12" /></Svg>
 export const IconScan = (p) => <Svg {...p}><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2" /><path d="M3 12h18" /></Svg>
 export const IconBarcode = (p) => <Svg {...p}><path d="M4 5v14M8 5v14M12 5v14M16 5v14M20 5v14" /><path d="M6 5v14M14 5v14M18 5v14" /></Svg>

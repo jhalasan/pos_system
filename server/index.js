@@ -3,6 +3,7 @@ import cors from 'cors'
 import multer from 'multer'
 import { createProxyMiddleware } from 'http-proxy-middleware'
 import path from 'node:path'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
 import {
@@ -1508,10 +1509,24 @@ app.post('/api/audit-reviews', asyncRoute(async (req, res) => {
   })
 }))
 
-app.get('/api/dashboard', asyncRoute(async (_req, res) => {
+function dashboardSaleSource(sale = {}) {
+  const transactionNo = String(sale.transaction_no || '')
+  if (['202606160001', '202606160002'].includes(transactionNo)) return 'sample'
+  if (/^sal\d{12}$/.test(String(sale.id || '')) || /^99\d{12}$/.test(transactionNo)) return 'legacy'
+  return 'live'
+}
+
+app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
-  const sales = await listRecords('sales', '?filter=status!="voided"&perPage=500')
-  const saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
+  let sales = await listRecords('sales', '?filter=status!="voided"&perPage=500')
+  let saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
+  const source = String(req.query.source || 'all')
+  const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : null
+  const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999`) : null
+  sales = sales.filter((sale) => (source === 'all' || dashboardSaleSource(sale) === source)
+    && (!from || saleDate(sale) >= from) && (!to || saleDate(sale) <= to))
+  const filteredSaleIds = new Set(sales.map((sale) => sale.id))
+  saleItems = saleItems.filter((item) => filteredSaleIds.has(Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id))
   const now = new Date()
   const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
@@ -1580,6 +1595,20 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     .filter((product) => product.units > 0)
     .sort((a, b) => b.units - a.units)
     .slice(0, 5)
+  const paymentTotals = completedSales.reduce((totals, sale) => {
+    const amount = Number(sale.total_amount) || 0
+    if (String(sale.payment_method || 'cash').toLowerCase() === 'gcash') totals.gcash += amount
+    else totals.cash += amount
+    return totals
+  }, { cash: 0, gcash: 0 })
+  const inventoryHealth = [
+    { label: 'In Stock', value: products.filter((p) => p.status === 'in-stock').length, color: '#16a34a' },
+    { label: 'Low', value: products.filter((p) => p.status === 'low').length, color: '#f59e0b' },
+    { label: 'Critical', value: products.filter((p) => p.status === 'critical').length, color: '#f97316' },
+    { label: 'Out of Stock', value: products.filter((p) => p.status === 'out-of-stock').length, color: '#ef4444' },
+  ]
+  const topCategoryMap = new Map()
+  for (const product of productSales.values()) topCategoryMap.set(product.category || 'Uncategorized', (topCategoryMap.get(product.category || 'Uncategorized') || 0) + product.units)
   const hourlySales = Array.from({ length: 24 }, (_, hour) => ({
     label: `${String(hour).padStart(2, '0')}:00`,
     value: 0,
@@ -1624,12 +1653,15 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
       totalRevenue,
       totalRevenueTrend: 0,
       criticalStock: criticalStockProducts.length,
+      transactionCount: completedSales.length,
+      averageSale: completedSales.length ? totalRevenue / completedSales.length : 0,
+      cashSales: paymentTotals.cash,
+      gcashSales: paymentTotals.gcash,
     },
     criticalAlerts,
     productInOut: [
-      { label: 'Stock In', value: currentStockUnits, color: '#4f46e5' },
-      { label: 'Stock Out', value: monthlyStockOut, color: '#16a34a' },
-      { label: 'Adjustments', value: 0, color: '#f59e0b' },
+      { label: 'Current Stock', value: currentStockUnits, color: '#4f46e5' },
+      { label: 'Units Sold', value: monthlyStockOut, color: '#16a34a' },
     ],
     topProducts,
     hourlySales,
@@ -1637,6 +1669,16 @@ app.get('/api/dashboard', asyncRoute(async (_req, res) => {
     weeklySales: weeklyTrend,
     monthlySales: monthlyTrend,
     yearlySales: yearlyTrend,
+    analyticsMeta: { source, from: req.query.from || '', to: req.query.to || '', salesCount: completedSales.length },
+    inventoryHealth,
+    paymentBreakdown: [{ label: 'Cash', value: paymentTotals.cash, color: '#16a34a' }, { label: 'GCash', value: paymentTotals.gcash, color: '#2563eb' }],
+    recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({ id: sale.id, transactionNo: sale.transaction_no || sale.id, amount: Number(sale.total_amount) || 0, paymentMethod: sale.payment_method || 'cash', createdAt: saleDate(sale).toISOString() })),
+    topCategories: [...topCategoryMap].map(([name, units]) => ({ name, units })).sort((a, b) => b.units - a.units).slice(0, 5),
+    dataQuality: {
+      generatedBarcodes: products.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
+      uncategorized: products.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
+      nonPositivePrices: products.filter((p) => Number(p.price) <= 0).length,
+    },
   })
 }))
 
@@ -1647,6 +1689,39 @@ app.get('/api/gcash-payments', asyncRoute(async (_req, res) => {
   })
 
   res.json(records.map(gcashPaymentFromSale).filter(Boolean))
+}))
+
+app.get('/api/system/import-status', asyncRoute(async (_req, res) => {
+  const reportsDir = path.resolve(__dirname, '..', 'migration_reports')
+  const readJson = (name) => {
+    try { return JSON.parse(fs.readFileSync(path.join(reportsDir, name), 'utf8')) } catch { return null }
+  }
+  const readTail = (name) => {
+    try {
+      const content = fs.readFileSync(path.join(reportsDir, name), 'utf8').trim()
+      return content ? content.split(/\r?\n/).slice(-20) : []
+    } catch { return [] }
+  }
+  res.json({ dryRun: readJson('legacy-import-dry-run.json'), result: readJson('legacy-import-result.json'), progress: readTail('legacy-import.log'), errors: readTail('legacy-import-error.log') })
+}))
+
+app.get('/api/system/backups', asyncRoute(async (_req, res) => {
+  await pbCollection('products')
+  res.json(await pb.backups.getFullList())
+}))
+
+app.post('/api/system/backups', asyncRoute(async (_req, res) => {
+  await pbCollection('products')
+  const name = `nexa_backup_${Date.now()}.zip`
+  await pb.backups.create(name)
+  res.status(201).json({ name })
+}))
+
+app.post('/api/system/backups/:name/restore', asyncRoute(async (req, res) => {
+  if (req.body?.confirmation !== `RESTORE ${req.params.name}`) return res.status(400).json({ error: 'Restore confirmation did not match.' })
+  await pbCollection('products')
+  await pb.backups.restore(req.params.name)
+  res.json({ restored: req.params.name })
 }))
 
 app.use(express.static(DIST_DIR))

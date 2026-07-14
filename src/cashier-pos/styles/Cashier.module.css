@@ -495,7 +495,7 @@
 
 .cashier-sidebar {
   position: fixed;
-  top: 69px;
+  top: 101px;
   bottom: 0;
   left: 0;
   z-index: 19;
@@ -576,6 +576,13 @@
 .end-of-day-heading { margin-bottom: 18px; }
 .end-of-day-heading h3 { margin-bottom: 6px; font-size: 17px; }
 .end-of-day-heading p { color: #64748b; line-height: 1.45; }
+.end-of-day-readiness { margin-bottom:18px; padding:14px; border:1px solid #dbe3ef; border-radius:10px; background:#f8fafc; }
+.end-of-day-readiness > div:first-child { display:grid; gap:3px; margin-bottom:11px; }
+.end-of-day-readiness small { color:#64748b; line-height:1.4; }
+.end-of-day-checks { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+.end-of-day-checks span { display:flex; align-items:center; gap:7px; font-size:12px; font-weight:700; }
+.end-of-day-checks .ready b { color:#16a34a; }
+.end-of-day-checks .warning b { color:#d97706; }
 
 .drawer-confirm-button {
   padding: 5px 9px;

@@ -5,6 +5,7 @@ import { IconBell, IconMenu } from './Icons'
 import SyncStatusIndicator from '../../components/SyncStatusIndicator'
 import { api } from '../services/api'
 import SupportContactModal from '../../components/SupportContactModal'
+import ConnectionStatusBar from '../../components/ConnectionStatusBar'
 
 const titles = {
   dashboard: 'Dashboard',
@@ -29,6 +30,7 @@ export default function AdminLayout() {
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notifications, setNotifications] = useState([])
   const [supportOpen, setSupportOpen] = useState(false)
+  const [showBackToTop, setShowBackToTop] = useState(false)
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -39,6 +41,13 @@ export default function AdminLayout() {
     document.body.classList.toggle('admin-menu-open', sidebarOpen)
     return () => document.body.classList.remove('admin-menu-open')
   }, [sidebarOpen])
+
+  useEffect(() => {
+    const updateBackToTop = () => setShowBackToTop(window.scrollY > 420)
+    updateBackToTop()
+    window.addEventListener('scroll', updateBackToTop, { passive: true })
+    return () => window.removeEventListener('scroll', updateBackToTop)
+  }, [])
 
   async function toggleNotifications() {
     const nextOpen = !notificationsOpen
@@ -170,11 +179,27 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
+        <ConnectionStatusBar scope="admin" />
 
         <main className="content">
           <Outlet />
         </main>
       </div>
+      {showBackToTop && (
+        <button
+          type="button"
+          className="back-to-top"
+          onClick={() => window.scrollTo({
+            top: 0,
+            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+          })}
+          aria-label="Back to top"
+          title="Back to top"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 15 6-6 6 6" /></svg>
+          <span>Top</span>
+        </button>
+      )}
       <SyncStatusIndicator scope="admin" />
       <SupportContactModal open={supportOpen} onClose={() => setSupportOpen(false)} source="Admin Control Panel" />
     </div>

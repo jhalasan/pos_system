@@ -425,6 +425,18 @@
         "type": "relation"
       },
       {
+        "help": "Controls whether the product appears in active selling and inventory lists.",
+        "hidden": false,
+        "id": "select_lifecycle_1",
+        "maxSelect": 1,
+        "name": "lifecycle_status",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "select",
+        "values": ["active", "inactive", "archived"]
+      },
+      {
         "hidden": false,
         "id": "autodate2990389176",
         "name": "created",

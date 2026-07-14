@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import Modal from '../components/Modal'
 import { IconDownload, IconList, IconSearch } from '../components/Icons'
@@ -131,7 +131,7 @@ export default function ActivityLogs() {
   const [userType, setUserType] = useState('All')
   const [query, setQuery] = useState('')
   const [action, setAction] = useState('All')
-  const [dateRange, setDateRange] = useState('Today')
+  const [dateRange, setDateRange] = useState('All Time')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
@@ -141,7 +141,7 @@ export default function ActivityLogs() {
   const [exportFilters, setExportFilters] = useState({
     userType: 'All',
     action: 'All',
-    dateRange: 'Today',
+    dateRange: 'All Time',
     from: '',
     to: '',
   })
@@ -161,11 +161,11 @@ export default function ActivityLogs() {
     }))
   }, [activityLogs, userType, action, query, selectedRange])
 
-  useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
-  }, [action, customFrom, customTo, dateRange, query, userType])
-
   const visibleLogs = filtered.slice(0, visibleCount)
+  const todayRange = getDateRange('Today')
+  const todayCount = activityLogs.filter((log) => logMatchesFilters(log, {
+    userType: 'All', action: 'All', query: '', range: todayRange,
+  })).length
 
   const exportPreview = useMemo(() => {
     const range = exportFilters.dateRange === 'Custom'
@@ -235,24 +235,24 @@ export default function ActivityLogs() {
               className="input"
               placeholder="Search user, action, details..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setVisibleCount(PAGE_SIZE) }}
             />
           </div>
           <div className="field">
-            <select className="select" value={userType} onChange={(e) => setUserType(e.target.value)}>
+            <select className="select" value={userType} onChange={(e) => { setUserType(e.target.value); setVisibleCount(PAGE_SIZE) }}>
               <option value="All">All User Types</option>
               <option value="Admin">Admin</option>
               <option value="Cashier">Cashier</option>
             </select>
           </div>
           <div className="field">
-            <select className="select" value={action} onChange={(e) => setAction(e.target.value)}>
+            <select className="select" value={action} onChange={(e) => { setAction(e.target.value); setVisibleCount(PAGE_SIZE) }}>
               <option value="All">All Action Types</option>
               {actionTypes.map((a) => <option key={a}>{a}</option>)}
             </select>
           </div>
           <div className="field">
-            <select className="select" value={dateRange} onChange={(e) => setDateRange(e.target.value)}>
+            <select className="select" value={dateRange} onChange={(e) => { setDateRange(e.target.value); setVisibleCount(PAGE_SIZE) }}>
               <option value="Today">Today</option>
               <option value="Last 7 Days">Last 7 Days</option>
               <option value="Last 30 Days">Last 30 Days</option>
@@ -263,14 +263,14 @@ export default function ActivityLogs() {
           {dateRange === 'Custom' && (
             <>
               <div className="field">
-                <input className="input" type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+                <input className="input" type="date" value={customFrom} onChange={(e) => { setCustomFrom(e.target.value); setVisibleCount(PAGE_SIZE) }} />
               </div>
               <div className="field">
-                <input className="input" type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+                <input className="input" type="date" value={customTo} onChange={(e) => { setCustomTo(e.target.value); setVisibleCount(PAGE_SIZE) }} />
               </div>
             </>
           )}
-          <span className="count">{filtered.length} record(s)</span>
+          <span className="count">{filtered.length} shown · {todayCount} today · {activityLogs.length} total</span>
         </div>
 
         {filtered.length === 0 ? (

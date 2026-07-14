@@ -27,6 +27,7 @@ export default defineConfig(({ mode }) => {
       ),
       'import.meta.env.VITE_SUPPORT_EMAIL': JSON.stringify(process.env.VITE_SUPPORT_EMAIL || ''),
       'import.meta.env.VITE_SUPPORT_PHONE': JSON.stringify(process.env.VITE_SUPPORT_PHONE || ''),
+      'import.meta.env.VITE_APP_VERSION': JSON.stringify(process.env.npm_package_version || '0.0.0'),
     },
     server: {
       port: 1420,

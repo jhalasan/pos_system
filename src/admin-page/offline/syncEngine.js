@@ -100,6 +100,7 @@ async function productBody(pb, data) {
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: Boolean(data.hasMultipleUnits ?? data.has_multiple_units),
+    lifecycle_status: ['inactive', 'archived'].includes(data.lifecycleStatus || data.lifecycle_status) ? (data.lifecycleStatus || data.lifecycle_status) : 'active',
   }
   // include selling units when present so desktop/admin sync preserves additional units
   if (Array.isArray(data.sellingUnits) && data.sellingUnits.length > 0) {

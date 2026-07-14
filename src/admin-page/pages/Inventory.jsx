@@ -230,6 +230,10 @@ export default function Inventory() {
   const [stockOutFeed, setStockOutFeed] = useState([])
   const [stockOutError, setStockOutError] = useState('')
   const [confirmingStockOut, setConfirmingStockOut] = useState(false)
+  const [reconcileProductId, setReconcileProductId] = useState('')
+  const [physicalCount, setPhysicalCount] = useState('')
+  const [reconcileNote, setReconcileNote] = useState('')
+  const [reconciling, setReconciling] = useState(false)
 
   const totalProducts = products.length
   const lowItems = products.filter((p) => p.status !== 'in-stock').length
@@ -313,6 +317,31 @@ export default function Inventory() {
       return updated
     })
     return matched ? next : [updated, ...next]
+  }
+
+  async function reconcileInventory(event) {
+    event.preventDefault()
+    const product = products.find((item) => item.id === reconcileProductId)
+    if (!product) return flash('Select a product to reconcile.')
+    const expected = Number(product.qty) || 0
+    const actual = Math.max(0, Number(physicalCount) || 0)
+    const variance = actual - expected
+    if (!variance) return flash('Physical count already matches system stock.')
+    if (!confirm(`Approve inventory adjustment for "${product.name}"?\nSystem: ${expected}\nPhysical: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`)) return
+    setReconciling(true)
+    try {
+      const updated = variance > 0
+        ? await api.scanInventory({ productId: product.id, qty: variance, unitConversion: 1, unitLabel: product.unit || 'unit' })
+        : await api.stockOutInventory({ productId: product.id, qty: Math.abs(variance), unitConversion: 1, unitLabel: product.unit || 'unit', reason: 'other', note: `Physical count reconciliation: ${reconcileNote || 'No note'}` })
+      setProducts((current) => mergeUpdatedProduct(current, updated))
+      setPhysicalCount('')
+      setReconcileNote('')
+      flash(`Reconciled ${product.name}; variance ${variance > 0 ? '+' : ''}${variance}.`)
+    } catch (err) {
+      flash(err.message || 'Unable to reconcile inventory.')
+    } finally {
+      setReconciling(false)
+    }
   }
 
   function addToBatch(product, unit, count) {
@@ -1294,9 +1323,23 @@ export default function Inventory() {
         >
           Stock-Out
         </button>
+        <button type="button" className={`scan-mode ${inventoryTab === 'reconcile' ? 'active' : ''}`} onClick={() => setInventoryTab('reconcile')}>
+          Physical Reconciliation
+        </button>
       </div>
 
-      {inventoryTab === 'stock-in' ? stockInScanner : stockOutScanner}
+      {inventoryTab === 'stock-in' ? stockInScanner : inventoryTab === 'stock-out' ? stockOutScanner : (
+        <div className="card">
+          <div className="panel-head"><div><h3>Physical Inventory Reconciliation</h3><span className="sub">Compare system stock with a verified physical count and approve the variance.</span></div></div>
+          <form className="panel-body reconciliation-form" onSubmit={reconcileInventory}>
+            <label className="field"><span>Product</span><select className="select" value={reconcileProductId} onChange={(event) => setReconcileProductId(event.target.value)} required><option value="">Select product…</option>{[...products].sort((a, b) => a.name.localeCompare(b.name)).map((product) => <option value={product.id} key={product.id}>{product.name} — system {formatQty(product.qty)}</option>)}</select></label>
+            <label className="field"><span>Physical Count</span><input className="input" type="number" min="0" step="any" value={physicalCount} onChange={(event) => setPhysicalCount(event.target.value)} required /></label>
+            <label className="field"><span>Count Note</span><input className="input" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} placeholder="Counter, location, or reason" /></label>
+            {reconcileProductId && physicalCount !== '' && <div className="reconciliation-variance">Variance: <strong>{(Number(physicalCount) || 0) - (Number(products.find((item) => item.id === reconcileProductId)?.qty) || 0)}</strong></div>}
+            <button className="btn btn-primary" disabled={reconciling}>{reconciling ? 'Applying…' : 'Review and Apply Adjustment'}</button>
+          </form>
+        </div>
+      )}
 
       {newProductBarcode && (
         <ProductModal

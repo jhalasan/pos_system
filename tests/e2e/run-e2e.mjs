@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import fetch from 'node-fetch'
 import { ensurePocketBaseAuth, pbCollection } from '../../server/pocketbase.js'
 
 const API = process.env.API_URL || 'http://localhost:3001/api'

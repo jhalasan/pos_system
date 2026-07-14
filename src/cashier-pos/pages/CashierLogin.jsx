@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Envelope, Eye, EyeSlash, Cart, UpcScan } from 'react-bootstrap-icons';
+import { Eye, EyeSlash, Cart, UpcScan } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
 import { normalizeBarcode } from '../utils/barcodeUtils';
 import { allowsCashierBarcodeLogin } from '../utils/cashierLoginPolicy';
@@ -116,11 +116,12 @@ const CashierLogin = ({ onLogin }) => {
   return (
     <div className={styles['login-container']}>
       <div className={styles['login-card']}>
-        {/* Logo */}
         <div className={styles['logo-container']}>
-          <div className={styles['logo-icon']}>
-            <Envelope size={40} />
-          </div>
+          <img
+            className={styles['brand-logo']}
+            src="/branding/nexa-systems-logo-transparent.png"
+            alt="NEXA Systems"
+          />
         </div>
 
         {/* Heading */}

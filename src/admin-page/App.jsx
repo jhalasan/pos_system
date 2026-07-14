@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { isAuthed } from './auth'
 import AdminLayout from './components/AdminLayout'
 import RoleSelect from './pages/RoleSelect'
+import BrandedLoader from '../components/BrandedLoader'
 
 const Login = lazy(() => import('./pages/Login'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -22,7 +23,7 @@ function RequireAuth({ children }) {
 
 export default function App() {
   return (
-    <Suspense fallback={<div className="app-loading">Loading...</div>}>
+    <Suspense fallback={<BrandedLoader message="Opening admin tools…" />}>
     <Routes>
       <Route path="/" element={<RoleSelect />} />
       <Route path="/login" element={<Login />} />

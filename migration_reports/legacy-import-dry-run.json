@@ -1,0 +1,26 @@
+{
+  "generatedAt": "2026-07-14T01:16:39.539Z",
+  "mode": "dry-run",
+  "options": {
+    "importHistory": true,
+    "preserveNegativeStock": false,
+    "batchSize": 100
+  },
+  "counts": {
+    "categories": 19,
+    "products": 2845,
+    "users": 6,
+    "sales": 102907,
+    "saleItems": 225984
+  },
+  "transformations": {
+    "generatedBarcodes": 759,
+    "alternateBarcodes": 31,
+    "clampedNegativeStock": 2503,
+    "clampedNegativePrices": 1,
+    "uncategorizedProducts": 1950,
+    "inactiveResetUsers": 6,
+    "creditPaymentsMappedToCash": 15
+  },
+  "warnings": []
+}

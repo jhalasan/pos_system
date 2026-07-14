@@ -3,6 +3,7 @@ import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
 import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
 import AdminLayout from './admin-page/components/AdminLayout'
+import BrandedLoader from './components/BrandedLoader'
 import { cashierApi } from './cashier-pos/services/api'
 import './admin-page/index.css'
 
@@ -83,7 +84,7 @@ export default function DesktopApp() {
   return (
     <DesktopErrorBoundary>
     <Router>
-      <Suspense fallback={<div className="app-loading">Loading...</div>}>
+      <Suspense fallback={<BrandedLoader message="Opening screen…" />}>
       <Routes>
         <Route path="/" element={<RoleSelection />} />
         <Route

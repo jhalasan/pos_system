@@ -10,8 +10,12 @@ export function normalizeBarcode(barcode) {
   if (!trimmed) return ''
 
   // Remove control characters and normalize whitespace.
-  const cleaned = trimmed
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+  const cleaned = [...trimmed]
+    .filter((character) => {
+      const code = character.charCodeAt(0)
+      return code > 31 && (code < 127 || code > 159)
+    })
+    .join('')
     .replace(/\s+/g, '')
   return cleaned
 }

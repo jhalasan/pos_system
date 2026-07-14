@@ -87,7 +87,7 @@ export default function Login() {
   return (
     <div className="auth-wrap">
       <div className="login-card">
-        <div className="brand-mark">N</div>
+        <img className="brand-logo-full" src="/branding/nexa-systems-logo-transparent.png" alt="NEXA Systems" />
         <h2>Admin Access</h2>
         <p className="tag">Enter your admin email and password to access the dashboard</p>
 
@@ -160,15 +160,13 @@ export default function Login() {
               Forgot Password?
             </button>
           </div>
-          <div className="text-center">
-            <button
-              type="button"
-              className="link-btn"
-              onClick={() => nav('/')}
-            >
-              Back to Role Selection
-            </button>
-          </div>
+          <button
+            type="button"
+            className="admin-login-back"
+            onClick={() => nav('/')}
+          >
+            Back to Role Selection
+          </button>
         </form>
       </div>
     </div>

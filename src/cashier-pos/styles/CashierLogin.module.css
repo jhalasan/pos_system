@@ -30,15 +30,10 @@
   margin-bottom: 16px;
 }
 
-.logo-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 80px;
-  height: 80px;
-  background-color: #f0f0f0;
-  border-radius: 50%;
-  color: #666;
+.brand-logo {
+  width: 220px;
+  height: 92px;
+  object-fit: contain;
 }
 
 /* Heading */
@@ -321,8 +316,8 @@
     font-size: 13px;
   }
 
-  .logo-icon {
-    width: 64px;
-    height: 64px;
+  .brand-logo {
+    width: 190px;
+    height: 80px;
   }
 }

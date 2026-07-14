@@ -30,6 +30,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
   const [showSyncCenter, setShowSyncCenter] = useState(false)
   const [selectedConflict, setSelectedConflict] = useState(null)
   const [fieldChoices, setFieldChoices] = useState({})
+  const [syncing, setSyncing] = useState(false)
 
   useEffect(() => {
     if (!showSyncCenter) return undefined
@@ -69,6 +70,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
   }
 
   async function handleSync() {
+    setSyncing(true)
     try {
       const result = await api.syncNow()
       setSyncQueue(await api.syncQueueDetails())
@@ -84,6 +86,8 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       }
     } catch (error) {
       flash(error.message || 'Unable to sync right now.')
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -117,7 +121,9 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
   return (
     <aside className={'sidebar' + (open ? ' active' : '') + (collapsed ? ' collapsed' : '')}>
       <div className="sidebar-brand">
-        <div className="mk">N</div>
+        <div className="mk">
+          <img src="/branding/nexa-systems-mark.jpg" alt="" aria-hidden="true" />
+        </div>
         <div>
           <div className="nm">NEXA POS</div>
           <div className="sb">Admin Control Panel</div>
@@ -165,8 +171,10 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
 
       {toast && <div className="toast"><IconCloud size={15} /> {toast}</div>}
       {showSyncCenter && (
-        <Modal className="sync-center-modal" title="Sync Conflict Center" onClose={() => { setShowSyncCenter(false); setSelectedConflict(null) }}>
+        <Modal className="sync-center-modal" title="Sync Center" onClose={() => { setShowSyncCenter(false); setSelectedConflict(null) }}>
+          <div className="sync-center-toolbar"><div><strong>Local changes awaiting cloud upload</strong><small>Sales and stock changes remain safe on this terminal while offline.</small></div><button className="btn btn-primary btn-sm" onClick={handleSync} disabled={syncing}>{syncing ? 'Retrying…' : 'Retry All'}</button></div>
           <div className="sync-center-summary">
+            <div><strong>{syncQueue.length}</strong><span>Total</span></div>
             <div><strong>{syncQueue.filter((op) => op.status === 'pending').length}</strong><span>Waiting</span></div>
             <div><strong>{syncQueue.filter((op) => op.status === 'failed').length}</strong><span>Failed</span></div>
             <div><strong>{syncQueue.filter((op) => op.status === 'conflict').length}</strong><span>Conflicts</span></div>
@@ -190,7 +198,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
             <div className="sync-queue-list">
               {syncQueue.map((op) => (
                 <div className={`sync-queue-card ${op.status}`} key={op.id}>
-                  <div><strong>{op.payload?.name || op.transactionNo || op.payload?.barcode || op.type}</strong><small>{op.source || 'Admin'} · {op.type} · {op.status}</small>{op.lastError && <p>{op.lastError}</p>}</div>
+                  <div><strong>{op.payload?.name || op.transactionNo || op.payload?.barcode || op.type}</strong><small>{op.source || 'Admin'} · {String(op.type || 'change').replaceAll('_', ' ')} · {op.status}{op.createdAt ? ` · ${new Date(op.createdAt).toLocaleString('en-PH')}` : ''}</small>{op.lastError && <p>{op.lastError}</p>}</div>
                   {op.status === 'conflict' && <div className="sync-conflict-actions"><button className="btn btn-outline btn-sm" onClick={() => resolveConflict(op, 'cloud')}>Use Cloud</button><button className="btn btn-outline btn-sm" onClick={() => reviewFields(op)}>Review Fields</button><button className="btn btn-primary btn-sm" onClick={() => resolveConflict(op, 'local')}>Use Local</button></div>}
                 </div>
               ))}

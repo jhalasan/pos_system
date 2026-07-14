@@ -126,7 +126,8 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
   const visiblePayments = filteredPayments.slice(0, visibleCount)
 
   useEffect(() => {
-    setVisibleCount(PAGE_SIZE)
+    const frame = window.requestAnimationFrame(() => setVisibleCount(PAGE_SIZE))
+    return () => window.cancelAnimationFrame(frame)
   }, [cashierName, customFrom, customTo, dateRange, query, status, type])
 
   async function handleExport() {

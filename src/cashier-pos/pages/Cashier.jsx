@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRepeat, ClockHistory, Dash, Gear, Plus, Printer, Receipt, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/common/Input';
@@ -7,6 +7,7 @@ import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
 import SyncStatusIndicator from '../../components/SyncStatusIndicator';
 import SupportContactModal from '../../components/SupportContactModal';
+import ConnectionStatusBar from '../../components/ConnectionStatusBar';
 import { cashierApi, money } from '../services/api';
 import { useApproval } from '../hooks/useApproval';
 import { normalizeBarcode } from '../utils/barcodeUtils';
@@ -473,6 +474,7 @@ const Cashier = ({ onLogout, user }) => {
   const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
+  const [endOfDaySync, setEndOfDaySync] = useState({ pending: 0, failed: 0, sales: 0, loading: false });
   const [logoutTab, setLogoutTab] = useState('session');
   const [shiftOpeningAmount, setShiftOpeningAmount] = useState('');
   const [shiftClosingAmount, setShiftClosingAmount] = useState('');
@@ -487,6 +489,16 @@ const Cashier = ({ onLogout, user }) => {
   const adminLogoutApproval = useApproval('barcode');
   const [adminLogoutApproved, setAdminLogoutApproved] = useState(false);
   const [adminLogoutBusy, setAdminLogoutBusy] = useState(false);
+
+  useEffect(() => {
+    if (!showShiftClose || logoutTab !== 'drawer') return;
+    let active = true;
+    setEndOfDaySync((current) => ({ ...current, loading: true }));
+    cashierApi.syncQueueSummary?.()
+      .then((summary) => active && setEndOfDaySync({ ...summary, loading: false }))
+      .catch(() => active && setEndOfDaySync((current) => ({ ...current, loading: false })));
+    return () => { active = false; };
+  }, [showShiftClose, logoutTab]);
   const [deviceId] = useState(cashierDeviceId);
   const [idleLocked, setIdleLocked] = useState(false);
   const [idleUnlockMode, setIdleUnlockMode] = useState('barcode');
@@ -581,7 +593,7 @@ const Cashier = ({ onLogout, user }) => {
       currentSales: transactionSales,
       cashierId: cashierFilter,
     });
-  }, [historyRecords, retainedCompletedSales, transactions, shiftSession, user?.id]);
+  }, [retainedCompletedSales, transactions, shiftSession, user?.id]);
 
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
@@ -682,7 +694,7 @@ const Cashier = ({ onLogout, user }) => {
     return String(candidate.email || '').toLowerCase() === String(user?.email || '').toLowerCase();
   };
 
-  const lockForIdle = () => {
+  const lockForIdle = useCallback(() => {
     setIdleLocked(true);
     setIdleUnlockBarcode('');
     setIdleUnlockPassword('');
@@ -690,9 +702,9 @@ const Cashier = ({ onLogout, user }) => {
     cashierApi.logActivity({
       cashierId: user?.id,
       action: 'Session Locked',
-      detail: withDevice(`Cashier session locked after inactivity for ${user?.name || user?.email || 'Cashier'}.`),
+      detail: `Cashier session locked after inactivity for ${user?.name || user?.email || 'Cashier'}. Device ${deviceId}.`,
     }).catch(() => {});
-  };
+  }, [deviceId, user?.email, user?.id, user?.name]);
 
   const unlockIdleSession = async () => {
     setIdleUnlockError('');
@@ -1514,7 +1526,7 @@ const Cashier = ({ onLogout, user }) => {
       window.clearTimeout(timerId);
       events.forEach((eventName) => window.removeEventListener(eventName, resetTimer));
     };
-  }, [idleLocked, user?.id]);
+  }, [idleLocked, lockForIdle, user]);
 
   const handleSplitPaymentChange = (method, value) => {
     updateActiveTransaction((txn) => ({
@@ -2891,6 +2903,8 @@ const Cashier = ({ onLogout, user }) => {
         </div>
       </div>
 
+      <ConnectionStatusBar scope="cashier" />
+
       <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
         <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>
           <span className={styles['sidebar-symbol']}>☰</span><strong>Menu</strong>
@@ -3809,6 +3823,15 @@ const Cashier = ({ onLogout, user }) => {
         <div className={styles['end-of-day-heading']}>
           <h3>End-of-Day Reconciliation</h3>
           <p>Count the shared drawer, print the Z-read, and close the business day.</p>
+        </div>
+        <div className={styles['end-of-day-readiness']}>
+          <div><strong>Closing readiness</strong><small>Pending uploads do not prevent an offline close; they remain saved on this terminal.</small></div>
+          <div className={styles['end-of-day-checks']}>
+            <span className={shiftSession ? styles.ready : styles.warning}><b>{shiftSession ? '✓' : '!'}</b> Drawer session open</span>
+            <span className={(shiftCloseCountMode === 'denomination' || shiftClosingAmount !== '') ? styles.ready : styles.warning}><b>{(shiftCloseCountMode === 'denomination' || shiftClosingAmount !== '') ? '✓' : '!'}</b> Cash count {shiftClosingAmount !== '' || shiftCloseCountMode === 'denomination' ? 'ready' : 'required'}</span>
+            <span className={shiftCloseStep === 'printed' ? styles.ready : styles.warning}><b>{shiftCloseStep === 'printed' ? '✓' : '○'}</b> Z-read {shiftCloseStep === 'printed' ? 'printed' : 'not printed'}</span>
+            <span className={endOfDaySync.failed === 0 ? styles.ready : styles.warning}><b>{endOfDaySync.failed === 0 ? '✓' : '!'}</b> {endOfDaySync.loading ? 'Checking sync queue…' : `${endOfDaySync.pending} pending · ${endOfDaySync.failed} failed`}</span>
+          </div>
         </div>
         <div style={{ marginBottom: '18px' }}>
           <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>End-of-Day Summary</div>

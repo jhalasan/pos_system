@@ -5,7 +5,7 @@ import { getAllProducts, replaceProductsFromCloud } from './productRepository.js
 export async function copyAdminProductCatalogToCashier() {
   await Promise.all([initializeAdminDb(), initializeCashierDb()])
   const adminProducts = await adminDb.products
-    .filter((product) => !product.deleted)
+    .filter((product) => !product.deleted && (product.lifecycleStatus || 'active') === 'active')
     .toArray()
 
   if (adminProducts.length === 0) return []

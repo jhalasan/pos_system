@@ -48,6 +48,7 @@ export function normalizeProduct(record, pb) {
       ? record.selling_units ?? record.sellingUnits
       : (typeof (record.selling_units ?? record.sellingUnits) === 'string' ? JSON.parse((record.selling_units ?? record.sellingUnits) || '[]') : []),
     status: deriveStatus(record),
+    lifecycleStatus: record.lifecycle_status || record.lifecycleStatus || 'active',
     pendingSync: Boolean(record.pendingSync),
     deleted: Boolean(record.deleted),
     updated: record.updated || new Date().toISOString(),

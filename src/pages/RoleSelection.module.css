@@ -27,16 +27,22 @@
   text-align: center;
 }
 
-.logo {
-  width: 80px;
-  height: 80px;
-  background-color: #ffffff;
-  border-radius: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #16a34a;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+.brand-logo-frame {
+  position: relative;
+  width: min(380px, 80vw);
+  height: 112px;
+  overflow: hidden;
+}
+
+.brand-logo {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(600px, 126vw);
+  max-width: none;
+  aspect-ratio: 1;
+  object-fit: cover;
+  transform: translate(-50%, -50%);
 }
 
 .title {
@@ -158,6 +164,7 @@
   text-align: center;
   margin: 0;
 }
+.role-card:focus-visible { outline: 3px solid rgba(79, 70, 229, .28); outline-offset: 4px; }
 
 .support-link {
   border: 0;
@@ -196,4 +203,37 @@
   .card-title {
     font-size: 20px;
   }
+}
+
+/* NEXA workspace treatment */
+.role-selection-container { position: relative; overflow: hidden; }
+.role-selection-container::before,
+.role-selection-container::after { content: ''; position: absolute; width: 420px; height: 420px; border-radius: 50%; pointer-events: none; }
+.role-selection-container::before { top: -260px; right: -140px; background: rgba(37, 99, 235, .08); }
+.role-selection-container::after { bottom: -300px; left: -140px; background: rgba(217, 70, 239, .06); }
+.role-selection-content { position: relative; z-index: 1; }
+.brand-logo-frame { width: min(280px, 68vw); height: 104px; }
+.brand-logo { width: min(450px, 108vw); }
+.role-card { align-items: stretch; text-align: left; position: relative; overflow: hidden; cursor: pointer; }
+.role-card::before { content: ''; position: absolute; inset: 0 0 auto; height: 4px; }
+.admin-card::before { background: linear-gradient(90deg, #2563eb, #8b5cf6); }
+.cashier-card::before { background: linear-gradient(90deg, #059669, #22c55e); }
+.card-head { display: flex; align-items: flex-start; justify-content: space-between; }
+.workspace-label { color: #64748b; font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.workspace-label b { margin-left: 7px; padding: 3px 6px; border-radius: 999px; background: #eef2ff; color: #4f46e5; font-size: 9px; letter-spacing: .04em; }
+.card-icon { width: 58px; height: 58px; }
+.admin-card .card-icon { color: #2563eb; background: #eff6ff; }
+.cashier-card .card-icon { color: #059669; background: #ecfdf5; }
+.card-description { align-items: flex-start; }
+.feature-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.feature-list span { padding: 5px 9px; border: 1px solid #e2e8f0; border-radius: 999px; color: #64748b; background: #f8fafc; font-size: 11px; font-weight: 600; }
+.card-button { display: flex; align-items: center; justify-content: center; gap: 9px; }
+.shortcut-key { min-width: 21px; height: 21px; padding: 0 5px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.45); border-radius: 5px; background: rgba(255,255,255,.13); font-size: 11px; }
+.footer { display: flex; align-items: center; gap: 22px; }
+.offline-ready { display: inline-flex; align-items: center; gap: 7px; color: #64748b; font-size: 12px; font-weight: 600; }
+.offline-ready i { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .13); }
+.terminal-meta { color: #94a3b8; font-size: 11px; font-weight: 600; }
+
+@media (max-width: 768px) {
+  .footer { flex-direction: column; gap: 12px; }
 }

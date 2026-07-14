@@ -1,5 +1,5 @@
 export function amountAfter(label, detail = '') {
-  const pattern = new RegExp(`${label}\s+PHP\s*([+-]?[\d,.]+)`, 'i')
+  const pattern = new RegExp(`${label}\\s+PHP\\s*([+-]?[\\d,.]+)`, 'i')
   const match = String(detail).match(pattern)
   return match ? Number(match[1].replace(/,/g, '')) || 0 : 0
 }

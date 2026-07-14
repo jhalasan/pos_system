@@ -982,6 +982,17 @@ export const desktopCashierApi = {
     return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
   },
 
+  async syncQueueSummary() {
+    await runtime()
+    const [pendingSales, failedSales, pendingOps, failedOps] = await Promise.all([
+      cashierDb.pendingSales.where('status').equals('pending').count(),
+      cashierDb.pendingSales.where('status').equals('failed').count(),
+      cashierDb.pendingOps.where('status').equals('pending').count(),
+      cashierDb.pendingOps.where('status').equals('failed').count(),
+    ])
+    return { pending: pendingSales + pendingOps, failed: failedSales + failedOps, sales: pendingSales + failedSales }
+  },
+
   async reauthenticate({ cashierId, email, password }) {
     const activeRuntime = await runtime()
     const normalizedEmail = String(email || '').trim().toLowerCase()

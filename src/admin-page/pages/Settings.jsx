@@ -39,10 +39,34 @@ export default function Settings() {
   const [activeTab, setActiveTab] = useState('general')
   const { data: readiness, setData: setReadiness, loading: readinessLoading } = useApi(api.offlineReadiness, emptyReadiness)
   const [downloadingOfflineData, setDownloadingOfflineData] = useState(false)
+  const [offlineTestRunning, setOfflineTestRunning] = useState(false)
+  const [offlineTest, setOfflineTest] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('nexa_offline_self_test') || 'null') } catch { return null }
+  })
+  const [importStatus, setImportStatus] = useState(null)
+  const [backups, setBackups] = useState([])
+  const [dataAdminLoading, setDataAdminLoading] = useState(false)
+  const [importStatusError, setImportStatusError] = useState('')
+  const [backupError, setBackupError] = useState('')
 
   function flash(message) {
     setToast(message)
     setTimeout(() => setToast(''), 2400)
+  }
+
+  async function runOfflineSelfTest() {
+    setOfflineTestRunning(true)
+    try {
+      const result = api.offlineSelfTest ? await api.offlineSelfTest() : { passed: false, testedAt: new Date().toISOString(), checks: [] }
+      setOfflineTest(result)
+      localStorage.setItem('nexa_offline_self_test', JSON.stringify(result))
+      setReadiness(await api.offlineReadiness())
+      flash(result.passed ? 'Offline self-test passed.' : 'Offline self-test found items that need attention.')
+    } catch (error) {
+      flash(error.message || 'Offline self-test could not run.')
+    } finally {
+      setOfflineTestRunning(false)
+    }
   }
 
   async function toggleQuickLogin(cashier) {
@@ -167,6 +191,50 @@ export default function Settings() {
     }
   }
 
+  async function loadDataAdministration() {
+    setActiveTab('data')
+    setDataAdminLoading(true)
+    const [statusResult, backupResult] = await Promise.allSettled([api.importStatus(), api.backups()])
+    if (statusResult.status === 'fulfilled') {
+      setImportStatus(statusResult.value)
+      setImportStatusError('')
+    } else {
+      setImportStatus(null)
+      setImportStatusError('Migration status requires the local NEXA API service on port 3001.')
+    }
+    if (backupResult.status === 'fulfilled') {
+      setBackups(backupResult.value)
+      setBackupError('')
+    } else {
+      setBackups([])
+      setBackupError('Backup and restore require the local NEXA API service on port 3001.')
+    }
+    setDataAdminLoading(false)
+  }
+
+  async function createBackup() {
+    setDataAdminLoading(true)
+    try {
+      const created = await api.createBackup()
+      setBackups(await api.backups())
+      setBackupError('')
+      flash(`Backup ${created.name} created.`)
+    } catch {
+      setBackupError('Unable to reach the backup service. Start it with: npm run api')
+      flash('Backup service unavailable. Start the local NEXA API service.')
+    }
+    finally { setDataAdminLoading(false) }
+  }
+
+  async function restoreBackup(name) {
+    const confirmation = prompt(`Restoring replaces the current PocketBase data.\nType exactly: RESTORE ${name}`)
+    if (confirmation !== `RESTORE ${name}`) return flash('Restore cancelled; confirmation did not match.')
+    try {
+      await api.restoreBackup(name, confirmation)
+      flash(`Restore started for ${name}. Restart the applications after PocketBase returns.`)
+    } catch (err) { flash(err.message || 'Unable to restore backup.') }
+  }
+
   if (loading || adminsLoading) {
     return (
       <>
@@ -187,6 +255,7 @@ export default function Settings() {
         <button className={activeTab === 'general' ? 'active' : ''} onClick={() => setActiveTab('general')}>General</button>
         <button className={activeTab === 'developer' ? 'active' : ''} onClick={() => setActiveTab('developer')}>Developer Mode</button>
         <button className={activeTab === 'offline' ? 'active' : ''} onClick={() => setActiveTab('offline')}>Offline Readiness</button>
+        <button className={activeTab === 'data' ? 'active' : ''} onClick={loadDataAdministration}>Data Administration</button>
       </div>
 
       {activeTab === 'general' ? <div className="grid-gap">
@@ -401,7 +470,35 @@ export default function Settings() {
             </div>
           )}
         </div>
-      </div> : activeTab === 'developer' ? (
+      </div> : activeTab === 'data' ? (
+        <div className="grid-gap">
+          <div className="card">
+            <div className="panel-head"><div><h3>Legacy Import Monitor</h3><span className="sub">Dry-run totals, completion state, progress, and recent errors.</span></div><button className="btn btn-outline" onClick={loadDataAdministration} disabled={dataAdminLoading}>Refresh</button></div>
+            <div className="panel-body">
+              {importStatusError ? <div className="alert warning"><strong>Import monitor unavailable</strong><span>{importStatusError}</span></div> : dataAdminLoading && !importStatus ? <p>Loading…</p> : (
+                <>
+                  <div className="offline-terminal-summary">
+                    <div><span>Mode</span><strong>{importStatus?.result?.mode || importStatus?.dryRun?.mode || 'Not started'}</strong></div>
+                    <div><span>Products planned</span><strong>{importStatus?.dryRun?.counts?.products || 0}</strong></div>
+                    <div><span>Sales planned</span><strong>{importStatus?.dryRun?.counts?.sales || 0}</strong></div>
+                    <div><span>Completed</span><strong>{importStatus?.result?.completedAt ? new Date(importStatus.result.completedAt).toLocaleString('en-PH') : 'Incomplete / stopped'}</strong></div>
+                  </div>
+                  {importStatus?.progress?.length > 0 && <pre className="data-admin-log">{importStatus.progress.join('\n')}</pre>}
+                  {importStatus?.errors?.length > 0 && <pre className="data-admin-log error">{importStatus.errors.join('\n')}</pre>}
+                </>
+              )}
+            </div>
+          </div>
+          <div className="card">
+            <div className="panel-head"><div><h3>Backups and Restore</h3><span className="sub">Create a PocketBase backup before imports, cleanup, or schema changes.</span></div><button className="btn btn-primary" onClick={createBackup} disabled={dataAdminLoading || Boolean(backupError)}>Create Backup</button></div>
+            <div className="panel-body">
+              {backupError ? <div className="alert warning"><strong>Backup service unavailable</strong><span>{backupError}</span></div> : backups.length === 0 ? <div className="empty"><h4>No backups found</h4></div> : backups.map((backup) => (
+                <div className="backup-row" key={backup.key || backup.name}><div><strong>{backup.key || backup.name}</strong><small>{backup.modified ? new Date(backup.modified).toLocaleString('en-PH') : ''} · {Number(backup.size || 0).toLocaleString()} bytes</small></div><button className="btn btn-outline" onClick={() => restoreBackup(backup.key || backup.name)}>Restore</button></div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : activeTab === 'developer' ? (
         <div className="grid-gap">
           <div className={`card developer-mode-card${developerModeSettings.enabled ? ' enabled' : ''}`}>
             <div className="panel-head">
@@ -527,6 +624,21 @@ export default function Settings() {
             </span>
           </div>
           <div className="panel-body">
+            {(() => {
+              const steps = [
+                ['Terminal identified', Boolean(readiness.terminalId), readiness.terminalName || 'This terminal'],
+                ['Catalog downloaded', readiness.products > 0 && readiness.cashierProducts > 0, `${readiness.cashierProducts || 0} cashier products`],
+                ['Offline staff access prepared', readiness.users > 0 && readiness.offlineCashierLogins > 0, `${readiness.offlineCashierLogins || 0} cashier logins`],
+                ['Manager approval prepared', readiness.managerApprovals > 0, `${readiness.managerApprovals || 0} approval methods`],
+                ['Offline self-test passed', Boolean(offlineTest?.passed), offlineTest?.testedAt ? new Date(offlineTest.testedAt).toLocaleString('en-PH') : 'Not tested'],
+              ]
+              const complete = steps.filter(([, passed]) => passed).length
+              return <div className="offline-setup-guide">
+                <div className="offline-setup-head"><div><strong>Terminal Setup</strong><small>{complete} of {steps.length} steps complete</small></div><span>{Math.round((complete / steps.length) * 100)}%</span></div>
+                <div className="offline-setup-progress"><i style={{ width: `${(complete / steps.length) * 100}%` }} /></div>
+                <div className="offline-setup-steps">{steps.map(([label, passed, detail]) => <div className={passed ? 'complete' : ''} key={label}><b>{passed ? '✓' : '○'}</b><span><strong>{label}</strong><small>{detail}</small></span></div>)}</div>
+              </div>
+            })()}
             <div className="offline-terminal-summary">
               <div><span>Terminal</span><strong>{readiness.terminalName || 'This terminal'}</strong><small>{readiness.terminalId || ''}</small></div>
               <div><span>Last successful sync</span><strong>{readiness.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</strong></div>
@@ -557,8 +669,12 @@ export default function Settings() {
               <button className="btn btn-primary" onClick={downloadOfflineData} disabled={downloadingOfflineData}>
                 <IconDownload size={16} /> {downloadingOfflineData ? 'Downloading…' : 'Download Latest Data for Offline Use'}
               </button>
-              <button className="btn btn-outline" onClick={async () => setReadiness(await api.offlineReadiness())}>Test Offline Readiness</button>
+              <button className="btn btn-outline" onClick={runOfflineSelfTest} disabled={offlineTestRunning}>{offlineTestRunning ? 'Testing Local System…' : 'Run Offline Self-Test'}</button>
             </div>
+            {offlineTest && <div className={`offline-test-results ${offlineTest.passed ? 'passed' : 'failed'}`}>
+              <div><strong>{offlineTest.passed ? 'Offline self-test passed' : 'Offline setup needs attention'}</strong><small>Tested {new Date(offlineTest.testedAt).toLocaleString('en-PH')}</small></div>
+              <div className="offline-test-checks">{offlineTest.checks?.map((check) => <div key={check.key}><b>{check.passed ? '✓' : '!'}</b><span><strong>{check.label}</strong><small>{check.detail}</small></span></div>)}</div>
+            </div>}
             {Array.isArray(readiness.failedDetails) && readiness.failedDetails.length > 0 && (
               <div className="offline-failure-list">
                 <h4>Failed Operations</h4>

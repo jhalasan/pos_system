@@ -33,12 +33,15 @@ export function normalizeProduct(record, pb) {
     })).filter((unit) => unit.barcode || unit.unit || unit.conversion || unit.price),
     image: image || '',
     imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),
+    lifecycleStatus: record.lifecycle_status || record.lifecycleStatus || 'active',
     updated: record.updated || new Date().toISOString(),
   }
 }
 
 export async function replaceProductsFromCloud(records, pb) {
-  const products = records.map((record) => normalizeProduct(record, pb))
+  const products = records
+    .map((record) => normalizeProduct(record, pb))
+    .filter((product) => product.lifecycleStatus === 'active')
 
   await cashierDb.transaction('rw', cashierDb.products, cashierDb.pendingSales, async () => {
     const pendingSales = await cashierDb.pendingSales.toArray()
@@ -65,7 +68,7 @@ export async function replaceProductsFromCloud(records, pb) {
 export function getAllProducts() {
   return cashierDb.products
     .toArray()
-    .then((products) => products.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))))
+    .then((products) => products.filter((product) => (product.lifecycleStatus || 'active') === 'active').sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))))
 }
 
 export async function getProductByBarcode(barcode) {
@@ -73,12 +76,12 @@ export async function getProductByBarcode(barcode) {
   if (!normalizedBarcode) return undefined
 
   const baseProduct = await cashierDb.products
-    .filter((product) => barcodesMatch(product.barcode, normalizedBarcode))
+    .filter((product) => (product.lifecycleStatus || 'active') === 'active' && barcodesMatch(product.barcode, normalizedBarcode))
     .first()
   if (baseProduct) return baseProduct
 
   return cashierDb.products
-    .filter((product) => Array.isArray(product.sellingUnits)
+    .filter((product) => (product.lifecycleStatus || 'active') === 'active' && Array.isArray(product.sellingUnits)
       ? product.sellingUnits.some((unit) => barcodesMatch(unit.barcode, normalizedBarcode))
       : false)
     .first()
@@ -90,6 +93,7 @@ export function searchProducts(query, limit = 50) {
 
   return cashierDb.products
     .filter((product) => {
+      if ((product.lifecycleStatus || 'active') !== 'active') return false
       const productBarcode = normalizeBarcode(product.barcode || '').toLowerCase()
       return product.name.toLocaleLowerCase().includes(normalizedQuery)
       || productBarcode.includes(normalizedQuery)

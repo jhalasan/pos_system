@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import ProductModal from '../components/ProductModal'
 import Modal from '../components/Modal'
-import { IconPlus, IconSearch, IconEdit, IconTrash, IconImage, IconDownload, IconPrint } from '../components/Icons'
+import { IconPlus, IconSearch, IconEdit, IconTrash, IconArchive, IconImage, IconDownload, IconPrint } from '../components/Icons'
 import { api, defaultCategories, statusLabel, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
@@ -133,10 +133,18 @@ function formatProductPrice(product) {
 }
 
 export default function ProductManagement() {
+  const pageSize = 20
   const { data: list, setData: setList, loading, error } = useApi(api.products, [])
   const { data: categoryRecords, setData: setCategoryRecords } = useApi(api.categories, [])
   const [query, setQuery] = useState('')
   const [cat, setCat] = useState('All')
+  const [stockFilter, setStockFilter] = useState('all')
+  const [lifecycleFilter, setLifecycleFilter] = useState('active')
+  const [sortBy, setSortBy] = useState('name-asc')
+  const [visibleCount, setVisibleCount] = useState(pageSize)
+  const [selectedProducts, setSelectedProducts] = useState(() => new Set())
+  const [bulkCategory, setBulkCategory] = useState('')
+  const [bulkSaving, setBulkSaving] = useState(false)
   const [modal, setModal] = useState(null)
   const [categoryModalOpen, setCategoryModalOpen] = useState(false)
   const [categoryName, setCategoryName] = useState('')
@@ -166,7 +174,7 @@ export default function ProductManagement() {
   }, [categoryRecords, list])
 
   const filtered = useMemo(() => {
-    return list.filter((p) => {
+    const matches = list.filter((p) => {
       const q = query.trim().toLowerCase()
       const barcodes = getProductBarcodes(p)
       const matchQ = !q || p.name.toLowerCase().includes(q) ||
@@ -174,9 +182,35 @@ export default function ProductManagement() {
         barcodes.some((barcode) => barcode.toLowerCase().includes(q)) ||
         normalizeSellingUnits(p).some((unit) => String(unit.unit || '').toLowerCase().includes(q))
       const matchC = cat === 'All' || p.category === cat
-      return matchQ && matchC
+      const quantity = Number(p.qty) || 0
+      const status = quantity <= 0 ? 'out-of-stock' : (p.status || 'in-stock')
+      const matchStock = stockFilter === 'all' || status === stockFilter
+      const lifecycle = p.lifecycleStatus || 'active'
+      const matchLifecycle = lifecycleFilter === 'all' || lifecycle === lifecycleFilter
+      return matchQ && matchC && matchStock && matchLifecycle
     })
-  }, [list, query, cat])
+    return matches.sort((a, b) => {
+      if (sortBy === 'name-desc') return String(b.name || '').localeCompare(String(a.name || ''), undefined, { sensitivity: 'base' })
+      if (sortBy === 'stock-asc') return (Number(a.qty) || 0) - (Number(b.qty) || 0)
+      if (sortBy === 'stock-desc') return (Number(b.qty) || 0) - (Number(a.qty) || 0)
+      return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
+    })
+  }, [list, query, cat, stockFilter, lifecycleFilter, sortBy])
+
+  const visibleProducts = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount])
+  const integrity = useMemo(() => {
+    const barcodeOwners = new Map()
+    for (const product of list) {
+      for (const barcode of getProductBarcodes(product)) barcodeOwners.set(barcode, (barcodeOwners.get(barcode) || 0) + 1)
+    }
+    return [
+      { label: 'Missing/generated barcodes', value: list.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length, filter: '' },
+      { label: 'Uncategorized', value: list.filter((p) => !p.category || /uncategorized/i.test(p.category)).length, filter: 'Uncategorized (Legacy)' },
+      { label: 'Non-positive prices', value: list.filter((p) => Number(p.price) <= 0).length, filter: '' },
+      { label: 'Negative inventory', value: list.filter((p) => Number(p.qty) < 0).length, filter: '' },
+      { label: 'Duplicate barcodes', value: [...barcodeOwners.values()].filter((count) => count > 1).length, filter: '' },
+    ]
+  }, [list])
 
   function flash(msg) {
     setToast(msg)
@@ -210,6 +244,42 @@ export default function ProductManagement() {
         flash(err.message || 'Unable to delete product.')
       }
     }
+  }
+
+  async function handleLifecycle(p, lifecycleStatus) {
+    try {
+      const updated = await api.updateProduct(p.id, { ...p, lifecycleStatus })
+      setList(list.map((item) => (item.id === p.id ? updated : item)))
+      flash(`${p.name} marked ${lifecycleStatus}.`)
+    } catch (err) {
+      flash(err.message || 'Unable to update product lifecycle.')
+    }
+  }
+
+  function toggleSelected(id) {
+    setSelectedProducts((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  async function applyBulkUpdate(kind) {
+    const targets = list.filter((product) => selectedProducts.has(product.id))
+    if (!targets.length) return flash('Select at least one product.')
+    setBulkSaving(true)
+    try {
+      const updates = []
+      for (const product of targets) {
+        const patch = kind === 'category' ? { category: bulkCategory } : { lifecycleStatus: kind }
+        updates.push(await api.updateProduct(product.id, { ...product, ...patch }))
+      }
+      const byId = new Map(updates.map((product) => [product.id, product]))
+      setList(list.map((product) => byId.get(product.id) || product))
+      setSelectedProducts(new Set())
+      flash(`Updated ${updates.length} product(s).`)
+    } catch (err) { flash(err.message || 'Bulk update failed.') }
+    finally { setBulkSaving(false) }
   }
 
   async function handleCreateCategory() {
@@ -329,7 +399,31 @@ export default function ProductManagement() {
       </PageHeader>
       {exportStatus && <div className="export-status">{exportStatus}</div>}
 
+      <div className="integrity-strip" aria-label="Product data integrity summary">
+        {integrity.map((item) => (
+          <button
+            type="button"
+            className={`integrity-item ${item.value ? 'has-issues' : 'clean'}`}
+            key={item.label}
+            onClick={() => { if (item.filter) setCat(item.filter); setVisibleCount(pageSize) }}
+          >
+            <strong>{item.value.toLocaleString()}</strong>
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+
       <div className="card">
+        {selectedProducts.size > 0 && (
+          <div className="bulk-product-bar">
+            <strong>{selectedProducts.size} selected</strong>
+            <select className="select" value={bulkCategory} onChange={(event) => setBulkCategory(event.target.value)}><option value="">Choose category…</option>{categories.map((category) => <option key={category}>{category}</option>)}</select>
+            <button className="btn btn-outline" disabled={!bulkCategory || bulkSaving} onClick={() => applyBulkUpdate('category')}>Assign Category</button>
+            <button className="btn btn-outline" disabled={bulkSaving} onClick={() => applyBulkUpdate('inactive')}>Mark Inactive</button>
+            <button className="btn btn-outline" disabled={bulkSaving} onClick={() => applyBulkUpdate('archived')}>Archive</button>
+            <button className="btn btn-outline" disabled={bulkSaving} onClick={() => applyBulkUpdate('active')}>Activate</button>
+          </div>
+        )}
         <div className="toolbar">
           <div className="input-search">
             <IconSearch size={16} />
@@ -337,15 +431,34 @@ export default function ProductManagement() {
               className="input"
               placeholder="Search by name, ID, or barcode..."
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setVisibleCount(pageSize) }}
             />
           </div>
-          <select className="select" value={cat} onChange={(e) => setCat(e.target.value)}>
+          <select className="select" value={cat} onChange={(e) => { setCat(e.target.value); setVisibleCount(pageSize) }}>
             <option value="All">All Categories</option>
             {categories.map((c) => <option key={c}>{c}</option>)}
           </select>
+          <select className="select" value={stockFilter} onChange={(e) => { setStockFilter(e.target.value); setVisibleCount(pageSize) }} aria-label="Filter by stock status">
+            <option value="all">All Stock Statuses</option>
+            <option value="in-stock">In Stock</option>
+            <option value="low">Low Stock</option>
+            <option value="critical">Critical Stock</option>
+            <option value="out-of-stock">Out of Stock</option>
+          </select>
+          <select className="select" value={lifecycleFilter} onChange={(e) => { setLifecycleFilter(e.target.value); setVisibleCount(pageSize) }} aria-label="Filter by lifecycle status">
+            <option value="active">Active Products</option>
+            <option value="inactive">Inactive Products</option>
+            <option value="archived">Archived Products</option>
+            <option value="all">All Lifecycle Statuses</option>
+          </select>
+          <select className="select" value={sortBy} onChange={(e) => { setSortBy(e.target.value); setVisibleCount(pageSize) }} aria-label="Sort products">
+            <option value="name-asc">Name: A–Z</option>
+            <option value="name-desc">Name: Z–A</option>
+            <option value="stock-asc">Stock: Low to High</option>
+            <option value="stock-desc">Stock: High to Low</option>
+          </select>
           <span className="count">
-            Showing {filtered.length} of {list.length} products
+            Showing {Math.min(visibleCount, filtered.length)} of {filtered.length} matching products
           </span>
         </div>
 
@@ -353,6 +466,7 @@ export default function ProductManagement() {
           <table className="data">
             <thead>
               <tr>
+                <th aria-label="Select products"><input type="checkbox" checked={visibleProducts.length > 0 && visibleProducts.every((p) => selectedProducts.has(p.id))} onChange={(event) => setSelectedProducts((current) => { const next = new Set(current); for (const p of visibleProducts) { if (event.target.checked) next.add(p.id); else next.delete(p.id) } return next })} /></th>
                 <th>Product</th>
                 <th>Barcode</th>
                 <th>Category</th>
@@ -366,7 +480,7 @@ export default function ProductManagement() {
             <tbody>
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={9}>
                     <div className="empty">
                       <div className="em-icon"><IconSearch size={24} /></div>
                       <h4>No products found</h4>
@@ -375,7 +489,7 @@ export default function ProductManagement() {
                   </td>
                 </tr>
               )}
-              {filtered.map((p) => {
+              {visibleProducts.map((p) => {
                 const isOutOfStock = Number(p.qty) <= 0
                 const st = isOutOfStock
                   ? statusLabel['out-of-stock']
@@ -392,6 +506,7 @@ export default function ProductManagement() {
                 return (
                   <Fragment key={p.id}>
                     <tr className={`product-group-row ${stockToneClass} ${isOutOfStock ? 'product-row-out' : ''}`}>
+                      <td><input type="checkbox" checked={selectedProducts.has(p.id)} onChange={() => toggleSelected(p.id)} aria-label={`Select ${p.name}`} /></td>
                       <td>
                         <div className="prod-cell">
                           <div className="prod-thumb">
@@ -443,6 +558,13 @@ export default function ProductManagement() {
                             <IconEdit size={15} />
                           </button>
                           <button
+                            className="icon-btn"
+                            title={(p.lifecycleStatus || 'active') === 'archived' ? 'Restore product' : 'Archive product'}
+                            onClick={() => handleLifecycle(p, (p.lifecycleStatus || 'active') === 'archived' ? 'active' : 'archived')}
+                          >
+                            {(p.lifecycleStatus || 'active') === 'archived' ? '↺' : <IconArchive size={15} />}
+                          </button>
+                          <button
                             className="icon-btn del"
                             title="Delete"
                             onClick={() => handleDelete(p)}
@@ -454,6 +576,7 @@ export default function ProductManagement() {
                     </tr>
                     {isExpanded ? remainderBreakdown.map((unit, index) => (
                       <tr className="product-unit-row product-breakdown-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
+                        <td />
                         <td>
                           <div className="breakdown-row-label">
                             <span className="unit-branch">↳</span>
@@ -475,6 +598,13 @@ export default function ProductManagement() {
             </tbody>
           </table>
         </div>
+        {visibleCount < filtered.length && (
+          <div className="product-see-more-wrap">
+            <button className="btn btn-outline" type="button" onClick={() => setVisibleCount((count) => count + pageSize)}>
+              See more products ({filtered.length - visibleCount} remaining)
+            </button>
+          </div>
+        )}
       </div>
 
       {modal && (

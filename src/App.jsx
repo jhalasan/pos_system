@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import RoleSelection from './pages/RoleSelection';
 import { isAuthed } from './admin-page/auth';
 import AdminLayout from './admin-page/components/AdminLayout';
+import BrandedLoader from './components/BrandedLoader';
 import './global.css';
 import './admin-page/index.css';
 
@@ -47,7 +48,7 @@ function App() {
 
   return (
     <Router>
-      <Suspense fallback={<div className="app-loading">Loading...</div>}>
+      <Suspense fallback={<BrandedLoader message="Opening screen…" />}>
       <Routes>
         {/* Role Selection Route */}
         <Route path="/" element={<RoleSelection />} />

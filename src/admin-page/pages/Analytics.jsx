@@ -7,7 +7,7 @@ import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const emptyAnalytics = {
   productInOut: [],
@@ -58,13 +58,29 @@ const salesRanges = {
 }
 
 export default function Analytics() {
-  const { data, loading, error } = useApi(api.dashboard, emptyAnalytics)
+  const { data, setData, loading, error } = useApi(api.dashboard, emptyAnalytics)
   const { data: fsnProducts } = useApi(api.fsnInventory, [])
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
   const [analyticsTab, setAnalyticsTab] = useState('sales')
   const [salesRange, setSalesRange] = useState('dailySales')
   const [selectedFsn, setSelectedFsn] = useState('Fast-moving')
+  const [dataSource, setDataSource] = useState('live')
+  const [datePreset, setDatePreset] = useState('30')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
+
+  useEffect(() => {
+    const now = new Date()
+    const fromDate = new Date(now)
+    if (datePreset !== 'all' && datePreset !== 'custom') fromDate.setDate(fromDate.getDate() - (Number(datePreset) - 1))
+    const filters = {
+      source: dataSource,
+      from: datePreset === 'custom' ? customFrom : (datePreset === 'all' ? '' : fromDate.toISOString().slice(0, 10)),
+      to: datePreset === 'custom' ? customTo : (datePreset === 'all' ? '' : now.toISOString().slice(0, 10)),
+    }
+    void api.dashboard(filters).then(setData)
+  }, [customFrom, customTo, dataSource, datePreset, setData])
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
   const activeSalesRange = salesRanges[salesRange] || salesRanges.hourlySales
   const activeSalesData = data[salesRange] || []
@@ -128,6 +144,27 @@ export default function Analytics() {
       </PageHeader>
       {exportStatus && <div className="export-status">{exportStatus}</div>}
 
+      <div className="card analytics-filter-card">
+        <div className="toolbar">
+          <select className="select" value={dataSource} onChange={(event) => setDataSource(event.target.value)} aria-label="Analytics data source">
+            <option value="live">Live POS Data</option>
+            <option value="legacy">Legacy Import</option>
+            <option value="sample">Sample/Test Data</option>
+            <option value="all">All Data Sources</option>
+          </select>
+          <select className="select" value={datePreset} onChange={(event) => setDatePreset(event.target.value)} aria-label="Analytics date range">
+            <option value="1">Today</option>
+            <option value="7">Last 7 Days</option>
+            <option value="30">Last 30 Days</option>
+            <option value="all">All Time</option>
+            <option value="custom">Custom Range</option>
+          </select>
+          {datePreset === 'custom' && <input className="input" type="date" value={customFrom} onChange={(event) => setCustomFrom(event.target.value)} />}
+          {datePreset === 'custom' && <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />}
+          <span className="count">{data.analyticsMeta?.salesCount || 0} matching sale(s)</span>
+        </div>
+      </div>
+
       <div className="scan-mode-row analytics-tabs" role="tablist" aria-label="Analytics sections">
         <button
           type="button"
@@ -154,8 +191,8 @@ export default function Analytics() {
           <div className="grid-2-wide analytics-overview" style={{ marginBottom: 18 }}>
             <div className="card compact-chart-card">
               <div className="panel-head">
-                <h3>Product In / Out</h3>
-                <span className="sub">Stock movement</span>
+                <h3>Inventory Position / Sales</h3>
+                <span className="sub">Current stock and units sold in the selected range</span>
               </div>
               <div className="panel-body">
                 <DonutChart data={data.productInOut} centerLabel="Total Units" />

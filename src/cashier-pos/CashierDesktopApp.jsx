@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom'
-import Cashier from './pages/Cashier'
-import CashierLogin from './pages/CashierLogin'
-import { cashierApi } from './services/api'
+import BrandedLoader from '../components/BrandedLoader'
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth'
+const Cashier = lazy(() => import('./pages/Cashier'))
+const CashierLogin = lazy(() => import('./pages/CashierLogin'))
 
 export default function CashierDesktopApp() {
   const [cashierUser, setCashierUser] = useState(null)
@@ -13,7 +13,8 @@ export default function CashierDesktopApp() {
   useEffect(() => {
     let active = true
 
-    cashierApi.currentUser()
+    import('./services/api')
+      .then(({ cashierApi }) => cashierApi.currentUser())
       .then((user) => {
         if (!active) return
         setCashierUser(user)
@@ -36,14 +37,15 @@ export default function CashierDesktopApp() {
 
   const handleLogout = () => {
     sessionStorage.removeItem(CASHIER_AUTH_KEY)
-    cashierApi.logout()
+    void import('./services/api').then(({ cashierApi }) => cashierApi.logout())
     setCashierUser(null)
   }
 
-  if (!ready) return <div className="app-loading">Opening cashier database...</div>
+  if (!ready) return <BrandedLoader message="Opening cashier database…" />
 
   return (
     <HashRouter>
+      <Suspense fallback={<BrandedLoader message="Opening cashier screen…" />}>
       <Routes>
         <Route
           path="/login"
@@ -59,6 +61,7 @@ export default function CashierDesktopApp() {
         />
         <Route path="*" element={<Navigate to={cashierUser ? '/cashier' : '/login'} replace />} />
       </Routes>
+      </Suspense>
     </HashRouter>
   )
 }

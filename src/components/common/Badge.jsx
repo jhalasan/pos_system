@@ -1,5 +1,3 @@
-import React from 'react';
-
 const Badge = ({
   children,
   variant = 'neutral',
@@ -10,7 +8,7 @@ const Badge = ({
   const variantClass = variant ? `badge-${variant}` : 'badge-neutral';
   
   return (
-    <span className={`badge ${variantClass} ${className}`.trim()} {...props}>
+    <span className={`badge ${variantClass} badge-${size} ${className}`.trim()} {...props}>
       {children}
     </span>
   );

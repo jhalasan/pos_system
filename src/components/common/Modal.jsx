@@ -1,4 +1,4 @@
-import React from 'react';
+import { useEffect } from 'react';
 import { XLg } from 'react-bootstrap-icons';
 
 const Modal = ({
@@ -11,28 +11,26 @@ const Modal = ({
   closeButton = true,
   className = '',
 }) => {
-  if (!isOpen) return null;
-
   const handleBackdropClick = (e) => {
     if (e.target === e.currentTarget) {
       onClose();
     }
   };
 
-  const handleEscapeKey = (e) => {
-    if (e.key === 'Escape') {
-      onClose();
-    }
-  };
-
-  React.useEffect(() => {
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    const handleEscapeKey = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
     window.addEventListener('keydown', handleEscapeKey);
     return () => window.removeEventListener('keydown', handleEscapeKey);
-  }, []);
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
   
   return (
     <div className="modal-overlay" onClick={handleBackdropClick}>
-      <div className={`modal ${className}`.trim()}>
+      <div className={`modal modal-${size} ${className}`.trim()}>
         {(title || closeButton) && (
           <div className="modal-head">
             {title && <h3>{title}</h3>}

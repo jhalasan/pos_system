@@ -102,7 +102,10 @@ export const defaultCategories = [
 const webApi = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
   adminQuickLoginAccounts: () => request('/auth/quick-login-accounts'),
-  dashboard: () => request('/dashboard'),
+  dashboard: (filters = {}) => {
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value))
+    return request(`/dashboard${params.toString() ? `?${params}` : ''}`)
+  },
   categories: () => request('/categories'),
   createCategory: (name) => request('/categories', { method: 'POST', body: JSON.stringify({ name }) }),
   products: () => request('/products'),
@@ -166,6 +169,12 @@ const webApi = {
   resolveSyncConflict: async () => ({ resolved: false }),
   offlineReadiness: async () => ({ ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }),
   downloadOfflineData: async () => ({ ready: false }),
+  importStatus: () => request('/system/import-status'),
+  backups: () => request('/system/backups'),
+  createBackup: () => request('/system/backups', { method: 'POST', body: '{}' }),
+  restoreBackup: (name, confirmation) => request(`/system/backups/${encodeURIComponent(name)}/restore`, { method: 'POST', body: JSON.stringify({ confirmation }) }),
 }
 
-export const api = isDesktopApp ? desktopAdminApi : webApi
+export const api = isDesktopApp
+  ? { ...desktopAdminApi, importStatus: webApi.importStatus, backups: webApi.backups, createBackup: webApi.createBackup, restoreBackup: webApi.restoreBackup }
+  : webApi

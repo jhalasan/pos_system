@@ -33,6 +33,10 @@ let adminSession = null
 let runtimePromise = null
 let syncEngine = null
 let inventoryScanQueue = Promise.resolve()
+let reachabilityPromise = null
+let reachabilityCache = { value: false, expiresAt: 0 }
+let productRefreshPromise = null
+let lastProductRefreshAt = 0
 
 function newId(prefix = 'local') {
   if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID()}`
@@ -69,14 +73,29 @@ async function isCloudReachable() {
   await startAdminRuntime()
   if (globalThis.navigator && !globalThis.navigator.onLine) return false
   if (isPocketBaseRateLimited()) return false
+  if (Date.now() < reachabilityCache.expiresAt) return reachabilityCache.value
+  if (reachabilityPromise) return reachabilityPromise
 
-  try {
-    await pb.health.check({ requestKey: null })
-    return true
-  } catch (error) {
-    rememberPocketBaseRateLimit(error)
-    return false
-  }
+  reachabilityPromise = (async () => {
+    try {
+      await Promise.race([
+        pb.health.check({ requestKey: null }),
+        new Promise((_, reject) => globalThis.setTimeout(
+          () => reject(new Error('Cloud health check timed out.')),
+          1500,
+        )),
+      ])
+      reachabilityCache = { value: true, expiresAt: Date.now() + 15_000 }
+      return true
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
+      reachabilityCache = { value: false, expiresAt: Date.now() + 8_000 }
+      return false
+    } finally {
+      reachabilityPromise = null
+    }
+  })()
+  return reachabilityPromise
 }
 
 function firstRelation(value) {
@@ -119,6 +138,7 @@ function toProduct(record) {
       ? record.selling_units
       : (typeof record.selling_units === 'string' ? JSON.parse(record.selling_units || '[]') : []),
     status: deriveStatus(record),
+    lifecycleStatus: record.lifecycle_status || record.lifecycleStatus || 'active',
   }
 }
 
@@ -177,6 +197,7 @@ function toCloudActivityLog(record) {
     action: record.action_type || '',
     detail: record.description || '',
     time: record.timestamp || record.created || new Date().toISOString(),
+    source: 'cloud',
   }
 }
 
@@ -499,21 +520,53 @@ async function fetchReceiptRecords(filters = {}) {
     : []
   if (!(await isCloudReachable())) return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
 
-  const sales = await pb.collection('sales').getFullList({
-    sort: '-created_at,-created',
-    expand: 'cashier_id',
-    requestKey: null,
-  }).catch(() => [])
+  let sales
+  try {
+    sales = await pb.collection('sales').getFullList({
+      sort: '-created_at,-created',
+      expand: 'cashier_id',
+      requestKey: null,
+    })
+  } catch {
+    // A failed cloud request is not evidence that cached receipts were
+    // deleted. Keep the offline history until a successful read can reconcile it.
+    return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
+  }
   const cloudRecords = await Promise.all(sales.map(receiptRecordFromCloudSale))
-  if (cloudRecords.length && cashierDb.tables.some((table) => table.name === 'receiptCache')) {
-    await cashierDb.receiptCache.bulkPut(cloudRecords.map((record) => ({ ...record, id: record.id || record.saleId || record.transactionNo })))
+  const pendingSales = await cashierDb.pendingSales.toArray()
+  const pendingIds = new Set(pendingSales.map((sale) => String(sale.clientSaleId || '')))
+  const pendingTransactionNos = new Set(pendingSales.map((sale) => String(sale.transactionNo || '')).filter(Boolean))
+  const cloudIds = new Set(cloudRecords.flatMap((record) => [record.id, record.saleId].map((value) => String(value || '')).filter(Boolean)))
+  const cloudTransactionNos = new Set(cloudRecords.map((record) => String(record.transactionNo || '')).filter(Boolean))
+  const retainedLocalRecords = localRecords.filter((record) => (
+    pendingIds.has(String(record.saleId || record.id || ''))
+    || pendingTransactionNos.has(String(record.transactionNo || ''))
+    || cloudIds.has(String(record.saleId || record.id || ''))
+    || cloudTransactionNos.has(String(record.transactionNo || ''))
+  ))
+
+  if (cashierDb.tables.some((table) => table.name === 'receiptCache')) {
+    await cashierDb.receiptCache.clear()
+    if (cloudRecords.length) {
+      await cashierDb.receiptCache.bulkPut(cloudRecords.map((record) => ({ ...record, id: record.id || record.saleId || record.transactionNo })))
+    }
+  }
+  if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+    await cashierDb.completedSales
+      .filter((sale) => (
+        !pendingIds.has(String(sale.clientSaleId || ''))
+        && !pendingTransactionNos.has(String(sale.transactionNo || ''))
+        && !cloudIds.has(String(sale.clientSaleId || ''))
+        && !cloudTransactionNos.has(String(sale.transactionNo || ''))
+      ))
+      .delete()
   }
   const merged = new Map()
 
-  for (const record of [...cachedRecords, ...cloudRecords]) {
+  for (const record of cloudRecords) {
     merged.set(record.transactionNo || record.id, record)
   }
-  for (const record of localRecords) {
+  for (const record of retainedLocalRecords) {
     const key = record.transactionNo || record.id
     const existing = merged.get(key)
     if (!existing) {
@@ -561,6 +614,20 @@ async function fetchGcashPayments() {
     merged.set(`${payment.transactionNo}-${payment.paymentType}`, payment)
   }
   return [...merged.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+}
+
+function refreshProductsInBackground() {
+  if (productRefreshPromise) return productRefreshPromise
+  if (Date.now() - lastProductRefreshAt < 30_000) return Promise.resolve()
+  productRefreshPromise = isCloudReachable()
+    .then((online) => online ? fetchCloudProducts() : null)
+    .then((result) => {
+      if (result) lastProductRefreshAt = Date.now()
+      return result
+    })
+    .catch(rememberPocketBaseRateLimit)
+    .finally(() => { productRefreshPromise = null })
+  return productRefreshPromise
 }
 
 function cashierPayload(data) {
@@ -763,7 +830,33 @@ function trend(current, previous) {
   return Math.round(((current - previous) / previous) * 100)
 }
 
-function buildDashboardFromRecords(products, sales = [], saleItems = [], now = new Date()) {
+function analyticsSaleSource(sale = {}) {
+  const transactionNo = String(sale.transaction_no || sale.transactionNo || '')
+  if (['202606160001', '202606160002'].includes(transactionNo)) return 'sample'
+  if (/^sal\d{12}$/.test(String(sale.id || '')) || /^99\d{12}$/.test(transactionNo)) return 'legacy'
+  return 'live'
+}
+
+function filterAnalyticsRecords(sales = [], saleItems = [], options = {}) {
+  const source = options.source || 'all'
+  const start = options.from ? new Date(`${options.from}T00:00:00`) : null
+  const end = options.to ? new Date(`${options.to}T23:59:59.999`) : null
+  const filteredSales = sales.filter((sale) => {
+    const created = saleDate(sale)
+    return (source === 'all' || analyticsSaleSource(sale) === source)
+      && (!start || created >= start) && (!end || created <= end)
+  })
+  const ids = new Set(filteredSales.map((sale) => sale.id))
+  return {
+    sales: filteredSales,
+    saleItems: saleItems.filter((item) => ids.has(firstRelation(item.sale_id ?? item.saleId))),
+  }
+}
+
+function buildDashboardFromRecords(products, sales = [], saleItems = [], now = new Date(), options = {}) {
+  const filtered = filterAnalyticsRecords(sales, saleItems, options)
+  sales = filtered.sales
+  saleItems = filtered.saleItems
   const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
   const yesterdayStart = new Date(todayStart)
@@ -858,6 +951,26 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     .slice(0, 8)
     .map((product) => ({ name: product.name, left: product.qty }))
   const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+  const paymentTotals = completedSales.reduce((totals, sale) => {
+    const method = String(sale.payment_method || sale.paymentMethod || 'cash').toLowerCase()
+    const amount = Number(sale.total_amount ?? sale.totalAmount) || 0
+    if (method === 'gcash') totals.gcash += amount
+    else totals.cash += amount
+    return totals
+  }, { cash: 0, gcash: 0 })
+  const inventoryHealth = [
+    { label: 'In Stock', value: products.filter((p) => deriveStatus(p) === 'in-stock').length, color: '#16a34a' },
+    { label: 'Low', value: products.filter((p) => deriveStatus(p) === 'low').length, color: '#f59e0b' },
+    { label: 'Critical', value: products.filter((p) => deriveStatus(p) === 'critical').length, color: '#f97316' },
+    { label: 'Out of Stock', value: products.filter((p) => deriveStatus(p) === 'out-of-stock').length, color: '#ef4444' },
+  ]
+  const topCategories = new Map()
+  for (const product of productSales.values()) topCategories.set(product.category || 'Uncategorized', (topCategories.get(product.category || 'Uncategorized') || 0) + product.units)
+  const dataQuality = {
+    generatedBarcodes: products.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
+    uncategorized: products.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
+    nonPositivePrices: products.filter((p) => Number(p.price) <= 0).length,
+  }
 
   return {
     stats: {
@@ -868,11 +981,15 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
       totalRevenue,
       totalRevenueTrend: 0,
       criticalStock: criticalStockProducts.length,
+      transactionCount: completedSales.length,
+      averageSale: completedSales.length ? totalRevenue / completedSales.length : 0,
+      cashSales: paymentTotals.cash,
+      gcashSales: paymentTotals.gcash,
     },
     criticalAlerts,
     productInOut: [
-      { label: 'Stock In', value: currentStockUnits, color: '#16a34a' },
-      { label: 'Stock Out', value: monthlyStockOut, color: '#ef4444' },
+      { label: 'Current Stock', value: currentStockUnits, color: '#16a34a' },
+      { label: 'Units Sold', value: monthlyStockOut, color: '#ef4444' },
     ],
     topProducts: [...productSales.values()]
       .filter((product) => product.units > 0)
@@ -883,6 +1000,19 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     weeklySales: weeklyTrend,
     monthlySales: monthlyTrend,
     yearlySales: yearlyTrend,
+    analyticsMeta: { source: options.source || 'all', from: options.from || '', to: options.to || '', salesCount: completedSales.length },
+    inventoryHealth,
+    paymentBreakdown: [
+      { label: 'Cash', value: paymentTotals.cash, color: '#16a34a' },
+      { label: 'GCash', value: paymentTotals.gcash, color: '#2563eb' },
+    ],
+    recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({
+      id: sale.id, transactionNo: sale.transaction_no || sale.transactionNo || sale.id,
+      amount: Number(sale.total_amount ?? sale.totalAmount) || 0,
+      paymentMethod: sale.payment_method || sale.paymentMethod || 'cash', createdAt: saleDate(sale).toISOString(),
+    })),
+    topCategories: [...topCategories].map(([name, units]) => ({ name, units })).sort((a, b) => b.units - a.units).slice(0, 5),
+    dataQuality,
   }
 }
 
@@ -1035,6 +1165,7 @@ async function localProductFromForm(data, id = newId('product')) {
     image: '',
     tiers: data.tiers || [{ label: 'Retail', price: Number(data.price) || 0 }],
     sellingUnits: Array.isArray(data.sellingUnits) ? data.sellingUnits : [],
+    lifecycleStatus: ['inactive', 'archived'].includes(data.lifecycleStatus) ? data.lifecycleStatus : 'active',
     status: deriveStatus(data),
     pendingSync: true,
     deleted: false,
@@ -1127,6 +1258,11 @@ async function listDesktopProducts() {
   } catch (error) {
     if (!isIndexedDbKeyRangeError(error)) throw error
     console.warn('Unable to read the local product cache; falling back to PocketBase.', error)
+  }
+
+  if (localProducts.length > 0) {
+    void refreshProductsInBackground()
+    return localProducts
   }
 
   if (await isCloudReachable()) {
@@ -1246,6 +1382,11 @@ export const desktopAdminApi = {
 
   async categories() {
     await startAdminRuntime()
+    const localCategories = (await getLocalCategories()).map((name) => ({ id: name, name }))
+    if (localCategories.length > 0) {
+      void refreshProductsInBackground()
+      return localCategories
+    }
     if (await isCloudReachable()) {
       const records = await pb.collection('categories').getFullList({
         sort: 'name',
@@ -1259,7 +1400,7 @@ export const desktopAdminApi = {
       return records.map((record) => ({ id: record.id, name: record.name || '' }))
     }
 
-    return (await getLocalCategories()).map((name) => ({ id: name, name }))
+    return localCategories
   },
 
   async createCategory(name) {
@@ -1510,14 +1651,20 @@ export const desktopAdminApi = {
     return { barcode: `29${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 10)}` }
   },
 
-  async dashboard() {
+  async dashboard(options = {}) {
     await startAdminRuntime()
     const localCompletedSales = await localCashierCompletedSales()
+    if (!options.preferCloud) {
+      const products = await listDesktopProducts()
+      const localSales = localCompletedSales.map(localSaleAsCloudLike)
+      const localItems = localCompletedSales.flatMap(localSaleItems)
+      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options)
+    }
     if (!(await isCloudReachable())) {
       const products = await listDesktopProducts()
       const localSales = localCompletedSales.map(localSaleAsCloudLike)
       const localItems = localCompletedSales.flatMap(localSaleItems)
-      return buildDashboardFromRecords(products, localSales, localItems, new Date())
+      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options)
     }
 
     await refreshAdminLocalCache({ pb }).catch(() => {})
@@ -1551,7 +1698,7 @@ export const desktopAdminApi = {
       ...localSalesForDashboard.flatMap(localSaleItems),
     ]
 
-    return buildDashboardFromRecords(products, sales, saleItems, new Date())
+    return buildDashboardFromRecords(products, sales, saleItems, new Date(), options)
   },
   async syncNow() {
     await startAdminRuntime()
@@ -1715,6 +1862,33 @@ export const desktopAdminApi = {
       throw new Error(`Unable to download the product catalog for offline use: ${error?.message || 'Cloud request failed.'}`, { cause: error })
     }
     return this.offlineReadiness()
+  },
+  async offlineSelfTest() {
+    await startAdminRuntime()
+    await initializeCashierDb()
+    const readiness = await this.offlineReadiness()
+    const probeKey = `offlineSelfTest:${Date.now()}`
+    let localWritePassed
+    try {
+      await Promise.all([
+        adminDb.settings.put({ key: probeKey, value: 'ok' }),
+        cashierDb.settings.put({ key: probeKey, value: 'ok' }),
+      ])
+      const [adminProbe, cashierProbe] = await Promise.all([adminDb.settings.get(probeKey), cashierDb.settings.get(probeKey)])
+      localWritePassed = adminProbe?.value === 'ok' && cashierProbe?.value === 'ok'
+    } finally {
+      await Promise.all([adminDb.settings.delete(probeKey), cashierDb.settings.delete(probeKey)]).catch(() => {})
+    }
+    const checks = [
+      { key: 'storage', label: 'Local database read and write', passed: localWritePassed, detail: localWritePassed ? 'IndexedDB is writable.' : 'Local storage could not be written.' },
+      { key: 'adminCatalog', label: 'Admin product catalog', passed: readiness.products > 0, detail: `${readiness.products} products available locally.` },
+      { key: 'cashierCatalog', label: 'Cashier product catalog', passed: readiness.cashierProducts > 0, detail: `${readiness.cashierProducts} products available at checkout.` },
+      { key: 'staff', label: 'Staff accounts', passed: readiness.users > 0, detail: `${readiness.users} active accounts cached.` },
+      { key: 'cashierLogin', label: 'Offline cashier login', passed: readiness.offlineCashierLogins > 0, detail: `${readiness.offlineCashierLogins} offline login profiles cached.` },
+      { key: 'approval', label: 'Manager approval', passed: readiness.managerApprovals > 0, detail: `${readiness.managerApprovals} approval methods cached.` },
+      { key: 'queue', label: 'Sync queue integrity', passed: readiness.failed === 0, detail: readiness.failed ? `${readiness.failed} failed operations need attention.` : `${readiness.pending} changes can safely wait for sync.` },
+    ]
+    return { passed: checks.every((check) => check.passed), testedAt: new Date().toISOString(), checks }
   },
   async latestAuthorizationBarcode() {
     await startAdminRuntime()
@@ -1897,16 +2071,26 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const localLogs = await adminDb.activityLogs.orderBy('time').reverse().toArray()
     if (await isCloudReachable()) {
-      const records = await pb.collection('activity_logs').getFullList({
-        sort: '-timestamp,-created',
-        expand: 'user_id',
-        requestKey: null,
-      }).catch(() => [])
+      let records
+      try {
+        records = await pb.collection('activity_logs').getFullList({
+          sort: '-timestamp,-created',
+          expand: 'user_id',
+          requestKey: null,
+        })
+      } catch {
+        return localLogs
+      }
       const logs = records.map(toCloudActivityLog)
+      const cloudIds = new Set(logs.map((log) => String(log.cloudId || '')).filter(Boolean))
+      await adminDb.activityLogs
+        .filter((log) => Boolean(log.cloudId) && !cloudIds.has(String(log.cloudId)))
+        .delete()
       if (logs.length) await adminDb.activityLogs.bulkPut(logs)
 
       const merged = new Map()
-      for (const log of [...logs, ...localLogs]) {
+      const retainedLocalLogs = localLogs.filter((log) => !log.cloudId || cloudIds.has(String(log.cloudId)))
+      for (const log of [...logs, ...retainedLocalLogs]) {
         const key = log.cloudId || log.id
         if (!merged.has(key)) merged.set(key, log)
       }

@@ -91,6 +91,7 @@ export function toProduct(record) {
     sellingUnits: parseSellingUnits(record.selling_units ?? record.sellingUnits),
     status: deriveStatus(record),
     soldUnits: Number(record.soldUnits ?? record.sold_units ?? 0),
+    lifecycleStatus: record.lifecycle_status || 'active',
   }
 }
 
@@ -119,6 +120,7 @@ export function productPayload(input, categoryId) {
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: hasMultipleUnits,
     selling_units: parseSellingUnits(input.sellingUnits || input.selling_units),
+    lifecycle_status: ['inactive', 'archived'].includes(input.lifecycleStatus || input.lifecycle_status) ? (input.lifecycleStatus || input.lifecycle_status) : 'active',
   }
 }
 

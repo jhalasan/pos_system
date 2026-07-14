@@ -3,3 +3,4 @@ dist/
 .env
 .env.cashier
 src-tauri/target/
+migration_reports/legacy-import-result.json

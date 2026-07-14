@@ -281,3 +281,14 @@ Use the reports and transaction log pages to review:
 ## 9. Support
 
 For technical support or account issues, contact your system administrator or support team.
+# Data Quality and Administration
+
+- **Activity Logs** opens with **All Time** selected and shows the number of records today and in total.
+- **Analytics** can be filtered by date and by Live POS, Legacy Import, Sample/Test, or all sources.
+- **Product Management** shows data-quality warnings, supports bulk category and lifecycle updates, and keeps archived products available for historical records.
+- **Inventory > Physical Reconciliation** compares the system quantity with a physical count and records an approved variance adjustment.
+- **Settings > Data Administration** shows legacy-import reports and provides guarded PocketBase backup and restore controls. Always create a backup before importing, cleaning, or changing the schema. Restore requires typing the exact confirmation shown on screen.
+
+## Dashboard
+
+The dashboard is the operational starting point for administrators. Use its source and date filters to separate live POS activity from legacy or sample data. It shows transaction count, average sale, cash and GCash totals, inventory health, recent transactions, top products and categories, data-quality warnings, and synchronization health. Dashboard cards open the related administration page, while the quick actions provide direct access to products, inventory, analytics, transaction logs, settings, and cloud synchronization.
