@@ -1120,6 +1120,7 @@ const Cashier = ({ onLogout, user }) => {
         cashierId: closed.cashierId || user?.id || '',
         cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
         countedAt: closed.closedAt,
+        openedAt: closed.openedAt,
         openingAmount: shiftOpeningCash,
         cashSales: completedCashSales,
         cashIn: shiftCashIn,

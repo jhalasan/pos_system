@@ -1080,6 +1080,8 @@ export const desktopCashierApi = {
   async closeCashRegisterSession(session = {}) {
     return queueCashierOperation('closeCashRegisterSession', {
       sessionId: session.id,
+      cashier_id: String(session.cashierId || '').trim(),
+      opening_amount: numberPayload(session.openingAmount),
       closing_amount: numberPayload(session.closingAmount),
       expected_closing_amount: numberPayload(session.expectedClosingAmount),
       actual_closing_amount: numberPayload(session.closingAmount),
@@ -1087,6 +1089,7 @@ export const desktopCashierApi = {
       cash_in_total: numberPayload(session.cashIn),
       cash_out_total: numberPayload(session.cashOut),
       status: 'closed',
+      opened_at: session.openedAt || '',
       closed_at: session.closedAt || new Date().toISOString(),
       notes: String(session.closeNote || session.note || '').trim(),
       device_id: String(session.deviceId || '').trim(),

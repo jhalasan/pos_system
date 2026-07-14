@@ -435,6 +435,53 @@ export class CashierSyncEngine extends EventTarget {
     return recovered.id
   }
 
+  async recreateMissingCashSession(localId, payload = {}, requestKey = '') {
+    let history
+    try {
+      const parsed = JSON.parse(globalThis.localStorage?.getItem('nexa_cashier_cash_count_history') || '[]')
+      history = Array.isArray(parsed) ? parsed : []
+    } catch {
+      history = []
+    }
+
+    const deviceId = String(payload.device_id || '').trim()
+    const closedAt = payload.closed_at || new Date().toISOString()
+    const closedTime = Date.parse(closedAt)
+    const matchingHistory = history
+      .filter((entry) => !deviceId || String(entry.deviceId || '').trim() === deviceId)
+      .sort((a, b) => (
+        Math.abs(Date.parse(a.countedAt || '') - closedTime)
+        - Math.abs(Date.parse(b.countedAt || '') - closedTime)
+      ))[0]
+    const cashierId = await this.resolveCashierId(payload.cashier_id || matchingHistory?.cashierId).catch(() => '')
+    if (!cashierId) return ''
+
+    const fallbackOpenedAt = Number.isFinite(closedTime)
+      ? new Date(Math.max(0, closedTime - 1000)).toISOString()
+      : new Date().toISOString()
+    const recoveredPayload = {
+      cashier_id: cashierId,
+      opening_amount: numberFieldValue(payload.opening_amount ?? matchingHistory?.openingAmount),
+      closing_amount: numberFieldValue(payload.closing_amount ?? matchingHistory?.actualCash),
+      expected_closing_amount: numberFieldValue(payload.expected_closing_amount ?? matchingHistory?.expectedCash),
+      actual_closing_amount: numberFieldValue(payload.actual_closing_amount ?? matchingHistory?.actualCash),
+      variance: Number(payload.variance ?? matchingHistory?.variance) || 0,
+      cash_in_total: numberFieldValue(payload.cash_in_total ?? matchingHistory?.cashIn),
+      cash_out_total: numberFieldValue(payload.cash_out_total ?? matchingHistory?.cashOut),
+      status: 'closed',
+      opened_at: payload.opened_at || matchingHistory?.openedAt || fallbackOpenedAt,
+      closed_at: closedAt,
+      notes: [String(payload.notes || '').trim(), 'Recovered from this terminal after the original cloud drawer session was unavailable.'].filter(Boolean).join(' '),
+      device_id: deviceId,
+    }
+    const created = await this.pb.collection('cash_register_sessions').create(recoveredPayload, {
+      requestKey: `${requestKey || localId}:recovered-session`,
+    }).catch(() => null)
+    if (!created?.id) return ''
+    if (localId) await cashierDb.settings.put({ key: `cashSession:${localId}`, value: created.id })
+    return created.id
+  }
+
   async existingRelationId(collection, value) {
     if (!isPocketBaseRecordId(value)) return ''
     const record = await this.pb.collection(collection).getOne(value, {
@@ -524,12 +571,19 @@ export class CashierSyncEngine extends EventTarget {
       const created = await this.pb.collection('cash_register_sessions').create(payload, { requestKey: op.id })
       await cashierDb.settings.put({ key: `cashSession:${op.entityId}`, value: created.id })
     } else if (op.type === 'closeCashRegisterSession') {
-      const resolvedSessionId = await this.resolveCloudCashSession(localSessionId, payload)
+      let resolvedSessionId = await this.resolveCloudCashSession(localSessionId, payload)
+      let recreatedSession = false
       if (!resolvedSessionId) {
-        throw new Error('The original drawer session could not be found. Open Sync Center after signing in online and retry.')
+        resolvedSessionId = await this.recreateMissingCashSession(localSessionId, payload, op.id)
+        recreatedSession = Boolean(resolvedSessionId)
+      }
+      if (!resolvedSessionId) {
+        throw new Error('The original drawer session could not be recovered because its cashier identity is unavailable. Sign in once with the cashier account, then retry.')
       }
       delete payload.session_id
-      await this.pb.collection('cash_register_sessions').update(resolvedSessionId, payload, { requestKey: op.id })
+      if (!recreatedSession) {
+        await this.pb.collection('cash_register_sessions').update(resolvedSessionId, payload, { requestKey: op.id })
+      }
     } else if (op.type === 'recordCashMovement') {
       // Older queued movements may contain a synthetic developer approver ID
       // or a stale/deleted cloud relation. Both relations are optional, so
