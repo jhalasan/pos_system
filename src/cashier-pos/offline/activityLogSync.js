@@ -11,3 +11,12 @@ export async function activityLogPayloadForSync(payload, resolveUserId) {
 
   return activityPayload
 }
+
+export function minimalActivityLogPayload(payload = {}) {
+  const timestamp = new Date(payload.timestamp || Date.now())
+  return {
+    action_type: String(payload.action_type || 'Cashier Activity').trim() || 'Cashier Activity',
+    description: String(payload.description || 'Activity recorded by cashier terminal.').trim() || 'Activity recorded by cashier terminal.',
+    timestamp: Number.isNaN(timestamp.getTime()) ? new Date().toISOString() : timestamp.toISOString(),
+  }
+}

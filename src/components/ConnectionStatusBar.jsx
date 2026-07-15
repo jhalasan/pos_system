@@ -55,7 +55,6 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
     return { tone: 'online', label: 'Online', detail: syncStatus?.message || '' }
   }, [cloudOnly, online, syncStatus])
 
-  if (placement === 'header' && status.tone !== 'online') return null
   if (placement === 'banner' && status.tone === 'online') return null
 
   return (

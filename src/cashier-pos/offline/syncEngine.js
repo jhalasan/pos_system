@@ -8,7 +8,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
-import { activityLogPayloadForSync } from './activityLogSync'
+import { activityLogPayloadForSync, minimalActivityLogPayload } from './activityLogSync'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 2 * 60_000
@@ -625,7 +625,18 @@ export class CashierSyncEngine extends EventTarget {
         payload,
         (userId) => this.existingRelationId('users', userId),
       )
-      await this.pb.collection('activity_logs').create(activityPayload, { requestKey: op.id })
+      try {
+        await this.pb.collection('activity_logs').create(activityPayload, { requestKey: op.id })
+      } catch (error) {
+        // Older terminals may retain a relation or timestamp shape that no
+        // longer validates. Preserve the audit event using only required,
+        // normalized fields so it cannot block the offline queue forever.
+        if (error?.status !== 400) throw error
+        await this.pb.collection('activity_logs').create(
+          minimalActivityLogPayload(activityPayload),
+          { requestKey: `${op.id}:minimal` },
+        )
+      }
     } else if (op.type === 'voidCompletedSale' || op.type === 'adjustCompletedSale') {
       const sale = await this.pb.collection('sales').getFirstListItem(
         this.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {

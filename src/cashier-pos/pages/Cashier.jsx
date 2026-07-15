@@ -2996,8 +2996,6 @@ const Cashier = ({ onLogout, user }) => {
         </div>
       </div>
 
-      <ConnectionStatusBar scope="cashier" placement="banner" />
-
       <aside className={`${styles['cashier-sidebar']} ${sidebarCollapsed ? styles.collapsed : ''}`}>
         <button type="button" className={styles['sidebar-toggle']} onClick={() => setSidebarCollapsed((current) => !current)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!sidebarCollapsed}>
           <span className={`${styles['sidebar-symbol']} ${styles['menu-toggle-icon']} ${sidebarCollapsed ? styles.collapsed : ''}`} aria-hidden="true">☰</span><strong>Sales Menu</strong>

@@ -248,7 +248,12 @@ ul { list-style: none; }
 .connection-status-bar.warning { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .connection-status-bar.warning .connection-status-dot { background: #f59e0b; }
 .connection-status-bar.compact { min-height: 0; padding: 0; border: 0; background: transparent; }
-.connection-status-bar.connection-status-pill { min-height:28px; padding:5px 10px; border:1px solid #bbf7d0; border-radius:999px; background:#f0fdf4; white-space:nowrap; }
+.connection-status-bar.connection-status-pill { min-height:28px; padding:5px 10px; border:1px solid; border-radius:999px; white-space:nowrap; }
+.connection-status-bar.connection-status-pill.online,
+.connection-status-bar.connection-status-pill.success { border-color:#bbf7d0; background:#f0fdf4; }
+.connection-status-bar.connection-status-pill.offline { border-color:#fed7aa; background:#fff7ed; }
+.connection-status-bar.connection-status-pill.syncing { border-color:#bfdbfe; background:#eff6ff; }
+.connection-status-bar.connection-status-pill.warning { border-color:#fde68a; background:#fffbeb; }
 @keyframes connection-pulse { 50% { opacity: .35; transform: scale(.8); } }
 @media (prefers-reduced-motion: reduce) { .connection-status-bar.syncing .connection-status-dot { animation: none; } }
 .card-p-sm { padding: 12px; }

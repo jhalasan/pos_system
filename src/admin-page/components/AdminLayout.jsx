@@ -203,8 +203,6 @@ export default function AdminLayout() {
             </div>
           </div>
         </header>
-        <ConnectionStatusBar scope="admin" cloudOnly={isAdminWeb} placement="banner" />
-
         <main className="content">
           <Outlet />
         </main>
