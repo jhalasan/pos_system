@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const DEFAULT_POCKETBASE_URL = 'https://nexasystems.pockethost.io'
+const DEFAULT_ADMIN_API_URL = 'https://pos-system-taupe-eight.vercel.app/api'
 const DEFAULT_RECEIPT_PRINTER_NAME = 'XP-58H'
 const DEFAULT_RECEIPT_COPIES = '2'
 const projectRoot = path.dirname(fileURLToPath(import.meta.url))
@@ -27,7 +28,9 @@ export default defineConfig(({ mode }) => {
     clearScreen: false,
     define: {
       'import.meta.env.VITE_APP_TARGET': JSON.stringify(process.env.VITE_APP_TARGET || appTarget),
-      'import.meta.env.VITE_API_URL': JSON.stringify(process.env.VITE_API_URL || ''),
+      'import.meta.env.VITE_API_URL': JSON.stringify(
+        process.env.VITE_API_URL || (isCashierBuild ? DEFAULT_ADMIN_API_URL : ''),
+      ),
       'import.meta.env.VITE_POCKETBASE_URL': JSON.stringify(
         process.env.VITE_POCKETBASE_URL || process.env.POCKETBASE_URL || DEFAULT_POCKETBASE_URL,
       ),

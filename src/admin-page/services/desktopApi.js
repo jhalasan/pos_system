@@ -1372,7 +1372,7 @@ export const desktopAdminApi = {
       await cacheAdminLogin(auth.record, password).catch(() => {})
       await recordActivity('Login', 'Signed in to admin dashboard.').catch(() => {})
       refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
-      return { user: auth.record }
+      return { user: auth.record, token: pb.authStore.token }
     } catch (error) {
       if (globalThis.navigator && !globalThis.navigator.onLine) {
         return offlineLogin(email, password)
