@@ -4,6 +4,14 @@ function transactionTime(record) {
 }
 
 export function sortTransactionRecords(records = [], order = 'newest') {
+  if (order === 'total-high' || order === 'total-low') {
+    const direction = order === 'total-high' ? -1 : 1
+    return [...records].sort((left, right) => ((Number(left.totalAmount) || 0) - (Number(right.totalAmount) || 0)) * direction)
+  }
+  if (order === 'customer' || order === 'cashier') {
+    const field = order === 'customer' ? 'customerName' : 'cashierName'
+    return [...records].sort((left, right) => String(left[field] || '').localeCompare(String(right[field] || ''), undefined, { sensitivity: 'base' }))
+  }
   const direction = order === 'oldest' ? 1 : -1
   return [...records].sort((left, right) => {
     const timeDifference = transactionTime(left) - transactionTime(right)

@@ -122,6 +122,8 @@ Recommended reasons include damaged stock, expired stock, counting correction, s
 
 Admins can add, edit, activate, or deactivate cashier and manager accounts. Cashier barcodes may be generated for quick login.
 
+To add or replace a staff profile picture, open the staff record, select the picture area, choose an image, and save the changes. Staff records created on older terminals remain compatible after current data is downloaded. If a terminal reports that a staff ID is missing, refresh Staff Management and synchronize before trying again.
+
 Cashier permissions include:
 
 - Process sales
@@ -138,7 +140,8 @@ After changing staff details or permissions, synchronize and refresh offline dat
 ### 3.5 Analytics, Transactions, Audit, and Activity Logs
 
 - **Analytics** shows sales and inventory trends and can be filtered by date and data source.
-- **Transaction Logs** contains completed, voided, refunded, and adjusted sales where available.
+- **Transaction Logs** contains completed, voided, refunded, and adjusted sales where available. Its main filters cover receipt or barcode search, date, customer, product, and category. Select **Advanced Filters** for cashier, payment method, amount range, action, and status. Filters can be combined, removed individually from the filter chips, cleared together, or saved as reusable presets.
+- Transaction results can be sorted by date, total, customer, or cashier. Open a row for the full item and payment breakdown. The Product Summary and Category Summary tabs show filtered quantity and revenue totals, while the GCash Payments tab isolates electronic-payment records.
 - **Audit** is used for protected or business-sensitive events.
 - **Activity Logs** records system actions such as logins, product changes, stock adjustments, and sales activity.
 
@@ -152,15 +155,33 @@ Use **All Time** when older records do not appear under the default date filter.
 2. Select the correct selling unit when prompted.
 3. Adjust the quantity if needed.
 4. Review the cart and totals.
-5. Select **Pay** or **Complete Transaction**.
-6. Choose **Cash** or **GCash** and enter the required payment information.
-7. Confirm payment and print the receipt if required.
+5. Select **Complete Transaction**.
+6. Choose Cash, GCash, or Split and enter the required payment information.
+7. Press **Enter** to continue to Customer Name.
+8. Enter an optional customer name, or leave the field blank for Walk-in Customer, then press **Enter**.
+9. Follow the on-screen change and cash-drawer prompts using **Enter**.
+10. Press **Enter** at the receipt step to print.
 
 The system prevents a sale when there is not enough available stock for the selected unit.
+
+#### Keyboard-first product search
+
+- Use the configured Search Product shortcut to focus product search.
+- Type part of a product name, barcode, or selling unit.
+- Press **Down Arrow** or **Up Arrow** to move through results. The list scrolls automatically and skips out-of-stock products.
+- Press **Home** or **End** to jump to the first or last available result.
+- Press **Enter** to select the highlighted product.
+- Press **Escape** to clear search and return to barcode scanning.
+
+Dialogs automatically focus the first relevant input. In most cashier dialogs, **Enter** activates the primary OK, Proceed, Confirm, or Continue action; **Escape** cancels or returns; and **Tab** or **Shift+Tab** moves between controls without leaving the dialog. A focused button also responds to **Enter** normally.
 
 ### 4.2 Receipts
 
 Completed receipts are stored in transaction history. A cashier with receipt-reprint permission can open a transaction and print another copy.
+
+When a customer name was entered, it appears on printed receipts, PDF copies, reprints, transaction details, and exports. Walk-in transactions omit the customer line on the printed receipt and appear as Walk-in in Transaction Logs.
+
+Thermal receipt printers receive ESC/POS output. If a Windows virtual PDF printer such as Microsoft Print to PDF is selected, NEXA POS automatically uses its PDF generator instead of sending thermal-printer commands. Existing zero-byte PDF files cannot be repaired; generate the receipt again after correcting or updating the printer configuration.
 
 ### 4.3 Refunds and exchanges
 
@@ -314,8 +335,16 @@ The maintenance report checks for duplicate barcodes, invalid prices, invalid st
 
 - Confirm the printer is powered on and connected.
 - Check the selected printer and paper size.
-- Try browser printing or saving to PDF.
+- Confirm a physical thermal printer is selected for normal receipt printing.
+- For a soft copy, use the PDF receipt action or a supported PDF printer. Do not expect an older zero-byte PDF to open; generate it again.
 - Reopen the transaction and use receipt reprint if permitted.
+
+### Product search does not follow the highlighted result
+
+- Keep focus in the Search Product field while using Up Arrow and Down Arrow.
+- Use Home or End to jump within the result list.
+- Out-of-stock products are skipped during keyboard selection.
+- Press Escape, refocus Search Product, and try again if another dialog took focus.
 
 ## 8. Daily Best Practices
 

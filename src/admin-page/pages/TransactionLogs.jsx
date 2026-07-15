@@ -14,6 +14,7 @@ import { sortTransactionRecords } from '../utils/transactionLogUtils'
 import { localDateKey } from '../utils/localDate'
 
 const PAGE_SIZE = 10
+const PRESETS_KEY = 'nexa_transaction_log_presets'
 
 function todayDate() {
   return localDateKey()
@@ -71,6 +72,7 @@ function receiptData(record) {
   return {
     transactionNo: record.transactionNo || record.receiptNo,
     cashierName: record.cashierName || 'Cashier',
+    customerName: record.customerName || '',
     completedAt: record.createdAt,
     items: record.items || [],
     payment: receiptPayment(record),
@@ -125,6 +127,17 @@ export default function TransactionLogs() {
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [sortOrder, setSortOrder] = useState('newest')
   const [refreshing, setRefreshing] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [customerNameFilter, setCustomerNameFilter] = useState('')
+  const [productFilter, setProductFilter] = useState('all')
+  const [categoryFilter, setCategoryFilter] = useState('all')
+  const [paymentFilter, setPaymentFilter] = useState('all')
+  const [minAmount, setMinAmount] = useState('')
+  const [maxAmount, setMaxAmount] = useState('')
+  const [presets, setPresets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]') }
+    catch { return [] }
+  })
 
   const refreshReceipts = useCallback(async ({ showProgress = false } = {}) => {
     if (showProgress) setRefreshing(true)
@@ -166,6 +179,19 @@ export default function TransactionLogs() {
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [cashiers, receipts])
 
+  const { productOptions, categoryOptions } = useMemo(() => {
+    const products = new Set()
+    const categories = new Set()
+    for (const receipt of receipts || []) for (const item of receipt.items || []) {
+      if (item.name) products.add(item.name)
+      if (item.category) categories.add(item.category)
+    }
+    return {
+      productOptions: [...products].sort((a, b) => a.localeCompare(b)),
+      categoryOptions: [...categories].sort((a, b) => a.localeCompare(b)),
+    }
+  }, [receipts])
+
   const filteredReceipts = useMemo(() => {
     const search = query.trim().toLowerCase()
     const { fromDate, toDate } = filterDates(dateRange, customFrom, customTo)
@@ -180,30 +206,67 @@ export default function TransactionLogs() {
         receipt.transactionNo,
         receipt.cashierName,
         receipt.paymentMethod,
+        receipt.customerName,
+        ...(receipt.items || []).flatMap((item) => [item.name, item.barcode, item.category]),
       ].some((value) => String(value || '').toLowerCase().includes(search))
+      const items = receipt.items || []
+      const matchesCustomer = !customerNameFilter.trim() || String(receipt.customerName || '').toLowerCase().includes(customerNameFilter.trim().toLowerCase())
+      const matchesProduct = productFilter === 'all' || items.some((item) => item.name === productFilter)
+      const matchesCategory = categoryFilter === 'all' || items.some((item) => item.category === categoryFilter)
+      const matchesPayment = paymentFilter === 'all' || String(receipt.paymentMethod || '').toLowerCase() === paymentFilter
+      const amount = Number(receipt.totalAmount) || 0
+      const matchesAmount = (minAmount === '' || amount >= Number(minAmount)) && (maxAmount === '' || amount <= Number(maxAmount))
       const matchesCashier = cashierName === 'all' || receipt.cashierName === cashierName
       const matchesStatus = status === 'all' || receiptStatus === status
       const matchesAction = action === 'all'
         || (action === 'reprintable' && receiptStatus !== 'voided')
         || (action === 'needs-review' && ['voided', 'adjusted'].includes(receiptStatus))
       const matchesDate = (!fromTime || created >= fromTime) && (!toTime || created <= toTime)
-      return matchesQuery && matchesCashier && matchesStatus && matchesAction && matchesDate
+      return matchesQuery && matchesCustomer && matchesProduct && matchesCategory && matchesPayment && matchesAmount && matchesCashier && matchesStatus && matchesAction && matchesDate
     })
-  }, [action, cashierName, customFrom, customTo, dateRange, query, receipts, status])
+  }, [action, cashierName, categoryFilter, customerNameFilter, customFrom, customTo, dateRange, maxAmount, minAmount, paymentFilter, productFilter, query, receipts, status])
 
   const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
   const voidedCount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').length
+  const voidedAmount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
+  const averageAmount = filteredReceipts.length ? totalAmount / filteredReceipts.length : 0
   const sortedReceipts = useMemo(
     () => sortTransactionRecords(filteredReceipts, sortOrder),
     [filteredReceipts, sortOrder],
   )
   const visibleReceipts = sortedReceipts.slice(0, visibleCount)
+  const activeFilterCount = [query, customerNameFilter, customFrom, customTo, minAmount, maxAmount].filter((value) => String(value).trim()).length
+    + [dateRange, cashierName, action, status, productFilter, categoryFilter, paymentFilter].filter((value) => value !== 'all').length
+  const productSummary = useMemo(() => {
+    const summary = new Map()
+    for (const receipt of filteredReceipts) for (const item of receipt.items || []) {
+      const key = `${item.category || 'Uncategorized'}|${item.name || 'Item'}`
+      const current = summary.get(key) || { category: item.category || 'Uncategorized', product: item.name || 'Item', quantity: 0, revenue: 0 }
+      current.quantity += Number(item.quantity) || 0
+      current.revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0)
+      summary.set(key, current)
+    }
+    return [...summary.values()].sort((a, b) => b.revenue - a.revenue)
+  }, [filteredReceipts])
+  const filterChips = [
+    query && { label: `Search: ${query}`, clear: () => setQuery('') },
+    dateRange !== 'all' && { label: `Date: ${dateRange}`, clear: () => setDateRange('all') },
+    categoryFilter !== 'all' && { label: `Category: ${categoryFilter}`, clear: () => setCategoryFilter('all') },
+    productFilter !== 'all' && { label: `Product: ${productFilter}`, clear: () => setProductFilter('all') },
+    customerNameFilter && { label: `Customer: ${customerNameFilter}`, clear: () => setCustomerNameFilter('') },
+    cashierName !== 'all' && { label: `Cashier: ${cashierName}`, clear: () => setCashierName('all') },
+    paymentFilter !== 'all' && { label: `Payment: ${paymentFilter}`, clear: () => setPaymentFilter('all') },
+    status !== 'all' && { label: `Status: ${status}`, clear: () => setStatus('all') },
+    action !== 'all' && { label: `Action: ${action}`, clear: () => setAction('all') },
+    minAmount !== '' && { label: `Min: ${peso(minAmount)}`, clear: () => setMinAmount('') },
+    maxAmount !== '' && { label: `Max: ${peso(maxAmount)}`, clear: () => setMaxAmount('') },
+  ].filter(Boolean)
 
   useEffect(() => {
     // Reset pagination whenever the active result set or ordering changes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setVisibleCount(PAGE_SIZE)
-  }, [action, cashierName, customFrom, customTo, dateRange, query, sortOrder, status, subTab])
+  }, [action, cashierName, categoryFilter, customerNameFilter, customFrom, customTo, dateRange, maxAmount, minAmount, paymentFilter, productFilter, query, sortOrder, status, subTab])
 
   async function handleReprint(receipt) {
     try {
@@ -214,6 +277,28 @@ export default function TransactionLogs() {
       setToast((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.')
       window.setTimeout(() => setToast(''), 3200)
     }
+  }
+
+  function clearFilters() {
+    setQuery(''); setDateRange('all'); setCustomFrom(''); setCustomTo(''); setCashierName('all')
+    setAction('all'); setStatus('all'); setCustomerNameFilter(''); setProductFilter('all')
+    setCategoryFilter('all'); setPaymentFilter('all'); setMinAmount(''); setMaxAmount('')
+  }
+
+  function savePreset() {
+    const name = window.prompt('Preset name')?.trim()
+    if (!name) return
+    const preset = { name, query, dateRange, customFrom, customTo, cashierName, action, status, customerNameFilter, productFilter, categoryFilter, paymentFilter, minAmount, maxAmount }
+    const next = [...presets.filter((item) => item.name !== name), preset]
+    setPresets(next)
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(next))
+  }
+
+  function applyPreset(preset) {
+    setQuery(preset.query || ''); setDateRange(preset.dateRange || 'all'); setCustomFrom(preset.customFrom || ''); setCustomTo(preset.customTo || '')
+    setCashierName(preset.cashierName || 'all'); setAction(preset.action || 'all'); setStatus(preset.status || 'all')
+    setCustomerNameFilter(preset.customerNameFilter || ''); setProductFilter(preset.productFilter || 'all'); setCategoryFilter(preset.categoryFilter || 'all')
+    setPaymentFilter(preset.paymentFilter || 'all'); setMinAmount(preset.minAmount || ''); setMaxAmount(preset.maxAmount || '')
   }
 
   async function handleDownloadPdf(receipt) {
@@ -230,14 +315,17 @@ export default function TransactionLogs() {
 
   async function handleExportTransactions() {
     const result = await exportCsv(`transaction-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
-      ['Transaction No.', 'Date / Time', 'Cashier', 'Status', 'Items', 'Cash', 'GCash', 'Cash Subtotal', 'GCash Subtotal', 'Total'],
+      ['Transaction No.', 'Date / Time', 'Customer', 'Cashier', 'Status', 'Products', 'Categories', 'Items', 'Cash', 'GCash', 'Cash Subtotal', 'GCash Subtotal', 'Total'],
       ...sortedReceipts.map((receipt) => {
         const payment = paymentBreakdown(receipt)
         return [
           receipt.receiptNo || receipt.transactionNo,
           formatDate(receipt.createdAt),
+          receipt.customerName || 'Walk-in Customer',
           receipt.cashierName || '',
           receipt.status || 'Completed',
+          (receipt.items || []).map((item) => item.name).join('; '),
+          [...new Set((receipt.items || []).map((item) => item.category).filter(Boolean))].join('; '),
           itemCountDisplay(receipt),
           payment.cash,
           payment.gcash,
@@ -256,12 +344,14 @@ export default function TransactionLogs() {
       ['Receipt No.', receipt.receiptNo || receipt.transactionNo],
       ['Date / Time', formatDate(receipt.createdAt)],
       ['Cashier', receipt.cashierName || ''],
+      ['Customer', receipt.customerName || 'Walk-in Customer'],
       ['Status', receipt.status || 'Completed'],
       ['Payment', receipt.paymentMethod || ''],
       [],
-      ['Item', 'Barcode', 'Qty', 'Unit Price', 'Amount'],
+      ['Item', 'Category', 'Barcode', 'Qty', 'Unit Price', 'Amount'],
       ...(receipt.items || []).map((item) => [
         item.name || 'Item',
+        item.category || '',
         item.barcode || '',
         Number(item.quantity) || 0,
         Number(item.price) || 0,
@@ -318,20 +408,44 @@ export default function TransactionLogs() {
         >
           GCash Payments
         </button>
+        <button type="button" className={`scan-mode ${subTab === 'products' ? 'active' : ''}`} onClick={() => setSubTab('products')}>Product Summary</button>
+        <button type="button" className={`scan-mode ${subTab === 'categories' ? 'active' : ''}`} onClick={() => setSubTab('categories')}>Category Summary</button>
       </div>
 
       {subTab === 'gcash' ? (
         <GCashPayments embedded sourceReceipts={receipts} />
+      ) : ['products', 'categories'].includes(subTab) ? (
+        <div className="card">
+          <div className="panel-head"><div><h3>{subTab === 'products' ? 'Product' : 'Category'} Sales Summary</h3><span className="sub">Quantity and revenue from the current transaction filters.</span></div></div>
+          <div className="table-wrap"><table className="data"><thead><tr>{subTab === 'products' && <th>Product</th>}<th>Category</th><th>Quantity Sold</th><th>Revenue</th></tr></thead><tbody>
+            {(subTab === 'products' ? productSummary : Object.values(productSummary.reduce((groups, row) => { const key = row.category; groups[key] ||= { category: key, quantity: 0, revenue: 0 }; groups[key].quantity += row.quantity; groups[key].revenue += row.revenue; return groups }, {}))).map((row) => <tr key={`${row.category}-${row.product || ''}`}>{subTab === 'products' && <td>{row.product}</td>}<td>{row.category}</td><td>{row.quantity}</td><td>{peso(row.revenue)}</td></tr>)}
+          </tbody></table></div>
+        </div>
       ) : (
       <>
 
-      <div className="stat-grid cols-3">
+      <div className="stat-grid transaction-stat-grid">
         <StatCard label="Matched Transactions" value={filteredReceipts.length} icon={IconReceipt} tone="indigo" foot={`${receipts.length} total record(s)`} />
         <StatCard label="Matched Sales" value={peso(totalAmount)} icon={IconPrint} tone="green" foot="Filtered total" />
-        <StatCard label="Voided" value={voidedCount} icon={IconBarcode} tone="red" foot="Within current filters" />
+        <StatCard label="Average Sale" value={peso(averageAmount)} icon={IconReceipt} tone="indigo" foot="Per matched transaction" />
+        <StatCard label="Voided" value={voidedCount} icon={IconBarcode} tone="red" foot={`${peso(voidedAmount)} voided value`} />
       </div>
 
       <div className="card" style={{ marginBottom: 18 }}>
+        <div className="transaction-filter-header">
+          <div>
+            <h3>Filters</h3>
+            <span>Search and narrow transaction results.</span>
+          </div>
+          <button
+            type="button"
+            className="btn btn-outline btn-sm"
+            aria-expanded={showAdvanced}
+            onClick={() => setShowAdvanced((value) => !value)}
+          >
+            Advanced Filters {showAdvanced ? '▴' : '▾'}
+          </button>
+        </div>
         <div className="panel-body">
           <div className="receipt-filter-grid compact-filter-grid">
             <div className="field span-2">
@@ -360,13 +474,40 @@ export default function TransactionLogs() {
                 <option value="custom">Custom range</option>
               </select>
             </label>
-            <label className="field">
+            {showAdvanced && <label className="field">
               <span>Cashier Name</span>
               <select className="select" value={cashierName} onChange={(event) => setCashierName(event.target.value)}>
                 <option value="all">All cashiers</option>
                 {cashierOptions.map((name) => <option key={name} value={name}>{name}</option>)}
               </select>
+            </label>}
+            <label className="field">
+              <span>Customer Name</span>
+              <input className="input" placeholder="Partial name" value={customerNameFilter} onChange={(event) => setCustomerNameFilter(event.target.value)} />
             </label>
+            <label className="field">
+              <span>Product</span>
+              <select className="select" value={productFilter} onChange={(event) => setProductFilter(event.target.value)}>
+                <option value="all">All products</option>
+                {productOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            <label className="field">
+              <span>Category</span>
+              <select className="select" value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+                <option value="all">All categories</option>
+                {categoryOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+              </select>
+            </label>
+            {showAdvanced && <>
+            <label className="field">
+              <span>Payment Method</span>
+              <select className="select" value={paymentFilter} onChange={(event) => setPaymentFilter(event.target.value)}>
+                <option value="all">All payments</option><option value="cash">Cash</option><option value="gcash">GCash</option><option value="split">Split</option>
+              </select>
+            </label>
+            <label className="field"><span>Minimum Amount</span><input className="input" type="number" min="0" value={minAmount} onChange={(event) => setMinAmount(event.target.value)} /></label>
+            <label className="field"><span>Maximum Amount</span><input className="input" type="number" min="0" value={maxAmount} onChange={(event) => setMaxAmount(event.target.value)} /></label>
             <label className="field">
               <span>Actions</span>
               <select className="select" value={action} onChange={(event) => setAction(event.target.value)}>
@@ -384,6 +525,7 @@ export default function TransactionLogs() {
                 <option value="adjusted">Adjusted</option>
               </select>
             </label>
+            </>}
             {dateRange === 'custom' && (
               <>
                 <label className="field">
@@ -396,9 +538,22 @@ export default function TransactionLogs() {
                 </label>
               </>
             )}
+            <div className="field span-2 filter-preset-toolbar">
+              <span>Saved Filters</span>
+              <div className="row-actions">
+                <select className="select" defaultValue="" onChange={(event) => { const preset = presets.find((item) => item.name === event.target.value); if (preset) applyPreset(preset) }}>
+                  <option value="">Choose a preset</option>{presets.map((preset) => <option key={preset.name} value={preset.name}>{preset.name}</option>)}
+                </select>
+                <button type="button" className="btn btn-outline btn-sm" onClick={savePreset}>Save Current</button>
+                <button type="button" className="btn btn-outline btn-sm" onClick={clearFilters}>Clear Filters</button>
+                <span className="muted">{activeFilterCount} active filter(s)</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      {filterChips.length > 0 && <div className="transaction-filter-chips">{filterChips.map((chip) => <button type="button" key={chip.label} onClick={chip.clear}>{chip.label} <span>×</span></button>)}</div>}
 
       <div className="card">
         <div className="panel-head">
@@ -408,14 +563,12 @@ export default function TransactionLogs() {
           </div>
           <div className="row-actions">
             <span className="muted">{filteredReceipts.length} result(s)</span>
-            <button
-              type="button"
-              className="btn btn-outline btn-sm"
-              onClick={() => setSortOrder((current) => current === 'newest' ? 'oldest' : 'newest')}
-              title="Reverse transaction date order"
-            >
-              <IconArrowSwap size={15} /> {sortOrder === 'newest' ? 'Newest to Oldest' : 'Oldest to Newest'}
-            </button>
+            <IconArrowSwap size={15} />
+            <select className="select" value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} aria-label="Sort transactions">
+              <option value="newest">Newest to Oldest</option><option value="oldest">Oldest to Newest</option>
+              <option value="total-high">Highest Total</option><option value="total-low">Lowest Total</option>
+              <option value="customer">Customer Name</option><option value="cashier">Cashier Name</option>
+            </select>
           </div>
         </div>
 
@@ -432,15 +585,13 @@ export default function TransactionLogs() {
                 <tr>
                   <th>Transaction No.</th>
                   <th>Date / Time</th>
+                  <th>Customer</th>
                   <th>Cashier</th>
                   <th>Items</th>
-                  <th>Details</th>
-                  <th>Cash</th>
-                  <th>GCash</th>
-                  <th>Cash Subtotal</th>
-                  <th>GCash Subtotal</th>
+                  <th>Payment</th>
                   <th>Total</th>
                   <th>Status</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -459,29 +610,27 @@ export default function TransactionLogs() {
                         <div className="prod-id">{receipt.paymentMethod || 'cash'}</div>
                       </td>
                       <td>{formatDate(receipt.createdAt)}</td>
+                      <td title={receipt.customerName || 'Walk-in Customer'}>{receipt.customerName || 'Walk-in'}</td>
                       <td>{receipt.cashierName || '-'}</td>
                       <td>{itemCountDisplay(receipt)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="btn btn-outline btn-sm"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setSelectedReceipt(receipt)
-                          }}
-                        >
-                          Details
-                        </button>
-                      </td>
-                      <td>{payment.cash > 0 ? peso(payment.cash) : '-'}</td>
-                      <td>{payment.gcash > 0 ? peso(payment.gcash) : '-'}</td>
-                      <td>{peso(payment.cashSubtotal)}</td>
-                      <td>{peso(payment.gcashSubtotal)}</td>
+                      <td><span className="badge badge-neutral">{String(receipt.paymentMethod || 'cash').toUpperCase()}</span></td>
                       <td><strong>{peso(payment.total)}</strong></td>
                       <td>
                         <span className={`badge ${receiptStatus === 'voided' ? 'badge-danger' : receiptStatus === 'adjusted' ? 'badge-warning' : 'badge-success'}`}>
                           {receipt.status || 'Completed'}
                         </span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="icon-btn transaction-action-button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setSelectedReceipt(receipt)
+                          }}
+                        >
+                          •••
+                        </button>
                       </td>
                     </tr>
                   )
@@ -529,6 +678,7 @@ export default function TransactionLogs() {
                 <span>Receipt No.</span><strong>{selectedReceipt.receiptNo || selectedReceipt.transactionNo}</strong>
                 <span>Date</span><strong>{formatDate(selectedReceipt.createdAt)}</strong>
                 <span>Cashier</span><strong>{selectedReceipt.cashierName || 'Cashier'}</strong>
+                <span>Customer</span><strong>{selectedReceipt.customerName || 'Walk-in Customer'}</strong>
                 <span>Status</span><strong>{selectedReceipt.status || 'Completed'}</strong>
               </div>
               <div className="receipt-rule" />

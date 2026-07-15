@@ -187,8 +187,8 @@ export default function CashierManagement() {
     setFormError('')
     try {
       if (isEdit) {
-        const updated = await api.updateCashier(editingCashier.id, savePayload)
-        setList(list.map((item) => (item.id === updated.id ? updated : item)))
+        const updated = await api.updateCashier(editingCashier.id || editingCashier.cashierId, savePayload)
+        setList(list.map((item) => ((item.id || item.cashierId) === (updated.id || updated.cashierId) ? updated : item)))
         flash(`${staffNoun} updated.`)
       } else {
         const created = await api.createCashier(savePayload)

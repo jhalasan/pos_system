@@ -442,6 +442,7 @@ function receiptItemFromCloud(item) {
     id: item.id,
     name: product?.name || item.product_id || 'Product',
     barcode: product?.barcode || '',
+    category: product?.category || product?.category_name || '',
     quantity: saleItemQuantity(item),
     price: saleItemPrice(item, product),
   }
@@ -468,6 +469,7 @@ async function receiptRecordFromCloudSale(sale) {
     createdAt: sale.created_at || sale.createdAt || sale.created,
     cashierId: firstRelation(sale.cashier_id) || '',
     cashierName: cashier?.name || cashier?.email || firstRelation(sale.cashier_id) || '',
+    customerName: sale.customer_name || sale.customerName || '',
     totalAmount: Number(sale.total_amount ?? sale.totalAmount) || 0,
     subtotalAmount: Number(sale.total_amount ?? sale.totalAmount) || 0,
     discountPercent: 0,
@@ -499,6 +501,7 @@ function receiptRecordFromLocalSale(sale) {
     createdAt: sale.createdAt,
     cashierId: sale.cashierId || '',
     cashierName: sale.cashierName || sale.cashierId || '',
+    customerName: sale.customerName || '',
     totalAmount: Number(sale.totalAmount) || 0,
     subtotalAmount: Number(sale.subtotalAmount || sale.totalAmount) || 0,
     discountPercent: Number(sale.discountPercent) || 0,
@@ -722,8 +725,12 @@ function cashierUpdateBody(data) {
 }
 
 async function cacheUsers(records) {
-  const cachedUsers = await adminDb.users.bulkGet(records.map((record) => record.id))
-  await adminDb.users.bulkPut(records.map((record, index) => ({
+  const normalizedRecords = records.map((record) => ({
+    ...record,
+    id: String(record?.id || record?.cashierId || '').trim(),
+  })).filter((record) => record.id)
+  const cachedUsers = await adminDb.users.bulkGet(normalizedRecords.map((record) => record.id))
+  await adminDb.users.bulkPut(normalizedRecords.map((record, index) => ({
       ...cachedUsers[index],
       id: record.id,
       email: record.email,
@@ -2243,9 +2250,11 @@ export const desktopAdminApi = {
   },
   async updateCashier(id, data) {
     await startAdminRuntime()
+    const staffId = String(id || data?.id || data?.cashierId || '').trim()
+    if (!staffId) throw new Error('Unable to save this staff account because its ID is missing. Refresh Staff Management and try again.')
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
-      const existing = await adminDb.users.get(id)
+      const existing = await adminDb.users.get(staffId)
       const payload = cashierPayload(data)
       delete payload.email
       delete payload.password
@@ -2254,16 +2263,16 @@ export const desktopAdminApi = {
         payload.profileImage = data.imageFile
         payload.profileImageName = data.imageFile.name
       }
-      const local = { ...existing, ...payload, cashierBarcode: payload.void_barcode || existing?.cashierBarcode || '', pendingSync: true, updated: new Date().toISOString() }
+      const local = { ...existing, ...payload, id: staffId, cashierBarcode: payload.void_barcode || existing?.cashierBarcode || '', pendingSync: true, updated: new Date().toISOString() }
       await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
         await adminDb.users.put(local)
-        await queueOperation('updateStaff', id, payload)
+        await queueOperation('updateStaff', staffId, payload)
       })
       await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Updated ${roleLabel} "${local.name || local.email}" offline.`)
       return toCashierUser(local)
     }
     const body = cashierUpdateBody(data)
-    const updated = await pb.collection('users').update(id, body, { requestKey: null }).catch((error) => {
+    const updated = await pb.collection('users').update(staffId, body, { requestKey: null }).catch((error) => {
       throw new Error(pocketBaseErrorMessage(error, `Unable to update ${roleLabel}.`))
     })
     await cacheUsers([updated])

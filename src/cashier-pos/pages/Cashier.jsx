@@ -131,6 +131,7 @@ function createTransaction(id, transactionNo = `${todayPrefix()}${String(id).pad
     transactionNo,
     name: `TXN ${transactionNo}`,
     cartItems: [],
+    customerName: '',
     discount: 0,
     paymentMethod: 'cash',
     isSplitPayment: false,
@@ -384,9 +385,11 @@ const Cashier = ({ onLogout, user }) => {
   const can = useCallback((capability) => !Array.isArray(user?.permissions) || user.permissions.length === 0 || user.permissions.includes(capability), [user?.permissions]);
   const barcodeInputRef = useRef(null);
   const searchProductInputRef = useRef(null);
+  const searchResultsRef = useRef(null);
   const initialQuantityInputRef = useRef(null);
   const quantityInputRefs = useRef(new Map());
   const paymentAmountInputRef = useRef(null);
+  const paymentCustomerInputRef = useRef(null);
   const paymentFlowPanelRef = useRef(null);
   const splitCashInputRef = useRef(null);
   const splitGcashInputRef = useRef(null);
@@ -1352,6 +1355,7 @@ const Cashier = ({ onLogout, user }) => {
   const receiptDataForTransaction = (txn) => ({
     transactionNo: txn.completedSale.transactionNo || txn.transactionNo,
     cashierName: user?.name || user?.email || 'Cashier',
+    customerName: txn.completedSale.customerName || txn.customerName || '',
     completedAt: txn.completedSale.completedAt,
     items: txn.cartItems,
     payment: txn.completedSale,
@@ -1507,11 +1511,30 @@ const Cashier = ({ onLogout, user }) => {
   }, [activeTransaction]);
 
   useEffect(() => {
+    if (!searchProduct) return;
+    if (!selectedSearchProduct || stockForProduct(selectedSearchProduct) <= 0) {
+      const firstAvailable = filteredProducts.findIndex((product) => stockForProduct(product) > 0);
+      if (firstAvailable >= 0 && firstAvailable !== selectedSearchIndex) {
+        setSelectedSearchIndex(firstAvailable);
+        return;
+      }
+    }
+    const selected = searchResultsRef.current?.querySelector(`[data-search-index="${selectedSearchIndex}"]`);
+    selected?.scrollIntoView?.({ block: 'nearest' });
+    // stockForProduct reads the current cart snapshot; the listed dependencies
+    // already change whenever search results or the selected row changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filteredProducts, searchProduct, selectedSearchIndex, selectedSearchProduct]);
+
+  useEffect(() => {
     if (!paymentFlow.open) return;
     window.requestAnimationFrame(() => {
       if (paymentFlow.step === 'amount') {
         paymentAmountInputRef.current?.focus();
         paymentAmountInputRef.current?.select?.();
+      } else if (paymentFlow.step === 'customer') {
+        paymentCustomerInputRef.current?.focus();
+        paymentCustomerInputRef.current?.select?.();
       } else {
         paymentFlowPanelRef.current?.focus();
       }
@@ -1586,6 +1609,7 @@ const Cashier = ({ onLogout, user }) => {
       gcashAmount: '',
       gcashRef: '',
       splitPayments: { cash: '', gcash: '', gcashRef: '' },
+      customerName: '',
       isSplitPayment: false,
     });
   };
@@ -2234,15 +2258,33 @@ const Cashier = ({ onLogout, user }) => {
   const handleSearchKeyDown = (e) => {
     if (!searchProduct) return;
 
+    const selectable = filteredProducts
+      .map((product, index) => ({ index, available: stockForProduct(product) > 0 }))
+      .filter((item) => item.available)
+      .map((item) => item.index);
+    const moveSelection = (direction) => {
+      if (!selectable.length) return;
+      const currentPosition = selectable.indexOf(selectedSearchIndex);
+      const fallback = direction > 0 ? -1 : selectable.length;
+      const nextPosition = Math.max(0, Math.min(selectable.length - 1, (currentPosition < 0 ? fallback : currentPosition) + direction));
+      setSelectedSearchIndex(selectable[nextPosition]);
+    };
+
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      setSelectedSearchIndex((index) => Math.min(index + 1, Math.max(filteredProducts.length - 1, 0)));
+      moveSelection(1);
       return;
     }
 
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      setSelectedSearchIndex((index) => Math.max(index - 1, 0));
+      moveSelection(-1);
+      return;
+    }
+
+    if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      if (selectable.length) setSelectedSearchIndex(e.key === 'Home' ? selectable[0] : selectable[selectable.length - 1]);
       return;
     }
 
@@ -2326,6 +2368,7 @@ const Cashier = ({ onLogout, user }) => {
     gcashRefOverride,
     paymentMethodOverride,
     isSplitPaymentOverride,
+    customerNameOverride,
   } = {}) => {
     const completingTransactionId = activeTxn.id;
     const completedTransactionNo = activeTxn.transactionNo;
@@ -2351,6 +2394,7 @@ const Cashier = ({ onLogout, user }) => {
       quantity: item.quantity,
       conversion: item.conversion,
       price: item.price,
+      category: item.category || '',
     }));
     const completedPayment = {
       paymentMethod: effectiveIsSplitPayment ? 'split' : effectivePaymentMethod,
@@ -2372,6 +2416,7 @@ const Cashier = ({ onLogout, user }) => {
       const sale = await cashierApi.completeSale({
         cashierId: user?.id,
         cashierName: user?.name || user?.email || 'Cashier',
+        customerName: String(customerNameOverride ?? activeTxn.customerName ?? '').trim(),
         transactionNo: completedTransactionNo,
         subtotalAmount: subtotal,
         discountPercent: discount,
@@ -2398,6 +2443,7 @@ const Cashier = ({ onLogout, user }) => {
         status: 'completed',
         rawStatus: 'completed',
         pendingSync: sale.pendingSync,
+        customerName: String(customerNameOverride ?? activeTxn.customerName ?? '').trim(),
         discounted: discount > 0,
         receiptPrintStep: 'initial',
         receiptPrinted: false,
@@ -2438,7 +2484,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const closePaymentFlow = () => {
-    if (paymentFlow.step !== 'amount' && !paymentFlow.completedTxn) return;
+    if (!['amount', 'customer'].includes(paymentFlow.step) && !paymentFlow.completedTxn) return;
     setPaymentFlow({
       open: false,
       step: 'amount',
@@ -2528,6 +2574,7 @@ const Cashier = ({ onLogout, user }) => {
             gcashRef: splitPayments.gcashRef || '',
           }
         : { cash: '', gcash: '', gcashRef: '' },
+      customerName: activeTxn.customerName || '',
       error: '',
       busy: false,
       completedTxn: null,
@@ -2582,19 +2629,39 @@ const Cashier = ({ onLogout, user }) => {
         return;
       }
 
+      if (method === 'cash') updateActiveTransaction({ cashAmount: String(paidCash) });
+      if (method === 'gcash') updateActiveTransaction({ gcashAmount: String(paidGcash), gcashRef: flowGcashRef });
+      if (method === 'split') updateActiveTransaction({ splitPayments: flowSplitPayments });
+      setPaymentFlow((current) => ({
+        ...current,
+        step: 'customer',
+        amount: String(paidCash),
+        gcashAmount: String(paidGcash),
+        splitPayments: flowSplitPayments,
+        error: '',
+      }));
+      return;
+    }
+
+    if (paymentFlow.step === 'customer') {
+      const customerName = String(paymentFlow.customerName || '').trim().slice(0, 120);
       setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
       try {
-        if (method === 'cash') updateActiveTransaction({ cashAmount: String(paidCash) });
-        if (method === 'gcash') updateActiveTransaction({ gcashAmount: String(paidGcash), gcashRef: flowGcashRef });
-        if (method === 'split') updateActiveTransaction({ splitPayments: flowSplitPayments });
+        updateActiveTransaction({ customerName });
+        const method = paymentFlow.method || 'cash';
+        const paidCash = parseFloat(paymentFlow.amount) || 0;
+        const paidGcash = parseFloat(paymentFlow.gcashAmount) || 0;
+        const flowSplitPayments = paymentFlow.splitPayments || { cash: '', gcash: '', gcashRef: '' };
         const completedTxn = await completeActiveTransaction({
           paidCashOverride: method === 'cash' ? paidCash : 0,
           paidGcashOverride: method === 'gcash' ? paidGcash : 0,
           splitPaymentsOverride: flowSplitPayments,
-          gcashRefOverride: method === 'gcash' ? flowGcashRef : '',
+          gcashRefOverride: method === 'gcash' ? String(paymentFlow.gcashRef || '').trim() : '',
           paymentMethodOverride: method === 'split' ? 'cash' : method,
           isSplitPaymentOverride: method === 'split',
+          customerNameOverride: customerName,
         });
+        const splitCash = parseFloat(flowSplitPayments.cash) || 0;
         setPaymentFlow((current) => ({
           ...current,
           busy: false,
@@ -2602,6 +2669,7 @@ const Cashier = ({ onLogout, user }) => {
           amount: String(paidCash),
           gcashAmount: String(paidGcash),
           splitPayments: flowSplitPayments,
+          customerName,
           completedTxn,
         }));
       } catch (err) {
@@ -3127,6 +3195,10 @@ const Cashier = ({ onLogout, user }) => {
               onChange={handleSearchProductChange}
               onKeyDown={handleSearchKeyDown}
               disabled={isLockedTxn}
+              role="combobox"
+              aria-expanded={Boolean(searchProduct && filteredProducts.length)}
+              aria-controls="cashier-product-search-results"
+              aria-activedescendant={searchProduct && selectedSearchProduct ? `cashier-product-option-${selectedSearchIndex}` : undefined}
             />
 
             {lastScanned && (
@@ -3147,7 +3219,7 @@ const Cashier = ({ onLogout, user }) => {
             {productsError && <div className={styles['search-empty']}>{productsError}</div>}
 
             {searchProduct && (
-              <div className={styles['search-results']}>
+              <div ref={searchResultsRef} id="cashier-product-search-results" role="listbox" className={styles['search-results']}>
                 {filteredProducts.length === 0 ? (
                   <div className={styles['search-empty']}>No products found.</div>
                 ) : (
@@ -3157,6 +3229,11 @@ const Cashier = ({ onLogout, user }) => {
                     return (
                       <button
                         key={product.id}
+                        id={`cashier-product-option-${index}`}
+                        role="option"
+                        aria-selected={index === selectedSearchIndex}
+                        data-search-index={index}
+                        tabIndex={-1}
                         className={`${styles['search-result-item']} ${index === selectedSearchIndex ? styles.selected : ''} ${stock.key === 'out' ? styles.disabled : ''}`}
                         onClick={() => handleAddToCart(product)}
                         disabled={stock.key === 'out'}
@@ -3445,11 +3522,11 @@ const Cashier = ({ onLogout, user }) => {
         isOpen={paymentFlow.open}
         onClose={paymentFlow.busy ? () => {} : closePaymentFlow}
         title={paymentFlow.method === 'gcash' ? 'Complete GCash Sale' : paymentFlow.method === 'split' ? 'Complete Split Sale' : 'Complete Cash Sale'}
-        closeButton={!paymentFlow.busy && (paymentFlow.step === 'amount' || Boolean(paymentFlow.completedTxn))}
+        closeButton={!paymentFlow.busy && (['amount', 'customer'].includes(paymentFlow.step) || Boolean(paymentFlow.completedTxn))}
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || (paymentFlow.step !== 'amount' && !paymentFlow.completedTxn)}>
-              {paymentFlow.step === 'amount' ? 'Cancel' : 'Close'}
+            <button className="btn btn-outline" onClick={closePaymentFlow} disabled={paymentFlow.busy || (!['amount', 'customer'].includes(paymentFlow.step) && !paymentFlow.completedTxn)}>
+              {['amount', 'customer'].includes(paymentFlow.step) ? 'Cancel' : 'Close'}
             </button>
             {developerModeSettings.enabled && (paymentFlow.step === 'register' || paymentFlow.step === 'receipt') && (
               <button className="btn btn-outline" onClick={skipReceiptPrinting} disabled={paymentFlow.busy}>
@@ -3460,7 +3537,9 @@ const Cashier = ({ onLogout, user }) => {
               {paymentFlow.busy
                 ? 'Processing...'
                 : paymentFlow.step === 'amount'
-                  ? 'Complete Sale'
+                  ? 'Continue'
+                  : paymentFlow.step === 'customer'
+                    ? 'Continue'
                   : paymentFlow.step === 'change'
                     ? 'Open Register'
                     : 'Print Receipt'}
@@ -3570,6 +3649,21 @@ const Cashier = ({ onLogout, user }) => {
                 disabled={paymentFlow.busy}
               />
             </>
+          )}
+
+          {paymentFlow.step === 'customer' && (
+            <div className={styles['payment-customer-step']}>
+              <Input
+                label="Customer Name (Optional)"
+                placeholder="Leave blank for Walk-in Customer"
+                inputRef={paymentCustomerInputRef}
+                value={paymentFlow.customerName || ''}
+                maxLength={120}
+                onChange={(e) => setPaymentFlow((current) => ({ ...current, customerName: e.target.value, error: '' }))}
+                disabled={paymentFlow.busy}
+              />
+              <p className={styles['payment-flow-instruction']}>Type a customer name, or leave it blank for Walk-in Customer. Press Enter to continue.</p>
+            </div>
           )}
 
           {paymentFlow.step !== 'amount' && (

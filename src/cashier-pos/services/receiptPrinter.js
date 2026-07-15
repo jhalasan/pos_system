@@ -220,7 +220,7 @@ function paymentRows(payment = {}) {
   ]
 }
 
-export function buildReceiptText({ transactionNo, cashierName, completedAt, items, payment }) {
+export function buildReceiptText({ transactionNo, cashierName, customerName, completedAt, items, payment }) {
   const itemCount = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
   const subtotal = Number(payment.subtotalAmount) || 0
   const discountPercent = Number(payment.discountPercent) || 0
@@ -236,6 +236,7 @@ export function buildReceiptText({ transactionNo, cashierName, completedAt, item
     columns('Receipt No.', transactionNo),
     columns('Date', completedDate.toLocaleString('en-PH')),
     columns('Cashier', cashierName || 'Cashier'),
+    customerName ? columns('Customer', customerName) : '',
     line(),
     ...items.flatMap(itemLines),
     line(),
@@ -276,7 +277,10 @@ function buildPrintableHtml(receipts) {
     body { margin: 0; font-family: Consolas, monospace; font-size: 11px; white-space: pre-wrap; }
   </style>
 </head>
-<body>${escaped}<script>window.onload = () => { window.print(); window.close(); };</script></body>
+<body>${escaped}<script>
+  window.onafterprint = () => window.setTimeout(() => window.close(), 500);
+  window.onload = () => window.setTimeout(() => window.print(), 100);
+</script></body>
 </html>`
 }
 
@@ -297,6 +301,9 @@ function printWithBrowser(receipts, windowName = 'receipt-print') {
 
 function pdfEscape(value) {
   return String(value ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x20-\x7E]/g, '?')
     .replace(/\\/g, '\\\\')
     .replace(/\(/g, '\\(')
     .replace(/\)/g, '\\)')
@@ -306,7 +313,7 @@ function pdfObject(id, body) {
   return `${id} 0 obj\n${body}\nendobj\n`
 }
 
-function buildReceiptPdf(receipts) {
+export function buildReceiptPdf(receipts) {
   const pages = []
   const objects = [
     pdfObject(1, '<< /Type /Catalog /Pages 2 0 R >>'),
@@ -371,7 +378,11 @@ function downloadPdf(filename, contents) {
   document.body.appendChild(link)
   link.click()
   link.remove()
-  URL.revokeObjectURL(url)
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000)
+}
+
+function isVirtualPdfPrinter(printerName) {
+  return /(?:microsoft\s+)?print\s+to\s+pdf|pdfcreator|adobe\s+pdf|bullzip|cute(pdf|writer)/i.test(String(printerName || ''))
 }
 
 export async function printCompletedReceipt(receiptData, options = {}) {
@@ -384,7 +395,18 @@ export async function printCompletedReceipt(receiptData, options = {}) {
   const documentName = options.documentName || `Receipt ${receiptData?.transactionNo || ''}`.trim()
   const invoke = tauriInvoke()
 
-    if (invoke) {
+  // Windows PDF printers cannot render the RAW ESC/POS bytes used by thermal
+  // printers and otherwise create a zero-byte file. Generate a real PDF instead.
+  if (invoke && isVirtualPdfPrinter(printerName)) {
+    const result = await printReceiptPdf(receiptData, {
+      copies: receipts.length,
+      filename: `${String(receiptData?.transactionNo || 'receipt').replace(/[^A-Za-z0-9_-]/g, '-')}-receipt.pdf`,
+      directory: options.directory,
+    })
+    return { printerName, copies: receipts.length, pdfPath: result.path, method: result.method }
+  }
+
+  if (invoke) {
     await assertReceiptPrinterReady({ ...options, printerName })
     const contents = receipts.join('\n')
     try {

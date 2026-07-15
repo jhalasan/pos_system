@@ -54,6 +54,7 @@ function cloudSalePayload(sale) {
   return {
     transaction_no: sale.transactionNo,
     cashier_id: sale.cashierId,
+    customer_name: String(sale.customerName || '').trim(),
     total_amount: sale.totalAmount,
     subtotal_amount: sale.subtotalAmount,
     discount_percent: sale.discountPercent,

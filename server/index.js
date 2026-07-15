@@ -259,6 +259,7 @@ function gcashPaymentFromSale(sale) {
     transactionNo: sale.transaction_no || sale.id,
     createdAt: sale.created_at || sale.created,
     cashierName: cashier?.name || cashier?.email || String(sale.cashier_id || ''),
+    customerName: sale.customer_name || '',
     paymentType: paymentMethod === 'split' ? 'Split' : 'GCash',
     amount,
     totalAmount,
@@ -348,6 +349,7 @@ async function receiptRecordFromSale(sale, saleItemsCollection) {
         id: item.id,
         name: product?.name || item.product_id || 'Product',
         barcode: item.barcode || product?.barcode || '',
+        category: product?.category || product?.category_name || '',
         matchingUnitBarcode,
         baseQuantity,
         quantity: saleItemQuantity(item),
@@ -1028,7 +1030,9 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
       record.transactionNo,
       record.receiptNo,
       record.cashierName,
+      record.customerName,
       record.paymentMethod,
+      ...(record.items || []).flatMap((item) => [item.name, item.barcode, item.category]),
     ].some((value) => String(value || '').toLowerCase().includes(q))
     const cashierMatches = !cashierName || String(record.cashierName || '').toLowerCase() === cashierName
     const statusMatches = status === 'all' || String(record.rawStatus || '').toLowerCase() === status
@@ -1054,6 +1058,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   const discountPercent = Number(req.body?.discountPercent) || 0
   const discountAmount = Number(req.body?.discountAmount) || 0
   const transactionNo = await nextTransactionNumber()
+  const customerName = String(req.body?.customerName || '').trim().slice(0, 120)
 
   if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
   if (items.length === 0) return res.status(400).json({ error: 'Sale must have at least one item.' })
@@ -1085,6 +1090,7 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   const sale = await sales.create({
     transaction_no: transactionNo,
     cashier_id: cashierId,
+    customer_name: customerName,
     total_amount: totalAmount,
     subtotal_amount: subtotalAmount,
     discount_percent: discountPercent,

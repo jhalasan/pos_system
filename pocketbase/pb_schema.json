@@ -670,6 +670,21 @@
         "type": "number"
       },
       {
+        "autogeneratePattern": "",
+        "help": "Optional customer name captured at checkout.",
+        "hidden": false,
+        "id": "text100000704",
+        "max": 120,
+        "min": 0,
+        "name": "customer_name",
+        "pattern": "",
+        "presentable": false,
+        "primaryKey": false,
+        "required": false,
+        "system": false,
+        "type": "text"
+      },
+      {
         "help": "",
         "hidden": false,
         "id": "select2069996022",
