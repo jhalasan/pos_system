@@ -1501,6 +1501,10 @@ export const desktopAdminApi = {
       pendingSync: true,
       updated: new Date().toISOString(),
     }
+    const barcodeOwner = product.barcode ? await getProductByBarcode(product.barcode) : null
+    if (barcodeOwner && barcodeOwner.id !== id) {
+      throw new Error(`Barcode ${product.barcode} already belongs to "${barcodeOwner.name}". Choose a different barcode.`)
+    }
     await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
       await adminDb.products.put(product)
       await queueOperation('updateProduct', id, product)

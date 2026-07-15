@@ -45,6 +45,16 @@ function errorMessage(error) {
   return error instanceof Error ? error.message : String(error)
 }
 
+async function productSyncErrorMessage(pb, op, error) {
+  const message = errorMessage(error)
+  const barcodeError = error?.response?.data?.barcode || error?.data?.data?.barcode
+  if (!barcodeError || !op?.payload?.barcode) return message
+
+  const owner = await findCloudProductByBarcode(pb, op.payload.barcode).catch(() => null)
+  if (!owner || owner.id === op.productId) return message
+  return `Barcode ${op.payload.barcode} already belongs to "${owner.name || owner.id}". Choose a different barcode.`
+}
+
 function retryDelay(attempts) {
   const exponential = Math.min(MAX_BACKOFF_MS, 1_000 * (2 ** Math.min(attempts, 8)))
   return exponential + Math.floor(Math.random() * 500)
@@ -343,7 +353,8 @@ export class AdminSyncEngine extends EventTarget {
       } catch (error) {
         rememberPocketBaseRateLimit(error)
         failed += 1
-        errors.push(errorMessage(error))
+        const syncErrorMessage = await productSyncErrorMessage(this.pb, op, error)
+        errors.push(syncErrorMessage)
         if (error?.syncConflict) {
           await adminDb.pendingOps.update(op.id, {
             status: 'conflict',
@@ -357,7 +368,7 @@ export class AdminSyncEngine extends EventTarget {
         await adminDb.pendingOps.update(op.id, {
           attempts,
           status: attempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
-          lastError: errorMessage(error),
+          lastError: syncErrorMessage,
           nextAttemptAt: Date.now() + retryDelay(attempts),
         })
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { op, error } }))
