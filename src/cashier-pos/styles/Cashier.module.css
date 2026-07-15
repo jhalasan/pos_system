@@ -1466,6 +1466,7 @@
 }
 
 .search-result-item {
+  position: relative;
   width: 100%;
   padding: 12px 16px;
   border: none;
@@ -1487,6 +1488,18 @@
 .search-result-item.selected {
   background-color: #eef6ff;
   box-shadow: inset 3px 0 0 #4f46e5;
+}
+
+.search-result-item.selected::before {
+  content: '›';
+  position: absolute;
+  top: 50%;
+  left: 5px;
+  color: #4f46e5;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  transform: translateY(-52%);
 }
 
 .search-result-item:focus-visible {

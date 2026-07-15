@@ -113,6 +113,8 @@ function paymentBreakdown(receipt) {
 export default function TransactionLogs() {
   const { data: receipts, setData: setReceipts, loading, error } = useApi(api.receipts, [])
   const { data: cashiers } = useApi(api.cashiers, [])
+  const { data: catalogProducts } = useApi(api.products, [])
+  const { data: catalogCategories } = useApi(api.categories, [])
   const scanInputRef = useRef(null)
   const [query, setQuery] = useState('')
   const [dateRange, setDateRange] = useState('all')
@@ -138,6 +140,9 @@ export default function TransactionLogs() {
     try { return JSON.parse(localStorage.getItem(PRESETS_KEY) || '[]') }
     catch { return [] }
   })
+  const [showPresetModal, setShowPresetModal] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const [presetError, setPresetError] = useState('')
 
   const refreshReceipts = useCallback(async ({ showProgress = false } = {}) => {
     if (showProgress) setRefreshing(true)
@@ -179,10 +184,48 @@ export default function TransactionLogs() {
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [cashiers, receipts])
 
+  const resolvedReceipts = useMemo(() => {
+    const categoryNames = new Map()
+    for (const category of catalogCategories || []) {
+      const name = String(category?.name || category?.id || '').trim()
+      if (!name) continue
+      categoryNames.set(String(category.id || name), name)
+      categoryNames.set(name, name)
+    }
+    const productsById = new Map()
+    const productsByBarcode = new Map()
+    const productsByName = new Map()
+    for (const product of catalogProducts || []) {
+      if (product.id) productsById.set(String(product.id), product)
+      if (product.barcode) productsByBarcode.set(String(product.barcode), product)
+      if (product.name) productsByName.set(String(product.name).toLowerCase(), product)
+    }
+    const categoryForItem = (item) => {
+      const raw = String(item.category || '').trim()
+      if (categoryNames.has(raw)) return categoryNames.get(raw)
+      const product = productsById.get(String(item.productId || ''))
+        || productsByBarcode.get(String(item.barcode || item.matchingUnitBarcode || ''))
+        || productsByName.get(String(item.name || '').toLowerCase())
+      const productCategory = String(product?.category || product?.categoryId || '').trim()
+      if (categoryNames.has(productCategory)) return categoryNames.get(productCategory)
+      if (productCategory && !/^cat[a-z0-9]+$/i.test(productCategory)) return productCategory
+      if (raw && !/^cat[a-z0-9]+$/i.test(raw)) return raw
+      return 'Uncategorized (Legacy)'
+    }
+    return (receipts || []).map((receipt) => ({
+      ...receipt,
+      items: (receipt.items || []).map((item) => ({ ...item, category: categoryForItem(item) })),
+    }))
+  }, [catalogCategories, catalogProducts, receipts])
+
   const { productOptions, categoryOptions } = useMemo(() => {
     const products = new Set()
     const categories = new Set()
-    for (const receipt of receipts || []) for (const item of receipt.items || []) {
+    for (const category of catalogCategories || []) {
+      const name = String(category?.name || category?.id || '').trim()
+      if (name && !/^cat[a-z0-9]+$/i.test(name)) categories.add(name)
+    }
+    for (const receipt of resolvedReceipts) for (const item of receipt.items || []) {
       if (item.name) products.add(item.name)
       if (item.category) categories.add(item.category)
     }
@@ -190,7 +233,7 @@ export default function TransactionLogs() {
       productOptions: [...products].sort((a, b) => a.localeCompare(b)),
       categoryOptions: [...categories].sort((a, b) => a.localeCompare(b)),
     }
-  }, [receipts])
+  }, [catalogCategories, resolvedReceipts])
 
   const filteredReceipts = useMemo(() => {
     const search = query.trim().toLowerCase()
@@ -198,7 +241,7 @@ export default function TransactionLogs() {
     const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
     const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
 
-    return receipts.filter((receipt) => {
+    return resolvedReceipts.filter((receipt) => {
       const created = new Date(receipt.createdAt).getTime()
       const receiptStatus = normalizedStatus(receipt)
       const matchesQuery = !search || [
@@ -224,7 +267,7 @@ export default function TransactionLogs() {
       const matchesDate = (!fromTime || created >= fromTime) && (!toTime || created <= toTime)
       return matchesQuery && matchesCustomer && matchesProduct && matchesCategory && matchesPayment && matchesAmount && matchesCashier && matchesStatus && matchesAction && matchesDate
     })
-  }, [action, cashierName, categoryFilter, customerNameFilter, customFrom, customTo, dateRange, maxAmount, minAmount, paymentFilter, productFilter, query, receipts, status])
+  }, [action, cashierName, categoryFilter, customerNameFilter, customFrom, customTo, dateRange, maxAmount, minAmount, paymentFilter, productFilter, query, resolvedReceipts, status])
 
   const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
   const voidedCount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').length
@@ -270,8 +313,10 @@ export default function TransactionLogs() {
 
   async function handleReprint(receipt) {
     try {
-      await printCompletedReceipt(receiptData(receipt))
-      setToast(`Reprinted transaction ${receipt.receiptNo || receipt.transactionNo}.`)
+      const result = await printCompletedReceipt(receiptData(receipt))
+      setToast(result?.pdfPath
+        ? `Receipt PDF saved to ${result.pdfPath}.`
+        : `Reprinted transaction ${receipt.receiptNo || receipt.transactionNo}.`)
       window.setTimeout(() => setToast(''), 2400)
     } catch (err) {
       setToast((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.')
@@ -286,12 +331,24 @@ export default function TransactionLogs() {
   }
 
   function savePreset() {
-    const name = window.prompt('Preset name')?.trim()
-    if (!name) return
+    setPresetName('')
+    setPresetError('')
+    setShowPresetModal(true)
+  }
+
+  function confirmSavePreset() {
+    const name = presetName.trim()
+    if (!name) {
+      setPresetError('Enter a name for this filter preset.')
+      return
+    }
     const preset = { name, query, dateRange, customFrom, customTo, cashierName, action, status, customerNameFilter, productFilter, categoryFilter, paymentFilter, minAmount, maxAmount }
     const next = [...presets.filter((item) => item.name !== name), preset]
     setPresets(next)
     localStorage.setItem(PRESETS_KEY, JSON.stringify(next))
+    setShowPresetModal(false)
+    setToast(`Saved filter preset “${name}”.`)
+    window.setTimeout(() => setToast(''), 2400)
   }
 
   function applyPreset(preset) {
@@ -647,6 +704,36 @@ export default function TransactionLogs() {
           </div>
         )}
       </div>
+
+      {showPresetModal && (
+        <Modal
+          title="Save Filter Preset"
+          onClose={() => setShowPresetModal(false)}
+          footer={(
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => setShowPresetModal(false)}>Cancel</button>
+              <button type="button" className="btn btn-primary" onClick={confirmSavePreset}>Save Preset</button>
+            </>
+          )}
+        >
+          <label className="field">
+            <span>Preset Name</span>
+            <input
+              autoFocus
+              className="input"
+              value={presetName}
+              maxLength={60}
+              placeholder="Example: Today’s Pepsi sales"
+              onChange={(event) => { setPresetName(event.target.value); setPresetError('') }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') { event.preventDefault(); confirmSavePreset() }
+              }}
+            />
+            {presetError && <small className="field-error">{presetError}</small>}
+          </label>
+          <p className="muted" style={{ marginTop: 12 }}>This saves the filters currently applied to Transaction Logs on this computer.</p>
+        </Modal>
+      )}
 
       {selectedReceipt && (
         <Modal

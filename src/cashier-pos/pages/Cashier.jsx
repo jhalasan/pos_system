@@ -1384,12 +1384,12 @@ const Cashier = ({ onLogout, user }) => {
         key: jobKey,
         transactionNo,
         label: copyLabel,
-        status: 'Printing in 5 seconds',
+        status: 'Printing in 2.5 seconds',
       },
     ]);
 
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 5000));
+      await new Promise((resolve) => window.setTimeout(resolve, 2500));
       if (cancelledReceiptPrintJobsRef.current.has(jobId)) {
         throw new Error('Receipt printing was canceled.');
       }
@@ -1402,7 +1402,8 @@ const Cashier = ({ onLogout, user }) => {
 
       if (openDrawerBeforePrint) {
         updateReceiptPrintJob(jobId, { status: 'Opening drawer' });
-        await openCashDrawer({ skipStatusCheck: true });
+        const drawerResult = await openCashDrawer({ skipStatusCheck: true });
+        showNotification(`Cash drawer command sent to ${drawerResult.printerName}.`);
       }
       if (confirmDrawerClosed) {
         updateReceiptPrintJob(jobId, { status: 'Waiting for drawer close' });
@@ -1416,10 +1417,13 @@ const Cashier = ({ onLogout, user }) => {
       }
 
       updateReceiptPrintJob(jobId, { status: 'Printing' });
-      await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
+      const printResult = await printCompletedReceipt(receiptDataForTransaction(txn, copyLabel), {
         documentName: `Receipt ${transactionNo}`,
         copies: 1,
       });
+      if (printResult?.pdfPath) {
+        showNotification(`Receipt PDF saved to ${printResult.pdfPath}.`);
+      }
       if (requireReceiptPrint) {
         updateReceiptPrintJob(jobId, { status: 'Receipt confirmed' });
       }
@@ -1512,18 +1516,22 @@ const Cashier = ({ onLogout, user }) => {
 
   useEffect(() => {
     if (!searchProduct) return;
-    if (!selectedSearchProduct || stockForProduct(selectedSearchProduct) <= 0) {
-      const firstAvailable = filteredProducts.findIndex((product) => stockForProduct(product) > 0);
-      if (firstAvailable >= 0 && firstAvailable !== selectedSearchIndex) {
-        setSelectedSearchIndex(firstAvailable);
-        return;
+    if (filteredProducts.length > 0 && selectedSearchIndex >= filteredProducts.length) {
+      setSelectedSearchIndex(filteredProducts.length - 1);
+      return;
+    }
+    const container = searchResultsRef.current;
+    const selected = container?.querySelector(`[data-search-index="${selectedSearchIndex}"]`);
+    if (container && selected) {
+      const containerRect = container.getBoundingClientRect();
+      const selectedRect = selected.getBoundingClientRect();
+
+      if (selectedRect.top < containerRect.top) {
+        container.scrollTop += selectedRect.top - containerRect.top;
+      } else if (selectedRect.bottom > containerRect.bottom) {
+        container.scrollTop += selectedRect.bottom - containerRect.bottom;
       }
     }
-    const selected = searchResultsRef.current?.querySelector(`[data-search-index="${selectedSearchIndex}"]`);
-    selected?.scrollIntoView?.({ block: 'nearest' });
-    // stockForProduct reads the current cart snapshot; the listed dependencies
-    // already change whenever search results or the selected row changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filteredProducts, searchProduct, selectedSearchIndex, selectedSearchProduct]);
 
   useEffect(() => {
@@ -1729,7 +1737,7 @@ const Cashier = ({ onLogout, user }) => {
     if (!lookupSale) return;
     if (!can('receipt_reprint')) return setLookupError('Your account does not have permission to reprint receipts.');
     try {
-      await printCompletedReceipt({
+      const result = await printCompletedReceipt({
         transactionNo: lookupSale.transactionNo,
         cashierName: lookupSale.cashierName || user?.name || user?.email || 'Cashier',
         completedAt: lookupSale.createdAt,
@@ -1747,12 +1755,14 @@ const Cashier = ({ onLogout, user }) => {
           gcashRef: lookupSale.refNumber,
         },
       });
+      showNotification(result?.pdfPath
+        ? `Receipt PDF saved to ${result.pdfPath}.`
+        : `Receipt sent to ${result?.printerName || 'the configured printer'}.`);
       cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Receipt Reprint',
         detail: `Reprinted receipt for transaction ${lookupSale.transactionNo}.`,
       }).catch(() => {});
-      showNotification(`Receipt reprinted for transaction ${lookupSale.transactionNo}.`);
     } catch (err) {
       setLookupError((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.');
     }
@@ -1925,8 +1935,9 @@ const Cashier = ({ onLogout, user }) => {
 
   const openCashRegisterForActivity = async (reason, detail) => {
     try {
-      await openCashDrawer({ skipStatusCheck: true });
+      const result = await openCashDrawer({ skipStatusCheck: true });
       setCashRegisterOpen(true);
+      showNotification(`Cash drawer command sent to ${result.printerName}.`);
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Drawer Open Command Sent',
@@ -2258,16 +2269,11 @@ const Cashier = ({ onLogout, user }) => {
   const handleSearchKeyDown = (e) => {
     if (!searchProduct) return;
 
-    const selectable = filteredProducts
-      .map((product, index) => ({ index, available: stockForProduct(product) > 0 }))
-      .filter((item) => item.available)
-      .map((item) => item.index);
     const moveSelection = (direction) => {
-      if (!selectable.length) return;
-      const currentPosition = selectable.indexOf(selectedSearchIndex);
-      const fallback = direction > 0 ? -1 : selectable.length;
-      const nextPosition = Math.max(0, Math.min(selectable.length - 1, (currentPosition < 0 ? fallback : currentPosition) + direction));
-      setSelectedSearchIndex(selectable[nextPosition]);
+      if (!filteredProducts.length) return;
+      setSelectedSearchIndex((current) => (
+        Math.max(0, Math.min(filteredProducts.length - 1, current + direction))
+      ));
     };
 
     if (e.key === 'ArrowDown') {
@@ -2284,13 +2290,17 @@ const Cashier = ({ onLogout, user }) => {
 
     if (e.key === 'Home' || e.key === 'End') {
       e.preventDefault();
-      if (selectable.length) setSelectedSearchIndex(e.key === 'Home' ? selectable[0] : selectable[selectable.length - 1]);
+      if (filteredProducts.length) setSelectedSearchIndex(e.key === 'Home' ? 0 : filteredProducts.length - 1);
       return;
     }
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (selectedSearchProduct) handleAddToCart(selectedSearchProduct);
+      if (selectedSearchProduct && stockForProduct(selectedSearchProduct) > 0) {
+        handleAddToCart(selectedSearchProduct);
+      } else if (selectedSearchProduct) {
+        showNotification(`${selectedSearchProduct.name} is out of stock.`);
+      }
       return;
     }
 
@@ -3193,7 +3203,7 @@ const Cashier = ({ onLogout, user }) => {
               inputRef={searchProductInputRef}
               value={searchProduct}
               onChange={handleSearchProductChange}
-              onKeyDown={handleSearchKeyDown}
+              onKeyDownCapture={handleSearchKeyDown}
               disabled={isLockedTxn}
               role="combobox"
               aria-expanded={Boolean(searchProduct && filteredProducts.length)}

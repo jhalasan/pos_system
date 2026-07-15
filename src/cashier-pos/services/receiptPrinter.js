@@ -489,6 +489,10 @@ export async function openCashDrawer(options = {}) {
     throw new Error('Cash drawer opening is only available in the desktop app.')
   }
 
+  if (isVirtualPdfPrinter(printerName)) {
+    throw new Error(`Cash drawer command was not sent. "${printerName}" is a PDF printer. Select the physical receipt printer in Receipt Settings.`)
+  }
+
   await assertReceiptPrinterReady({ ...options, printerName })
 
   try {
