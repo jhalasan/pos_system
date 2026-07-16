@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { MANUAL_UPDATE_CHECK_EVENT, UPDATE_CHECK_RESULT_EVENT } from '../utils/desktopUpdateEvents'
 
+const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000
+
 function isCashierWorkspace() {
   return window.location.hash.startsWith('#/cashier')
 }
@@ -39,11 +41,16 @@ export default function DesktopUpdater() {
 
   useEffect(() => {
     const timer = window.setTimeout(() => checkForUpdate(false), 6000)
+    const interval = window.setInterval(() => checkForUpdate(false), UPDATE_CHECK_INTERVAL_MS)
     const handleManualCheck = () => checkForUpdate(true)
+    const handleOnline = () => checkForUpdate(false)
     window.addEventListener(MANUAL_UPDATE_CHECK_EVENT, handleManualCheck)
+    window.addEventListener('online', handleOnline)
     return () => {
       window.clearTimeout(timer)
+      window.clearInterval(interval)
       window.removeEventListener(MANUAL_UPDATE_CHECK_EVENT, handleManualCheck)
+      window.removeEventListener('online', handleOnline)
     }
   }, [checkForUpdate])
 
@@ -71,22 +78,26 @@ export default function DesktopUpdater() {
   if (!visible) return null
 
   return (
-    <div className="desktop-update-notice" role="status" aria-live="polite">
-      <div>
-        <strong>{update ? 'Nexa POS update available' : 'Software update'}</strong>
-        <span>{message}</span>
-      </div>
-      <div className="desktop-update-actions">
-        {update && !['downloading'].includes(status) && (
-          <button type="button" className="btn btn-primary btn-sm" onClick={installUpdate}>
-            {status === 'deferred' ? 'Try after logout' : 'Download and install'}
-          </button>
-        )}
-        {status !== 'downloading' && (
-          <button type="button" className="btn btn-outline btn-sm" onClick={() => { setUpdate(null); setStatus('idle'); setManual(false) }}>
-            Later
-          </button>
-        )}
+    <div className="desktop-update-backdrop" role="presentation">
+      <div className="desktop-update-notice" role="alertdialog" aria-modal="true" aria-labelledby="desktop-update-title" aria-describedby="desktop-update-message">
+        <div className="desktop-update-icon" aria-hidden="true">↑</div>
+        <div className="desktop-update-copy">
+          <strong id="desktop-update-title">{update ? 'Nexa POS update available' : 'Software update'}</strong>
+          <span id="desktop-update-message">{message}</span>
+          {update && <small>Install the update to receive the latest fixes and improvements.</small>}
+        </div>
+        <div className="desktop-update-actions">
+          {update && !['downloading'].includes(status) && (
+            <button type="button" className="btn btn-primary" onClick={installUpdate} autoFocus>
+              {status === 'deferred' ? 'Try after logout' : 'Download and install'}
+            </button>
+          )}
+          {status !== 'downloading' && (
+            <button type="button" className="btn btn-outline" onClick={() => { setUpdate(null); setStatus('idle'); setManual(false) }}>
+              Remind me later
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

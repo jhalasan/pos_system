@@ -71,26 +71,35 @@
 
 html, body, #root { height: 100%; }
 
-.desktop-update-notice {
+.desktop-update-backdrop {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
   z-index: 10000;
-  width: min(440px, calc(100vw - 40px));
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, .52);
+  backdrop-filter: blur(3px);
+}
+.desktop-update-notice {
+  width: min(480px, 100%);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 16px;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 24px;
   border: 1px solid var(--border, #d9dce3);
-  border-radius: 12px;
+  border-radius: 18px;
   background: var(--surface, #fff);
   color: var(--text, #1f2937);
-  box-shadow: 0 16px 40px rgba(15, 23, 42, .2);
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .35);
 }
-.desktop-update-notice > div:first-child { display: grid; gap: 4px; }
-.desktop-update-notice span { font-size: 13px; color: var(--text-muted, #667085); }
-.desktop-update-actions { display: flex; flex-shrink: 0; gap: 8px; }
+.desktop-update-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 50%; background: var(--primary-soft, #e8edff); color: var(--primary, #4056d6); font-size: 25px; font-weight: 800; }
+.desktop-update-copy { display: grid; flex: 1; gap: 5px; min-width: 240px; }
+.desktop-update-copy strong { font-size: 18px; }
+.desktop-update-copy span { font-size: 14px; color: var(--text-muted, #667085); }
+.desktop-update-copy small { color: var(--text-muted, #667085); }
+.desktop-update-actions { display: flex; width: 100%; justify-content: flex-end; gap: 10px; }
 
 body {
   font-family: var(--font);
