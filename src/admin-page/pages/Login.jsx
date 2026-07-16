@@ -79,7 +79,14 @@ export default function Login() {
     setError('')
     try {
       await login(email, password)
-      nav('/admin/dashboard', { replace: true })
+      if (isAdminWeb) {
+        nav('/admin/dashboard', { replace: true })
+      } else {
+        // Reinitialize the desktop runtime with the authenticated session. This
+        // avoids races between database startup, sync, and lazy route loading.
+        window.location.hash = '#/admin/dashboard'
+        window.location.reload()
+      }
     } catch (err) {
       setError(err.message || 'Incorrect password. Please try again.')
     } finally {
