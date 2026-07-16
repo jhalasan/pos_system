@@ -21,6 +21,7 @@
     "pb:import:legacy:dry-run": "node scripts/import-legacy-json.mjs",
     "pb:import:legacy": "node scripts/import-legacy-json.mjs --apply",
     "pb:remove:sample": "node scripts/remove-sample-data.mjs",
+    "pb:reset:deployment": "node scripts/reset-deployment-data.mjs --apply",
     "pb:reset:legacy-catalog": "node scripts/reset-to-legacy-catalog.mjs --apply",
     "pb:migrate": "node scripts/backfill-base-quantity.mjs",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
