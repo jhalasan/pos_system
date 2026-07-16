@@ -19,6 +19,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
+import { resolveRequiredProductPrice } from '../offline/productPricing'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -1189,7 +1190,7 @@ async function imageData(data) {
 async function localProductFromForm(data, id = newId('product')) {
   const qty = Number(data.qty)
   const lowStock = Number(data.lowStock)
-  const price = Number(data.price)
+  const price = resolveRequiredProductPrice(data)
   const cost = Number(data.cost)
   const profitMargin = Number(data.profitMargin)
   const conversionQuantity = Number(data.conversionQuantity ?? 1)
@@ -1207,7 +1208,7 @@ async function localProductFromForm(data, id = newId('product')) {
     initialStock: Number(data.initialStock ?? data.qty ?? 0) || 0,
     stockUnit: String(data.stockUnit || '').trim(),
     lowStock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
-    price: Number.isFinite(price) ? Math.max(0, price) : 0,
+    price,
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     image: '',

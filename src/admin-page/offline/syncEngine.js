@@ -8,6 +8,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
+import { resolveRequiredProductPrice } from './productPricing'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
@@ -90,7 +91,7 @@ async function getOrCreateCategoryId(pb, name) {
 async function productBody(pb, data) {
   const qty = Number(data.qty)
   const lowStock = Number(data.lowStock)
-  const price = Number(data.price)
+  const price = resolveRequiredProductPrice(data)
   const cost = Number(data.cost)
   const profitMargin = Number(data.profitMargin)
   const initialStock = Number(data.initialStock ?? data.initial_stock)
@@ -106,7 +107,7 @@ async function productBody(pb, data) {
     initial_stock: Number.isFinite(initialStock) ? Math.max(0, initialStock) : 0,
     stock_unit: String(data.stockUnit || data.stock_unit || '').trim(),
     min_stock: Number.isFinite(lowStock) ? Math.max(0, lowStock) : 0,
-    price: Number.isFinite(price) ? Math.max(0, price) : 0,
+    price,
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: Boolean(data.hasMultipleUnits ?? data.has_multiple_units),
