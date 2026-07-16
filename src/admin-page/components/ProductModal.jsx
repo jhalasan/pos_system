@@ -149,53 +149,6 @@ function defaultPurchaseConversion(unit, purchaseUnit, currentConversion) {
   return currentConversion
 }
 
-function ensurePurchaseUnitRow(nextForm, currentRows = []) {
-  if (!nextForm.hasMultipleUnits) return currentRows
-
-  const purchaseUnit = String(nextForm.purchaseUnit || '').trim()
-  const baseUnit = String(nextForm.unit || 'Piece').trim() || 'Piece'
-  const conversionQuantity = Number(nextForm.conversionQuantity)
-  if (!purchaseUnit || normalizeUnitKey(purchaseUnit) === normalizeUnitKey(baseUnit) || !Number.isFinite(conversionQuantity) || conversionQuantity <= 1) {
-    return currentRows
-  }
-
-  const purchasePrice = deriveSellingPrice(Number(nextForm.cost), Number(nextForm.profitMargin), conversionQuantity, conversionQuantity)
-  const existingIndex = currentRows.findIndex((row, index) => (
-    index > 0
-    && (
-      normalizeUnitKey(row.unit) === normalizeUnitKey(purchaseUnit)
-      || Number(row.conversion) === conversionQuantity
-    )
-  ))
-
-  if (existingIndex >= 0) {
-    return currentRows.map((row, index) => {
-      if (index !== existingIndex) return row
-      return {
-        ...row,
-        unit: purchaseUnit,
-        conversion: conversionQuantity,
-        price: row.isPriceManual ? row.price : purchasePrice,
-      }
-    })
-  }
-
-  return [
-    ...currentRows,
-    {
-      barcode: '',
-      unit: purchaseUnit,
-      conversion: conversionQuantity,
-      price: purchasePrice,
-      isPriceManual: false,
-    },
-  ]
-}
-
-function ensureSellingRows(nextForm, currentRows = []) {
-  return ensurePurchaseUnitRow(nextForm, currentRows)
-}
-
 function detectUnitTemplate({ unit, purchaseUnit, conversionQuantity, sellingUnits = [] }) {
   const baseKey = normalizeUnitKey(unit)
   const purchaseKey = normalizeUnitKey(purchaseUnit)
@@ -262,14 +215,7 @@ function buildInitialForm(product, categories, isEdit = false) {
   const initialSellingUnits = normalizeSellingUnits(rawSellingUnits, { barcode: product?.barcode || '', unit: baseUnit })
     .map((unit, index) => (index === 0 ? { ...unit, price: defaultPrice, isPriceManual: false } : unit))
 
-  const preparedSellingUnits = ensureSellingRows({
-    hasMultipleUnits: isMultipleUnits,
-    purchaseUnit,
-    unit: baseUnit,
-    conversionQuantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
-    cost: costValue,
-    profitMargin: marginValue,
-  }, initialSellingUnits)
+  const preparedSellingUnits = initialSellingUnits
 
   return {
     ...blank,
@@ -367,7 +313,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       return row
     })
 
-    return { normalizedRows: ensureSellingRows(nextForm, normalizedRows), baseUnitPrice }
+    return { normalizedRows, baseUnitPrice }
   }
 
   function setFormValue(key, value) {
@@ -385,7 +331,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       }
 
       if (key === 'unit') {
-        setSellingUnits((current) => ensureSellingRows(next, current.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row))))
+        setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row)))
       }
 
       if (key === 'cost' || key === 'profitMargin' || key === 'conversionQuantity') {
@@ -404,10 +350,6 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           price: deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
           isPriceManual: false,
         } : row)))
-      }
-
-      if ((key === 'hasMultipleUnits' && value) || key === 'purchaseUnit') {
-        setSellingUnits((current) => ensureSellingRows(next, current))
       }
 
       return next
@@ -557,9 +499,8 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       if (normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)) { dialog.alert('Purchase unit must be larger than the smallest inventory unit.', { title: 'Check product details' }); return }
     }
 
-    const submitSellingUnits = ensureSellingRows(form, sellingUnits)
     const unitRows = form.hasMultipleUnits
-      ? submitSellingUnits.map((row) => ({
+      ? sellingUnits.map((row) => ({
         barcode: String(row.barcode || '').trim(),
         unit: String(row.unit || '').trim(),
         conversion: Number(row.conversion) > 0 ? Number(row.conversion) : 1,
