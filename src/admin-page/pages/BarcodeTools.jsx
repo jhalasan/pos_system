@@ -127,7 +127,9 @@ export default function BarcodeTools() {
   } = useApi(api.authorizationBarcodes, [])
   const admin = currentAdminUser()
   const [authModalOpen, setAuthModalOpen] = useState(false)
-  const [barcodeLabel, setBarcodeLabel] = useState('Product Barcode')
+  const [productBarcodeModalOpen, setProductBarcodeModalOpen] = useState(false)
+  const [barcodeLabel, setBarcodeLabel] = useState('')
+  const [barcodeLabelError, setBarcodeLabelError] = useState('')
   const [generatedBarcodes, setGeneratedBarcodes] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem('nexa_generated_barcodes') || '[]')
@@ -174,17 +176,37 @@ export default function BarcodeTools() {
   }
 
   function generateProductBarcode() {
+    const title = barcodeLabel.trim()
+    if (!title) {
+      setBarcodeLabelError('Barcode label is required.')
+      return
+    }
     const value = `29${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 10)}`
     const entry = {
       id: `product-${value}`,
-      title: barcodeLabel.trim() || 'Product Barcode',
+      title,
       value,
       meta: `Generated ${new Date().toLocaleString('en-PH')}`,
     }
     const next = [entry, ...generatedBarcodes]
     setGeneratedBarcodes(next)
     localStorage.setItem('nexa_generated_barcodes', JSON.stringify(next))
+    setProductBarcodeModalOpen(false)
+    setBarcodeLabel('')
+    setBarcodeLabelError('')
     flash(`Generated barcode ${value}. No product was created.`)
+  }
+
+  function openProductBarcodeModal() {
+    setBarcodeLabel('')
+    setBarcodeLabelError('')
+    setProductBarcodeModalOpen(true)
+  }
+
+  function closeProductBarcodeModal() {
+    setProductBarcodeModalOpen(false)
+    setBarcodeLabel('')
+    setBarcodeLabelError('')
   }
 
   function deleteGeneratedBarcode(id) {
@@ -359,16 +381,9 @@ export default function BarcodeTools() {
             <div className="barcode-action-panel">
               <div>
                 <strong>Generate a standalone barcode</strong>
-                <span>Add a label for identification. You can assign the printed code to a product later in Product Management.</span>
+                <span>You will be asked for the label before the barcode is saved. You can assign the printed code to a product later in Product Management.</span>
               </div>
-              <input
-                className="input"
-                value={barcodeLabel}
-                onChange={(event) => setBarcodeLabel(event.target.value)}
-                placeholder="Barcode label"
-                aria-label="Barcode label"
-              />
-              <button className="btn btn-primary" onClick={generateProductBarcode}>
+              <button className="btn btn-primary" onClick={openProductBarcodeModal}>
                 <IconPlus size={16} /> Generate a Barcode
               </button>
             </div>
@@ -517,6 +532,41 @@ export default function BarcodeTools() {
           </div>
         </section>
       </div>
+
+      {productBarcodeModalOpen && (
+        <Modal
+          title="Generate a Barcode"
+          onClose={closeProductBarcodeModal}
+          footer={(
+            <>
+              <button className="btn btn-outline" onClick={closeProductBarcodeModal}>Cancel</button>
+              <button className="btn btn-primary" onClick={generateProductBarcode}>
+                <IconPlus size={16} /> Save Barcode
+              </button>
+            </>
+          )}
+        >
+          <div className="field">
+            <label htmlFor="product-barcode-label">Barcode Label</label>
+            <input
+              id="product-barcode-label"
+              className="input"
+              value={barcodeLabel}
+              onChange={(event) => {
+                setBarcodeLabel(event.target.value)
+                setBarcodeLabelError('')
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') generateProductBarcode()
+              }}
+              placeholder="e.g. Bottled Water"
+              autoFocus
+            />
+          </div>
+          <p className="sub">This label will appear above the barcode when it is printed.</p>
+          {barcodeLabelError && <div className="alert error">{barcodeLabelError}</div>}
+        </Modal>
+      )}
 
       {authModalOpen && (
         <AuthorizationModal

@@ -1194,13 +1194,22 @@ async function localProductFromForm(data, id = newId('product')) {
   const cost = Number(data.cost)
   const profitMargin = Number(data.profitMargin)
   const conversionQuantity = Number(data.conversionQuantity ?? 1)
+  const categoryName = String(data.category || '').trim()
+  const matchingCategory = categoryName
+    ? await adminDb.categories.filter((category) => (
+      String(category.name || '').trim().toLocaleLowerCase() === categoryName.toLocaleLowerCase()
+    )).first()
+    : null
   return {
     id,
     sku: id,
     name: String(data.name || '').trim(),
     barcode: String(data.barcode || '').trim(),
-    category: String(data.category || '').trim(),
-    categoryId: data.categoryId || '',
+    category: categoryName,
+    // An edited product can still carry the relation ID for its previous
+    // category. Always derive the relation from the selected category name so
+    // the queued cloud update cannot silently restore the old category.
+    categoryId: matchingCategory?.id || '',
     qty: Number.isFinite(qty) ? Math.max(0, qty) : 0,
     unit: data.unit || 'Piece',
     purchaseUnit: String(data.purchaseUnit || 'Box').trim(),
