@@ -1,6 +1,6 @@
 [package]
 name = "nexa-pos-cashier"
-version = "0.1.3"
+version = "0.1.6"
 description = "Offline-first cashier terminal"
 authors = ["Nexa POS"]
 edition = "2021"
