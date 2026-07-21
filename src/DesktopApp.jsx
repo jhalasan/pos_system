@@ -1,6 +1,8 @@
 import { Component, lazy, Suspense, useEffect, useState } from 'react'
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import RoleSelection from './pages/RoleSelection'
+import AdminLogin from './admin-page/pages/Login'
+import Dashboard from './admin-page/pages/Dashboard'
 import { isAuthed, logout as logoutAdminSession } from './admin-page/auth'
 import AdminLayout from './admin-page/components/AdminLayout'
 import BrandedLoader from './components/BrandedLoader'
@@ -9,8 +11,6 @@ import { cashierApi } from './cashier-pos/services/api'
 import './admin-page/index.css'
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth'
-const AdminLogin = lazy(() => import('./admin-page/pages/Login'))
-const Dashboard = lazy(() => import('./admin-page/pages/Dashboard'))
 const Inventory = lazy(() => import('./admin-page/pages/Inventory'))
 const ProductManagement = lazy(() => import('./admin-page/pages/ProductManagement'))
 const BarcodeTools = lazy(() => import('./admin-page/pages/BarcodeTools'))

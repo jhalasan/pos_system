@@ -864,7 +864,9 @@ export const desktopCashierApi = {
     })
       .then(async (records) => {
         await cacheQuickLoginAccounts(records)
-        return mergeAccountsById(records.map(toQuickLoginAccount), cachedAccounts, adminCachedAccounts)
+        // A successful cloud response is authoritative. Merging the pre-refresh
+        // caches here resurrected deleted/disabled cashiers on the login screen.
+        return records.map(toQuickLoginAccount)
           .filter((account) => !String(account.cashierBarcode || '').startsWith('92'))
           .filter((account) => account.email)
       })

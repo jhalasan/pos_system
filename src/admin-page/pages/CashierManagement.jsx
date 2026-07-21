@@ -153,11 +153,6 @@ export default function CashierManagement() {
       return
     }
 
-    if (isEdit && form.email !== form.originalEmail) {
-      setFormError(`Email changes for existing ${staffNoun.toLowerCase()} accounts must be done in PocketBase Admin.`)
-      return
-    }
-
     if (!isEdit && !form.password.trim()) {
       setFormError(`Password is required for new ${staffNoun.toLowerCase()}s.`)
       return
@@ -607,7 +602,6 @@ export default function CashierManagement() {
                 placeholder="name@example.com"
                 value={form.email}
                 onChange={set('email')}
-                disabled={isEdit}
               />
             </div>
             <div className="field span-2">
@@ -648,24 +642,24 @@ export default function CashierManagement() {
                 ))}</div>
               </fieldset>
             )}
-            {!isEdit && (
+            {(
               <>
                 <div className="field">
-                  <label>Password</label>
+                  <label>{isEdit ? 'New Password (optional)' : 'Password'}</label>
                   <input
                     className="input"
                     type="password"
-                    placeholder="At least 8 characters"
+                    placeholder={isEdit ? 'Leave blank to keep current password' : 'At least 8 characters'}
                     value={form.password}
                     onChange={set('password')}
                   />
                 </div>
                 <div className="field">
-                  <label>Confirm Password</label>
+                  <label>{isEdit ? 'Confirm New Password' : 'Confirm Password'}</label>
                   <input
                     className="input"
                     type="password"
-                    placeholder="Repeat password"
+                    placeholder={isEdit ? 'Repeat new password' : 'Repeat password'}
                     value={form.passwordConfirm}
                     onChange={set('passwordConfirm')}
                   />

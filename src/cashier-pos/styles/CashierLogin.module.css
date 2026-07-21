@@ -190,6 +190,14 @@
   color: #111827;
 }
 
+.quick-login-section > small {
+  display: block;
+  margin-top: 8px;
+  color: var(--text-muted, #64748b);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .form-input:hover {
   border-color: #9ca3af;
   background-color: #ffffff;

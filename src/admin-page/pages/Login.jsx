@@ -79,14 +79,10 @@ export default function Login() {
     setError('')
     try {
       await login(email, password)
-      if (isAdminWeb) {
-        nav('/admin/dashboard', { replace: true })
-      } else {
-        // Reinitialize the desktop runtime with the authenticated session. This
-        // avoids races between database startup, sync, and lazy route loading.
-        window.location.hash = '#/admin/dashboard'
-        window.location.reload()
-      }
+      // Keep the desktop WebView alive during the transition. Forcing a full
+      // reload here could intermittently leave Tauri displaying an empty
+      // document before React mounted again.
+      nav('/admin/dashboard', { replace: true })
     } catch (err) {
       setError(err.message || 'Incorrect password. Please try again.')
     } finally {

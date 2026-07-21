@@ -30,6 +30,8 @@ export function normalizeProduct(record, pb) {
       unit: String(unit?.unit || '').trim(),
       conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
       price: Number(unit?.price) || 0,
+      wholesalePrice: Number(unit?.wholesalePrice) || 0,
+      pricingTier: String(unit?.pricingTier || '').trim().toLowerCase(),
     })).filter((unit) => unit.barcode || unit.unit || unit.conversion || unit.price),
     image: image || '',
     imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),

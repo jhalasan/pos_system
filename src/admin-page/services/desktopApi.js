@@ -708,20 +708,7 @@ function cashierBody(data) {
 
 function cashierUpdateBody(data) {
   const body = cashierBody(data)
-  const removeSensitiveFields = (target) => {
-    target.delete('email')
-    target.delete('password')
-    target.delete('passwordConfirm')
-  }
-
-  if (body instanceof FormData) {
-    removeSensitiveFields(body)
-    return body
-  }
-
-  delete body.email
-  delete body.password
-  delete body.passwordConfirm
+  if (body instanceof FormData) return body
   return body
 }
 
@@ -730,26 +717,37 @@ async function cacheUsers(records) {
     ...record,
     id: String(record?.id || record?.cashierId || '').trim(),
   })).filter((record) => record.id)
-  const cachedUsers = await adminDb.users.bulkGet(normalizedRecords.map((record) => record.id))
-  await adminDb.users.bulkPut(normalizedRecords.map((record, index) => ({
-      ...cachedUsers[index],
-      id: record.id,
-      email: record.email,
-      name: record.name || record.email,
-      role: record.role,
-      shift: record.shift || '',
-      status: record.status || 'active',
-      quick_login_enabled: Boolean(record.quick_login_enabled),
-      cashierBarcode: record.void_barcode || record.cashierBarcode || '',
-      void_barcode: record.void_barcode || record.cashierBarcode || '',
-      profile_img: record.profile_img || cachedUsers[index]?.profile_img || '',
-      imageUrl: (() => {
-        const image = Array.isArray(record.profile_img) ? record.profile_img[0] : record.profile_img
-        return image ? pb.files.getURL(record, image, { thumb: '100x100' }) : (cachedUsers[index]?.imageUrl || '')
-      })(),
-      emailVisibility: Boolean(record.emailVisibility),
-      updated: record.updated || new Date().toISOString(),
-    })))
+  await adminDb.transaction('rw', adminDb.users, async () => {
+    for (const record of normalizedRecords) {
+      const cached = await adminDb.users.get(record.id)
+      const email = String(record.email || '').trim().toLowerCase()
+      if (email) {
+        const staleOwners = await adminDb.users
+          .filter((user) => user.id !== record.id && String(user.email || '').trim().toLowerCase() === email)
+          .toArray()
+        if (staleOwners.length) await adminDb.users.bulkDelete(staleOwners.map((user) => user.id))
+      }
+      const image = Array.isArray(record.profile_img) ? record.profile_img[0] : record.profile_img
+      await adminDb.users.put({
+        ...cached,
+        id: record.id,
+        email: record.email,
+        name: record.name || record.email,
+        role: record.role,
+        shift: record.shift || '',
+        status: record.status || 'active',
+        quick_login_enabled: Boolean(record.quick_login_enabled),
+        cashierBarcode: record.void_barcode || record.cashierBarcode || '',
+        void_barcode: record.void_barcode || record.cashierBarcode || '',
+        profile_img: record.profile_img || cached?.profile_img || '',
+        imageUrl: image ? pb.files.getURL(record, image, { thumb: '100x100' }) : (cached?.imageUrl || ''),
+        emailVisibility: Boolean(record.emailVisibility),
+        pendingSync: false,
+        deleted: false,
+        updated: record.updated || new Date().toISOString(),
+      })
+    }
+  })
 }
 
 async function ensureQuickLoginEmailVisibility(records = []) {
@@ -1354,6 +1352,13 @@ async function listDesktopStaff(role = 'cashier') {
       return staffRole === 'manager' ? isManager : record.role === 'cashier' && !isManager
     })
     const records = await ensureQuickLoginEmailVisibility(staffRecords)
+    const cloudIds = new Set(cloudRecords.map((record) => String(record.id)))
+    const staleCachedStaff = await adminDb.users
+      .filter((user) => ['cashier', 'manager'].includes(String(user.role || '')) && !user.pendingSync && !cloudIds.has(String(user.id)))
+      .toArray()
+    if (staleCachedStaff.length) {
+      await adminDb.users.bulkDelete(staleCachedStaff.map((user) => user.id))
+    }
     await cacheUsers(records)
     return records.map((record) => toCashierUser(record, salesTotals.get(record.id)))
   }
@@ -2230,6 +2235,15 @@ export const desktopAdminApi = {
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
       const payload = cashierPayload(data)
+      const normalizedEmail = String(payload.email || '').trim().toLowerCase()
+      const existingEmailOwner = await adminDb.users
+        .filter((user) => String(user.email || '').trim().toLowerCase() === normalizedEmail)
+        .first()
+      if (existingEmailOwner) {
+        throw new Error(existingEmailOwner.deleted
+          ? 'This email belongs to a staff account awaiting deletion. Sync this PC before reusing it.'
+          : 'A staff account with this email already exists. Edit or reactivate that account instead.')
+      }
       if (data.imageFile) {
         payload.profileImage = data.imageFile
         payload.profileImageName = data.imageFile.name
@@ -2264,9 +2278,11 @@ export const desktopAdminApi = {
     if (!staffId) throw new Error('Unable to save this staff account because its ID is missing. Refresh Staff Management and try again.')
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
     if (!(await isCloudReachable())) {
+      if (String(data.password || '').trim()) {
+        throw new Error('Connect to the internet before changing a staff password.')
+      }
       const existing = await adminDb.users.get(staffId)
       const payload = cashierPayload(data)
-      delete payload.email
       delete payload.password
       delete payload.passwordConfirm
       if (data.imageFile) {

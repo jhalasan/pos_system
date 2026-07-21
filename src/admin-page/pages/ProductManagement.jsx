@@ -143,6 +143,7 @@ export default function ProductManagement() {
   const [cat, setCat] = useState('All')
   const [stockFilter, setStockFilter] = useState('all')
   const [lifecycleFilter, setLifecycleFilter] = useState('active')
+  const [integrityFilter, setIntegrityFilter] = useState('')
   const [sortBy, setSortBy] = useState('name-asc')
   const [visibleCount, setVisibleCount] = useState(pageSize)
   const [selectedProducts, setSelectedProducts] = useState(() => new Set())
@@ -176,6 +177,14 @@ export default function ProductManagement() {
     ])]
   }, [categoryRecords, list])
 
+  const duplicateBarcodes = useMemo(() => {
+    const owners = new Map()
+    for (const product of list) {
+      for (const barcode of getProductBarcodes(product)) owners.set(barcode, (owners.get(barcode) || 0) + 1)
+    }
+    return new Set([...owners.entries()].filter(([, count]) => count > 1).map(([barcode]) => barcode))
+  }, [list])
+
   const filtered = useMemo(() => {
     const matches = list.filter((p) => {
       const q = query.trim().toLowerCase()
@@ -190,7 +199,13 @@ export default function ProductManagement() {
       const matchStock = stockFilter === 'all' || status === stockFilter
       const lifecycle = p.lifecycleStatus || 'active'
       const matchLifecycle = lifecycleFilter === 'all' || lifecycle === lifecycleFilter
-      return matchQ && matchC && matchStock && matchLifecycle
+      const matchIntegrity = !integrityFilter
+        || (integrityFilter === 'missing-barcode' && (!p.barcode || String(p.barcode).startsWith('LEGACY-')))
+        || (integrityFilter === 'uncategorized' && (!p.category || /uncategorized/i.test(p.category)))
+        || (integrityFilter === 'invalid-price' && Number(p.price) <= 0)
+        || (integrityFilter === 'negative-stock' && Number(p.qty) < 0)
+        || (integrityFilter === 'duplicate-barcode' && getProductBarcodes(p).some((barcode) => duplicateBarcodes.has(barcode)))
+      return matchQ && matchC && matchStock && matchLifecycle && matchIntegrity
     })
     return matches.sort((a, b) => {
       if (sortBy === 'name-desc') return String(b.name || '').localeCompare(String(a.name || ''), undefined, { sensitivity: 'base' })
@@ -198,22 +213,27 @@ export default function ProductManagement() {
       if (sortBy === 'stock-desc') return (Number(b.qty) || 0) - (Number(a.qty) || 0)
       return String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base' })
     })
-  }, [list, query, cat, stockFilter, lifecycleFilter, sortBy])
+  }, [list, query, cat, stockFilter, lifecycleFilter, integrityFilter, duplicateBarcodes, sortBy])
 
   const visibleProducts = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount])
   const integrity = useMemo(() => {
-    const barcodeOwners = new Map()
-    for (const product of list) {
-      for (const barcode of getProductBarcodes(product)) barcodeOwners.set(barcode, (barcodeOwners.get(barcode) || 0) + 1)
-    }
     return [
-      { label: 'Missing/generated barcodes', value: list.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length, filter: '' },
-      { label: 'Uncategorized', value: list.filter((p) => !p.category || /uncategorized/i.test(p.category)).length, filter: 'Uncategorized (Legacy)' },
-      { label: 'Non-positive prices', value: list.filter((p) => Number(p.price) <= 0).length, filter: '' },
-      { label: 'Negative inventory', value: list.filter((p) => Number(p.qty) < 0).length, filter: '' },
-      { label: 'Duplicate barcodes', value: [...barcodeOwners.values()].filter((count) => count > 1).length, filter: '' },
+      { key: 'missing-barcode', label: 'Missing/generated barcodes', value: list.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length },
+      { key: 'uncategorized', label: 'Uncategorized', value: list.filter((p) => !p.category || /uncategorized/i.test(p.category)).length },
+      { key: 'invalid-price', label: 'Non-positive prices', value: list.filter((p) => Number(p.price) <= 0).length },
+      { key: 'negative-stock', label: 'Negative inventory', value: list.filter((p) => Number(p.qty) < 0).length },
+      { key: 'duplicate-barcode', label: 'Duplicate barcodes', value: duplicateBarcodes.size },
     ]
-  }, [list])
+  }, [list, duplicateBarcodes])
+
+  function applyIntegrityFilter(key) {
+    setIntegrityFilter((current) => current === key ? '' : key)
+    setQuery('')
+    setCat('All')
+    setStockFilter('all')
+    setLifecycleFilter('all')
+    setVisibleCount(pageSize)
+  }
 
   function flash(msg) {
     setToast(msg)
@@ -401,9 +421,12 @@ export default function ProductManagement() {
         {integrity.map((item) => (
           <button
             type="button"
-            className={`integrity-item ${item.value ? 'has-issues' : 'clean'}`}
+            className={`integrity-item ${item.value ? 'has-issues' : 'clean'} ${integrityFilter === item.key ? 'active' : ''}`}
             key={item.label}
-            onClick={() => { if (item.filter) setCat(item.filter); setVisibleCount(pageSize) }}
+            onClick={() => applyIntegrityFilter(item.key)}
+            disabled={item.value === 0}
+            aria-pressed={integrityFilter === item.key}
+            title={item.value ? `Show ${item.label.toLowerCase()}` : `No ${item.label.toLowerCase()}`}
           >
             <strong>{item.value.toLocaleString()}</strong>
             <span>{item.label}</span>
@@ -429,7 +452,7 @@ export default function ProductManagement() {
               className="input"
               placeholder="Search by name, ID, or barcode..."
               value={query}
-              onChange={(e) => { setQuery(e.target.value); setVisibleCount(pageSize) }}
+              onChange={(e) => { setQuery(e.target.value); setIntegrityFilter(''); setVisibleCount(pageSize) }}
             />
           </div>
           <select className="select" value={cat} onChange={(e) => { setCat(e.target.value); setVisibleCount(pageSize) }}>
@@ -493,6 +516,7 @@ export default function ProductManagement() {
                   ? statusLabel['out-of-stock']
                   : statusLabel[p.status] || statusLabel['in-stock']
                 const barcodes = getProductBarcodes(p)
+                const duplicatedProductBarcodes = barcodes.filter((barcode) => duplicateBarcodes.has(barcode))
                 const breakdown = getInventoryBreakdown(p)
                 const remainderBreakdown = getInventoryRemainderBreakdown(p)
                 // Legacy records can have the multi-unit flag set even when
@@ -526,7 +550,13 @@ export default function ProductManagement() {
                       <td className="mono">
                         <div className="barcode-stack">
                           <span>{barcodes[0] || 'No barcode'}</span>
-                          {barcodes.length > 1 ? <small>{barcodes.length} barcodes</small> : null}
+                          {integrityFilter === 'duplicate-barcode' ? (
+                            <div className="duplicate-barcode-list">
+                              {duplicatedProductBarcodes.map((barcode) => (
+                                <small key={barcode}>Duplicate: <strong>{barcode}</strong></small>
+                              ))}
+                            </div>
+                          ) : (barcodes.length > 1 ? <small>{barcodes.length} barcodes</small> : null)}
                         </div>
                       </td>
                       <td>{p.category}</td>

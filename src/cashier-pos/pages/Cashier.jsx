@@ -31,12 +31,27 @@ function normalizeSellingUnits(product = {}) {
   const baseUnit = String(product.unit || 'Piece').trim() || 'Piece';
   const baseBarcode = String(product.barcode || '').trim();
   const parsedUnits = Array.isArray(product.sellingUnits) ? product.sellingUnits : [];
-  const units = parsedUnits.map((unit) => ({
+  const savedUnits = parsedUnits.map((unit) => ({
     barcode: String(unit?.barcode || '').trim(),
     unit: String(unit?.unit || '').trim() || baseUnit,
     conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
     price: Number(unit?.price) || 0,
+    wholesalePrice: Number(unit?.wholesalePrice) || 0,
+    pricingTier: String(unit?.pricingTier || '').trim().toLowerCase(),
   })).filter((unit) => unit.barcode || unit.unit || unit.conversion || unit.price);
+
+  const retailUnits = savedUnits.filter((unit) => unit.pricingTier !== 'wholesale');
+  for (const wholesaleUnit of savedUnits.filter((unit) => unit.pricingTier === 'wholesale')) {
+    const matchingRetail = retailUnits.find((unit) => (
+      unit.unit.toLowerCase() === wholesaleUnit.unit.toLowerCase()
+      && Number(unit.conversion) === Number(wholesaleUnit.conversion)
+    ));
+    if (matchingRetail && !matchingRetail.wholesalePrice) matchingRetail.wholesalePrice = wholesaleUnit.price;
+  }
+  const units = retailUnits.flatMap((unit) => [
+    { ...unit, pricingTier: 'retail' },
+    ...(Number(unit.wholesalePrice) > 0 ? [{ ...unit, price: Number(unit.wholesalePrice), pricingTier: 'wholesale' }] : []),
+  ]);
 
   const hasBase = units.some((unit) => Number(unit.conversion) === 1);
   const normalizedUnits = hasBase
@@ -59,8 +74,9 @@ function normalizeSellingUnits(product = {}) {
 
 function sellingUnitKey(unit = {}) {
   const barcode = String(unit.barcode || '').trim();
-  if (barcode) return `barcode:${barcode}`;
-  return `unit:${String(unit.unit || '').trim().toLowerCase()}:${Number(unit.conversion) || 1}`;
+  const tier = String(unit.pricingTier || '').trim().toLowerCase();
+  if (barcode) return `barcode:${barcode}:${tier}`;
+  return `unit:${String(unit.unit || '').trim().toLowerCase()}:${Number(unit.conversion) || 1}:${tier}`;
 }
 
 function findSellingUnit(product = {}, barcode = '') {
@@ -565,14 +581,27 @@ const Cashier = ({ onLogout, user }) => {
   const filteredProducts = useMemo(() => {
     const query = searchProduct.trim().toLowerCase();
     if (!query) return [];
-    return products.filter((product) =>
-      product.name.toLowerCase().includes(query) ||
-      String(product.barcode || '').toLowerCase().includes(query) ||
-      normalizeSellingUnits(product).some((unit) => (
-        String(unit.barcode || '').toLowerCase().includes(query) ||
-        String(unit.unit || '').toLowerCase().includes(query)
-      ))
-    ).slice(0, 8);
+    const matchesQuery = (product) => {
+      const matchesProduct = String(product.name || '').toLowerCase().includes(query)
+        || String(product.barcode || '').toLowerCase().includes(query)
+        || normalizeSellingUnits(product).some((unit) => (
+          String(unit.barcode || '').toLowerCase().includes(query)
+          || String(unit.unit || '').toLowerCase().includes(query)
+        ));
+      return matchesProduct;
+    };
+    const matches = [];
+    for (const product of products) {
+      const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
+      if (availableStock > 0 && matchesQuery(product)) matches.push(product);
+      if (matches.length === 8) return matches;
+    }
+    for (const product of products) {
+      const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
+      if (availableStock <= 0 && matchesQuery(product)) matches.push(product);
+      if (matches.length === 8) break;
+    }
+    return matches;
   }, [products, searchProduct]);
   const selectedSearchProduct = filteredProducts[selectedSearchIndex];
 
@@ -3781,7 +3810,7 @@ const Cashier = ({ onLogout, user }) => {
                 >
                   {pendingCartUnits.map((unit) => (
                     <option key={sellingUnitKey(unit)} value={sellingUnitKey(unit)}>
-                      {unit.unit} - {money(unit.price)}{Number(unit.conversion) > 1 ? ` / ${unit.conversion} ${pluralUnit(pendingCartProduct.unit || 'base unit', Number(unit.conversion))}` : ''}
+                      {unit.pricingTier ? `${unit.pricingTier[0].toUpperCase()}${unit.pricingTier.slice(1)} · ` : ''}{unit.unit} - {money(unit.price)}{Number(unit.conversion) > 1 ? ` / ${unit.conversion} ${pluralUnit(pendingCartProduct.unit || 'base unit', Number(unit.conversion))}` : ''}
                     </option>
                   ))}
                 </select>

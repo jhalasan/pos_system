@@ -80,6 +80,8 @@ const blank = {
   profitMargin: 0,
   price: 0,
   isPriceManual: false,
+  hasWholesalePrice: false,
+  wholesalePrice: 0,
   hasMultipleUnits: false,
   unitTemplate: 'custom',
 }
@@ -89,13 +91,23 @@ function normalizeSellingUnits(rawUnits = [], fallback = {}) {
   const baseUnit = String(fallback.unit || 'Piece').trim() || 'Piece'
 
   if (parsedUnits.length > 0) {
-    return parsedUnits.map((unit) => ({
+    const retailUnits = parsedUnits.filter((unit) => String(unit?.pricingTier || '').trim().toLowerCase() !== 'wholesale').map((unit) => ({
       barcode: String(unit.barcode || '').trim(),
       unit: String(unit.unit || '').trim() || baseUnit,
       conversion: Number(unit.conversion) > 0 ? Number(unit.conversion) : 1,
       price: Number(unit.price) || 0,
+      wholesalePrice: Number(unit.wholesalePrice) || 0,
       isPriceManual: Boolean(unit.isPriceManual),
+      pricingTier: String(unit.pricingTier || '').trim().toLowerCase(),
     }))
+    for (const wholesale of parsedUnits.filter((unit) => String(unit?.pricingTier || '').trim().toLowerCase() === 'wholesale')) {
+      const matchingRetail = retailUnits.find((unit) => (
+        normalizeUnitKey(unit.unit) === normalizeUnitKey(wholesale.unit)
+        && Number(unit.conversion) === (Number(wholesale.conversion) || 1)
+      ))
+      if (matchingRetail && !matchingRetail.wholesalePrice) matchingRetail.wholesalePrice = Number(wholesale.price) || 0
+    }
+    return retailUnits
   }
 
   return [{
@@ -103,6 +115,7 @@ function normalizeSellingUnits(rawUnits = [], fallback = {}) {
     unit: baseUnit,
     conversion: 1,
     price: 0,
+    wholesalePrice: 0,
     isPriceManual: false,
   }]
 }
@@ -209,11 +222,15 @@ function buildInitialForm(product, categories, isEdit = false) {
   const { baseUnit, purchaseUnit, conversionQuantity } = inferUnitStructure(product, rawSellingUnits)
   const costValue = Number(product?.cost) || Number(product?.price) || 0
   const marginValue = Number(product?.profitMargin) || 0
-  const hasSellingUnitRows = Array.isArray(rawSellingUnits) && rawSellingUnits.length > 1
+  const hasSellingUnitRows = Array.isArray(rawSellingUnits) && rawSellingUnits.some((row) => (
+    Number(row?.conversion) > 1 || (String(row?.unit || '').trim() && normalizeUnitKey(row.unit) !== normalizeUnitKey(baseUnit))
+  ))
   const isMultipleUnits = Boolean((product?.hasMultipleUnits ?? product?.has_multiple_units) || hasSellingUnitRows || conversionQuantity > 1)
   const defaultPrice = deriveSellingPrice(costValue, marginValue, 1, Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1)
   const initialSellingUnits = normalizeSellingUnits(rawSellingUnits, { barcode: product?.barcode || '', unit: baseUnit })
-    .map((unit, index) => (index === 0 ? { ...unit, price: defaultPrice, isPriceManual: false } : unit))
+  const savedPrice = Number(product?.price) || Number(initialSellingUnits[0]?.price) || defaultPrice
+  const savedManualPrice = Boolean(product?.isPriceManual ?? initialSellingUnits[0]?.isPriceManual)
+  initialSellingUnits[0] = { ...initialSellingUnits[0], price: savedManualPrice ? savedPrice : defaultPrice, isPriceManual: savedManualPrice }
 
   const preparedSellingUnits = initialSellingUnits
 
@@ -232,8 +249,10 @@ function buildInitialForm(product, categories, isEdit = false) {
     lowStock: Number(product?.lowStock ?? product?.min_stock ?? blank.lowStock) || 0,
     cost: costValue,
     profitMargin: marginValue,
-    price: defaultPrice,
-    isPriceManual: false,
+    price: savedManualPrice ? savedPrice : defaultPrice,
+    isPriceManual: savedManualPrice,
+    hasWholesalePrice: Number(initialSellingUnits[0]?.wholesalePrice) > 0,
+    wholesalePrice: Number(initialSellingUnits[0]?.wholesalePrice) || 0,
     hasMultipleUnits: isMultipleUnits,
     unitTemplate: isMultipleUnits ? detectUnitTemplate({
       unit: baseUnit,
@@ -300,7 +319,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           ...row,
           unit: String(nextForm.unit || 'Piece').trim() || 'Piece',
           conversion: 1,
-          price: baseUnitPrice,
+          price: nextForm.isPriceManual ? (Number(nextForm.price) || 0) : baseUnitPrice,
           isPriceManual: Boolean(nextForm.isPriceManual),
         }
       }
@@ -347,9 +366,16 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           ...row,
           unit: String(next.unit || 'Piece').trim() || 'Piece',
           conversion: 1,
-          price: deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
-          isPriceManual: false,
+          price: next.isPriceManual ? (Number(next.price) || 0) : deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
+          isPriceManual: Boolean(next.isPriceManual),
         } : row)))
+      }
+
+      if (key === 'price') {
+        next.isPriceManual = true
+        setSellingUnits((current) => current.map((row, index) => (index === 0
+          ? { ...row, price: value === '' ? '' : Number(value) || 0, isPriceManual: true }
+          : row)))
       }
 
       return next
@@ -391,16 +417,16 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }
 
   function addSellingUnit() {
-    const basePrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
     setFormValue('unitTemplate', 'custom')
 
     setSellingUnits((current) => [
       ...current,
       {
         barcode: '',
-        unit: form.unit || 'Piece',
-        conversion: 1,
-        price: basePrice,
+        unit: '',
+        conversion: '',
+        price: '',
+        wholesalePrice: '',
         isPriceManual: false,
       },
     ])
@@ -414,6 +440,13 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
   function updateSellingUnit(index, key, value) {
     setFormValue('unitTemplate', 'custom')
+    if (index === 0 && key === 'price') {
+      setForm((current) => ({
+        ...current,
+        price: value === '' ? '' : Number(value) || 0,
+        isPriceManual: true,
+      }))
+    }
     setSellingUnits((current) => current.map((row, idx) => {
       if (idx !== index) return row
       if (key === 'price') {
@@ -468,6 +501,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           ? existing.price
           : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), Number(templateUnit.conversion), Number(template.conversionQuantity)),
         isPriceManual: Boolean(existing?.isPriceManual),
+        wholesalePrice: Number(existing?.wholesalePrice) || 0,
       }
     })
 
@@ -493,6 +527,8 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
     if (!form.hasMultipleUnits) {
       if (!String(form.barcode || '').trim()) { dialog.alert('Barcode is required for single-unit products.', { title: 'Check product details' }); return }
+      if (!(Number(form.isPriceManual ? form.price : basePrice) > 0)) { dialog.alert('Final retail price must be greater than zero.', { title: 'Check product details' }); return }
+      if (form.hasWholesalePrice && !(Number(form.wholesalePrice) > 0)) { dialog.alert('Wholesale price must be greater than zero.', { title: 'Check product details' }); return }
     } else {
       if (!String(form.purchaseUnit || '').trim()) { dialog.alert('Purchase unit is required.', { title: 'Check product details' }); return }
       if (!Number.isFinite(conversionQuantity) || conversionQuantity <= 1) { dialog.alert('Units per purchase unit must be greater than 1 for multi-unit products.', { title: 'Check product details' }); return }
@@ -505,14 +541,17 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         unit: String(row.unit || '').trim(),
         conversion: Number(row.conversion) > 0 ? Number(row.conversion) : 1,
         price: Number(row.price) || 0,
+        wholesalePrice: Number(row.wholesalePrice) || 0,
         isPriceManual: Boolean(row.isPriceManual),
       }))
       : [{
         barcode: String(form.barcode || '').trim(),
         unit: String(form.unit || '').trim(),
         conversion: 1,
-        price: basePrice,
-        isPriceManual: false,
+        price: form.isPriceManual ? Number(form.price) || 0 : basePrice,
+        wholesalePrice: form.hasWholesalePrice ? Number(form.wholesalePrice) || 0 : 0,
+        isPriceManual: Boolean(form.isPriceManual),
+        pricingTier: 'retail',
       }]
 
     const normalizedSellingUnits = unitRows.filter((row) => row.barcode || row.unit || row.conversion || row.price)
@@ -531,6 +570,8 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       dialog.alert('Selling price must be greater than zero.', { title: 'Check selling units' });
       return
     }
+    const invalidWholesalePrice = normalizedSellingUnits.find((row) => row.wholesalePrice !== '' && Number(row.wholesalePrice) < 0)
+    if (invalidWholesalePrice) { dialog.alert('Wholesale price cannot be negative.', { title: 'Check selling units' }); return }
 
     // Starting stock is only used when the product is created. Inventory can
     // change independently afterwards, so an ordinary details edit must never
@@ -542,6 +583,9 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       ? Math.max(0, Number(product?.initialStock ?? product?.initial_stock) || 0)
       : initialStock
     const baseBarcode = String(normalizedSellingUnits[0]?.barcode || '').trim()
+    const savedProductPrice = form.hasMultipleUnits
+      ? Number(normalizedSellingUnits.find((row) => Number(row.conversion) === 1)?.price) || 0
+      : (form.isPriceManual ? Number(form.price) || 0 : basePrice)
 
     onSave({
       ...form,
@@ -551,7 +595,10 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       lowStock: Number(form.lowStock) || 0,
       cost: costValue,
       profitMargin: marginValue,
-      price: basePrice,
+      price: savedProductPrice,
+      isPriceManual: form.hasMultipleUnits
+        ? Boolean(normalizedSellingUnits.find((row) => Number(row.conversion) === 1)?.isPriceManual)
+        : Boolean(form.isPriceManual),
       purchaseUnit: String(form.purchaseUnit || '').trim(),
       conversionQuantity: form.hasMultipleUnits ? conversionQuantity : 1,
       hasMultipleUnits: Boolean(form.hasMultipleUnits),
@@ -579,6 +626,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
   return (
     <Modal
+      className="product-editor-modal"
       title={isEdit ? 'Edit Product' : 'Add New Product'}
       onClose={onClose}
       footer={
@@ -686,6 +734,23 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           />
         </div>
 
+        {!form.hasMultipleUnits ? (
+          <>
+            <div className="field">
+              <label>Final Retail Price</label>
+              <input className="input" type="number" min="0.01" step="0.01" value={form.price} onChange={(e) => setFormValue('price', e.target.value)} />
+              <small>{form.isPriceManual ? 'Manual price; cost and markup changes will not overwrite it.' : 'Calculated from cost and markup. You may edit it.'}</small>
+            </div>
+            <div className="field">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={form.hasWholesalePrice} onChange={(e) => setFormValue('hasWholesalePrice', e.target.checked)} />
+                Use a separate wholesale price
+              </label>
+              {form.hasWholesalePrice ? <input className="input" type="number" min="0.01" step="0.01" value={form.wholesalePrice} placeholder="Wholesale price" onChange={(e) => setFormNumberValue('wholesalePrice', e.target.value)} /> : null}
+            </div>
+          </>
+        ) : null}
+
         <div className="field">
           <label>Restock Value</label>
           <input className="input" type="number" min="0" value={form.lowStock} onChange={set('lowStock')} />
@@ -756,13 +821,14 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             <div className="field span-2">
               <label>Selling Units & Barcodes</label>
               <div className="table-wrap" style={{ border: '1px solid #e5e7eb', borderRadius: 12, overflow: 'hidden' }}>
-                <table className="data" style={{ width: '100%' }}>
+                <table className="data selling-units-table" style={{ width: '100%' }}>
                   <thead>
                     <tr>
                       <th>Barcode</th>
                       <th>Unit</th>
                       <th>{unitLabel(form.unit)} per Unit</th>
-                      <th>Selling Price</th>
+                      <th>Retail Price</th>
+                      <th>Wholesale Price <small>(Optional)</small></th>
                       <th style={{ width: 48 }}></th>
                     </tr>
                   </thead>
@@ -804,6 +870,17 @@ export default function ProductModal({ mode, product, categories = defaultCatego
                             step="0.01"
                             value={row.price}
                             onChange={(e) => updateSellingUnit(index, 'price', e.target.value)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className="input"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={row.wholesalePrice ?? ''}
+                            placeholder="Retail only"
+                            onChange={(e) => updateSellingUnit(index, 'wholesalePrice', e.target.value)}
                           />
                         </td>
                         <td>

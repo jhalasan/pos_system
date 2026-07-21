@@ -50,12 +50,8 @@ const CashierLogin = ({ onLogin }) => {
         const accounts = await cashierApi.quickLoginAccounts();
         if (!ignore) {
           const normalized = (Array.isArray(accounts) ? accounts : []).filter((account) => String(account?.email || '').trim());
-          if (normalized.length > 0) {
-            localStorage.setItem(QUICK_LOGIN_CACHE_KEY, JSON.stringify(normalized));
-            setQuickAccounts(normalized);
-          } else {
-            setQuickAccounts(cachedQuickAccounts());
-          }
+          localStorage.setItem(QUICK_LOGIN_CACHE_KEY, JSON.stringify(normalized));
+          setQuickAccounts(normalized);
         }
       } catch {
         if (!ignore) setQuickAccounts(cachedQuickAccounts());
@@ -63,7 +59,14 @@ const CashierLogin = ({ onLogin }) => {
     }
 
     loadQuickAccounts();
-    return () => { ignore = true; };
+    const refreshOnFocus = () => { void loadQuickAccounts(); };
+    globalThis.addEventListener?.('focus', refreshOnFocus);
+    globalThis.addEventListener?.('online', refreshOnFocus);
+    return () => {
+      ignore = true;
+      globalThis.removeEventListener?.('focus', refreshOnFocus);
+      globalThis.removeEventListener?.('online', refreshOnFocus);
+    };
   }, []);
 
   const handleSubmit = async (e) => {
@@ -199,7 +202,7 @@ const CashierLogin = ({ onLogin }) => {
         <form onSubmit={handleSubmit} className={styles['login-form']}>
           {quickAccounts.length > 0 && (
             <div className={styles['quick-login-section']}>
-              <div className={styles['quick-login-title']}>Quick Login</div>
+              <div className={styles['quick-login-title']}>Select Cashier Account</div>
               <div className={styles['quick-login-list']}>
                 {quickAccounts.map((account) => (
                   <button
@@ -208,6 +211,7 @@ const CashierLogin = ({ onLogin }) => {
                     className={`${styles['quick-login-account']} ${email === account.email ? styles.active : ''}`}
                     onClick={() => {
                       setEmail(account.email);
+                      setPassword('');
                       setError('');
                     }}
                     disabled={loading}
@@ -222,6 +226,7 @@ const CashierLogin = ({ onLogin }) => {
                   </button>
                 ))}
               </div>
+              <small>Selecting an account fills its email. Enter that cashier's password below.</small>
             </div>
           )}
 
@@ -233,7 +238,7 @@ const CashierLogin = ({ onLogin }) => {
               className={styles['form-input']}
               placeholder="Enter cashier email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(e) => { setEmail(e.target.value); setError(''); }}
               disabled={loading}
             />
           </div>
@@ -247,7 +252,7 @@ const CashierLogin = ({ onLogin }) => {
                 className={styles['form-input']}
                 placeholder="Enter password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => { setPassword(e.target.value); setError(''); }}
                 disabled={loading}
               />
               <button

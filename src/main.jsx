@@ -5,9 +5,11 @@ import AppErrorBoundary from './components/AppErrorBoundary.jsx'
 import CapsLockDetector from './components/CapsLockDetector.jsx'
 import { AppDialogProvider } from './components/AppDialogProvider.jsx'
 import { applyTheme, getStoredTheme } from './utils/themeSettings.js'
+import { disableNumberInputWheelChanges } from './utils/numberInputWheel.js'
 import './global.css'
 
 applyTheme(getStoredTheme())
+disableNumberInputWheelChanges()
 
 // Kept in the entry module because it reports this specific root's first commit.
 // eslint-disable-next-line react-refresh/only-export-components
