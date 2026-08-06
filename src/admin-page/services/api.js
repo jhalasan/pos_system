@@ -132,6 +132,16 @@ const webApi = {
     body: JSON.stringify({ status }),
   }),
   deleteAuthorizationBarcode: (id) => request(`/barcodes/authorization/${id}`, { method: 'DELETE' }),
+  productBarcodeLabels: () => request('/barcodes/product-labels'),
+  createProductBarcodeLabel: (title) => request('/barcodes/product-labels', {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  }),
+  renameProductBarcodeLabel: (id, title) => request(`/barcodes/product-labels/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  }),
+  deleteProductBarcodeLabel: (id) => request(`/barcodes/product-labels/${id}`, { method: 'DELETE' }),
   createProduct: (data) => request('/products', { method: 'POST', body: productBody(data) }),
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PATCH', body: productBody(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),

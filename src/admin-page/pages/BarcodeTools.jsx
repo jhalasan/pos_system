@@ -125,18 +125,18 @@ export default function BarcodeTools() {
     loading: authLoading,
     error: authError,
   } = useApi(api.authorizationBarcodes, [])
+  const {
+    data: generatedBarcodes,
+    setData: setGeneratedBarcodes,
+    loading: generatedLoading,
+    error: generatedError,
+  } = useApi(api.productBarcodeLabels, [])
   const admin = currentAdminUser()
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [productBarcodeModalOpen, setProductBarcodeModalOpen] = useState(false)
   const [barcodeLabel, setBarcodeLabel] = useState('')
   const [barcodeLabelError, setBarcodeLabelError] = useState('')
-  const [generatedBarcodes, setGeneratedBarcodes] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('nexa_generated_barcodes') || '[]')
-    } catch {
-      return []
-    }
-  })
+  const [generating, setGenerating] = useState(false)
   const [printSettings, setPrintSettings] = useState(savedBarcodePrintSettings)
   const [printers, setPrinters] = useState([])
   const [selectedBarcodeIds, setSelectedBarcodeIds] = useState([])
@@ -175,26 +175,25 @@ export default function BarcodeTools() {
     window.setTimeout(() => setToast(''), 2400)
   }
 
-  function generateProductBarcode() {
+  async function generateProductBarcode() {
     const title = barcodeLabel.trim()
     if (!title) {
       setBarcodeLabelError('Barcode label is required.')
       return
     }
-    const value = `29${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 10)}`
-    const entry = {
-      id: `product-${value}`,
-      title,
-      value,
-      meta: `Generated ${new Date().toLocaleString('en-PH')}`,
+    setGenerating(true)
+    try {
+      const entry = await api.createProductBarcodeLabel(title)
+      setGeneratedBarcodes([entry, ...generatedBarcodes])
+      setProductBarcodeModalOpen(false)
+      setBarcodeLabel('')
+      setBarcodeLabelError('')
+      flash(`Generated barcode ${entry.value}. No product was created.`)
+    } catch (err) {
+      setBarcodeLabelError(err.message || 'Unable to generate barcode.')
+    } finally {
+      setGenerating(false)
     }
-    const next = [entry, ...generatedBarcodes]
-    setGeneratedBarcodes(next)
-    localStorage.setItem('nexa_generated_barcodes', JSON.stringify(next))
-    setProductBarcodeModalOpen(false)
-    setBarcodeLabel('')
-    setBarcodeLabelError('')
-    flash(`Generated barcode ${value}. No product was created.`)
   }
 
   function openProductBarcodeModal() {
@@ -209,22 +208,29 @@ export default function BarcodeTools() {
     setBarcodeLabelError('')
   }
 
-  function deleteGeneratedBarcode(id) {
-    const next = generatedBarcodes.filter((barcode) => barcode.id !== id)
-    setGeneratedBarcodes(next)
-    setSelectedBarcodeIds((current) => current.filter((selectedId) => selectedId !== id))
-    localStorage.setItem('nexa_generated_barcodes', JSON.stringify(next))
+  async function deleteGeneratedBarcode(id) {
+    try {
+      await api.deleteProductBarcodeLabel(id)
+      setGeneratedBarcodes(generatedBarcodes.filter((barcode) => barcode.id !== id))
+      setSelectedBarcodeIds((current) => current.filter((selectedId) => selectedId !== id))
+      flash('Barcode deleted.')
+    } catch (err) {
+      flash(err.message || 'Unable to delete barcode.')
+    }
   }
 
   async function renameGeneratedBarcode(barcode) {
     const title = await dialog.prompt('Enter a new name for this barcode.', barcode.title, { title: 'Rename barcode', confirmLabel: 'Save name' })
     if (title === null || !title.trim()) return
-    const next = generatedBarcodes.map((item) => (
-      item.id === barcode.id ? { ...item, title: title.trim() } : item
-    ))
-    setGeneratedBarcodes(next)
-    localStorage.setItem('nexa_generated_barcodes', JSON.stringify(next))
-    flash('Barcode renamed.')
+    try {
+      const updated = await api.renameProductBarcodeLabel(barcode.id, title.trim())
+      setGeneratedBarcodes(generatedBarcodes.map((item) => (
+        item.id === barcode.id ? updated : item
+      )))
+      flash('Barcode renamed.')
+    } catch (err) {
+      flash(err.message || 'Unable to rename barcode.')
+    }
   }
 
   function updatePrintSettings(patch) {
@@ -389,6 +395,15 @@ export default function BarcodeTools() {
             </div>
 
             <div className="section-sub">Generated Product Barcodes</div>
+            {generatedLoading ? (
+              <BrandedLoader compact message="Loading generated barcodes…" />
+            ) : generatedError ? (
+              <div className="empty" style={{ padding: '34px 20px' }}>
+                <div className="em-icon"><IconTag size={24} /></div>
+                <h4>Unable to load generated barcodes</h4>
+                <p>{generatedError}</p>
+              </div>
+            ) : (
             <div className="barcode-list">
               {generatedBarcodes.length === 0 ? (
                 <div className="empty" style={{ padding: '34px 20px' }}>
@@ -439,6 +454,7 @@ export default function BarcodeTools() {
                 </div>
               ))}
             </div>
+            )}
           </div>
         </section>
 
@@ -539,9 +555,9 @@ export default function BarcodeTools() {
           onClose={closeProductBarcodeModal}
           footer={(
             <>
-              <button className="btn btn-outline" onClick={closeProductBarcodeModal}>Cancel</button>
-              <button className="btn btn-primary" onClick={generateProductBarcode}>
-                <IconPlus size={16} /> Save Barcode
+              <button className="btn btn-outline" onClick={closeProductBarcodeModal} disabled={generating}>Cancel</button>
+              <button className="btn btn-primary" onClick={generateProductBarcode} disabled={generating}>
+                <IconPlus size={16} /> {generating ? 'Saving...' : 'Save Barcode'}
               </button>
             </>
           )}

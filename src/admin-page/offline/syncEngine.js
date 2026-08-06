@@ -522,6 +522,47 @@ export class AdminSyncEngine extends EventTarget {
       return
     }
 
+    if (op.type === 'createProductBarcodeLabel') {
+      const saved = await this.pb.collection('product_barcode_labels').create({
+        code: op.payload.barcode,
+        title: op.payload.title,
+        generated_by: op.payload.generatedById,
+      }, { expand: 'generated_by', requestKey: op.id })
+      const generatedBy = Array.isArray(saved.expand?.generated_by) ? saved.expand.generated_by[0] : saved.expand?.generated_by
+      await adminDb.transaction('rw', adminDb.productBarcodeLabels, adminDb.pendingOps, async () => {
+        await adminDb.productBarcodeLabels.delete(op.productId)
+        await adminDb.productBarcodeLabels.put({
+          id: saved.id,
+          barcode: saved.code,
+          title: saved.title,
+          generatedBy: generatedBy?.name || generatedBy?.email || op.payload.generatedBy,
+          generatedById: generatedBy?.id || op.payload.generatedById,
+          createdAt: saved.created,
+          pendingSync: false,
+        })
+        const laterOps = await adminDb.pendingOps.where('productId').equals(op.productId).toArray()
+        for (const laterOp of laterOps) await adminDb.pendingOps.update(laterOp.id, { productId: saved.id })
+        await adminDb.pendingOps.delete(op.id)
+      })
+      return
+    }
+
+    if (op.type === 'renameProductBarcodeLabel') {
+      await this.pb.collection('product_barcode_labels').update(op.productId, op.payload, { requestKey: op.id })
+      await adminDb.productBarcodeLabels.update(op.productId, { ...op.payload, pendingSync: false })
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
+    if (op.type === 'deleteProductBarcodeLabel') {
+      await this.pb.collection('product_barcode_labels').delete(op.productId, { requestKey: op.id }).catch((error) => {
+        if (error?.status !== 404) throw error
+      })
+      await adminDb.productBarcodeLabels.delete(op.productId)
+      await adminDb.pendingOps.delete(op.id)
+      return
+    }
+
     if (op.type === 'createProduct') {
       const existing = await findCloudProductByBarcode(this.pb, op.payload?.barcode)
       const saved = existing
@@ -549,7 +590,13 @@ export class AdminSyncEngine extends EventTarget {
       const cloudProduct = normalizeProduct(target, this.pb)
       const conflictFields = ['name', 'barcode', 'categoryId', 'unit', 'purchaseUnit', 'conversionQuantity', 'lowStock', 'price', 'cost', 'sellingUnits']
         .filter((field) => JSON.stringify(op.payload?.[field] ?? null) !== JSON.stringify(cloudProduct?.[field] ?? null))
-      if (!op.payload?.forceConflictResolution && conflictFields.length > 0 && new Date(target.updated).getTime() > new Date(op.createdAt).getTime()) {
+      // Compare against the cloud state this edit was actually based on
+      // (baseUpdated), not the local device clock (op.createdAt) vs the
+      // server clock — otherwise the sync engine's own successful write from
+      // an earlier queued edit on the same product looks like an external
+      // conflict against a later edit that was staged before that write.
+      const baseUpdated = op.payload?.baseUpdated
+      if (!op.payload?.forceConflictResolution && conflictFields.length > 0 && baseUpdated && new Date(target.updated).getTime() > new Date(baseUpdated).getTime()) {
         const conflictError = new Error('Newer cloud product data requires review.')
         conflictError.syncConflict = {
           type: 'product',
@@ -557,7 +604,7 @@ export class AdminSyncEngine extends EventTarget {
           local: op.payload,
           cloud: cloudProduct,
           cloudUpdated: target.updated,
-          localUpdated: op.createdAt,
+          localUpdated: baseUpdated,
         }
         throw conflictError
       }

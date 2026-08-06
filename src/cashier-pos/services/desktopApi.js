@@ -668,6 +668,9 @@ async function adminCachedProductByBarcode(barcode) {
 
   try {
     await initializeAdminDb()
+    const indexedMatch = await adminDb.products.where('barcode').equals(normalizedBarcode).first()
+    if (indexedMatch && !indexedMatch.deleted) return normalizeProduct(indexedMatch)
+
     const record = await adminDb.products
       .filter((candidate) => (
         !candidate.deleted
@@ -919,34 +922,45 @@ export const desktopCashierApi = {
     }
 
     if (!isPocketBaseRateLimited()) {
-      const activeRuntime = await runtime()
-      await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
-        rememberPocketBaseRateLimit(error)
-      })
-      const refreshedProduct = await getProductByBarcode(barcode)
-      if (refreshedProduct) {
-        product = refreshedProduct
-      }
-
-      // Resolve directly from the just-contacted cloud as a final safeguard.
-      // This keeps a valid selling-unit barcode usable even if an older local
-      // IndexedDB catalog did not persist the sellingUnits property correctly.
       if (!product) {
-        const normalizedBarcode = String(barcode || '').trim()
-        const cloudRecords = await activeRuntime.pb.collection('products').getFullList({
-          expand: 'category',
-          requestKey: null,
+        // True cache miss: nothing to show yet, so it's worth the wait to
+        // check the cloud before telling the cashier the barcode is unknown.
+        const activeRuntime = await runtime()
+        await refreshLocalProductCatalog({ pb: activeRuntime.pb }).catch((error) => {
+          rememberPocketBaseRateLimit(error)
         })
-        const cloudRecord = cloudRecords.find((record) => (
-          barcodesMatch(record.barcode, normalizedBarcode)
-          || (Array.isArray(record.selling_units) && record.selling_units.some((unit) => (
-            barcodesMatch(unit?.barcode, normalizedBarcode)
-          )))
-        ))
-        if (cloudRecord) {
-          product = normalizeProduct(cloudRecord, activeRuntime.pb)
-          await cashierDb.products.put(product)
+        const refreshedProduct = await getProductByBarcode(barcode)
+        if (refreshedProduct) {
+          product = refreshedProduct
         }
+
+        // Resolve directly from the just-contacted cloud as a final safeguard.
+        // This keeps a valid selling-unit barcode usable even if an older local
+        // IndexedDB catalog did not persist the sellingUnits property correctly.
+        if (!product) {
+          const normalizedBarcode = String(barcode || '').trim()
+          const cloudRecords = await activeRuntime.pb.collection('products').getFullList({
+            expand: 'category',
+            requestKey: null,
+          })
+          const cloudRecord = cloudRecords.find((record) => (
+            barcodesMatch(record.barcode, normalizedBarcode)
+            || (Array.isArray(record.selling_units) && record.selling_units.some((unit) => (
+              barcodesMatch(unit?.barcode, normalizedBarcode)
+            )))
+          ))
+          if (cloudRecord) {
+            product = normalizeProduct(cloudRecord, activeRuntime.pb)
+            await cashierDb.products.put(product)
+          }
+        }
+      } else {
+        // Already have a product to show — don't make the cashier wait on a
+        // full catalog re-sync just to open the confirm-quantity popup.
+        // Refresh in the background so later scans stay fresh.
+        runtime()
+          .then((activeRuntime) => refreshLocalProductCatalog({ pb: activeRuntime.pb }))
+          .catch((error) => rememberPocketBaseRateLimit(error))
       }
     }
     if (!product && isPocketBaseRateLimited()) {

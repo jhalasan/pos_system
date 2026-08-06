@@ -26,7 +26,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation2809058197",
@@ -434,7 +434,11 @@
         "required": false,
         "system": false,
         "type": "select",
-        "values": ["active", "inactive", "archived"]
+        "values": [
+          "active",
+          "inactive",
+          "archived"
+        ]
       },
       {
         "hidden": false,
@@ -644,7 +648,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation786105481",
@@ -771,7 +775,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation492071365",
@@ -968,7 +972,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000202",
@@ -1050,7 +1054,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000301",
@@ -1390,7 +1394,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000402",
@@ -1462,7 +1466,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000403",
@@ -1588,7 +1592,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000502",
@@ -1853,7 +1857,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000601",
@@ -2044,7 +2048,7 @@
       },
       {
         "cascadeDelete": false,
-        "collectionId": "pbc_1736455494",
+        "collectionId": "_pb_users_auth_",
         "help": "",
         "hidden": false,
         "id": "relation100000101",
@@ -2087,7 +2091,105 @@
     "system": false
   },
   {
-    "id": "pbc_1736455494",
+    "id": "pbc_3251823025",
+    "listRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "viewRule": "@request.auth.role = \"cashier\" || @request.auth.role = \"admin\"",
+    "createRule": "@request.auth.role = \"admin\"",
+    "updateRule": "@request.auth.role = \"admin\"",
+    "deleteRule": "@request.auth.role = \"admin\"",
+    "name": "product_barcode_labels",
+    "type": "base",
+    "fields": [
+      {
+        "autogeneratePattern": "[a-z0-9]{15}",
+        "help": "",
+        "hidden": false,
+        "id": "text3208210256",
+        "max": 15,
+        "min": 15,
+        "name": "id",
+        "pattern": "^[a-z0-9]+$",
+        "presentable": false,
+        "primaryKey": true,
+        "required": true,
+        "system": true,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "Standalone printable barcode not yet assigned to a product.",
+        "hidden": false,
+        "id": "text100000201",
+        "max": 32,
+        "min": 0,
+        "name": "code",
+        "pattern": "^[0-9]+$",
+        "presentable": true,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "autogeneratePattern": "",
+        "help": "",
+        "hidden": false,
+        "id": "text100000202",
+        "max": 120,
+        "min": 0,
+        "name": "title",
+        "pattern": "",
+        "presentable": true,
+        "primaryKey": false,
+        "required": true,
+        "system": false,
+        "type": "text"
+      },
+      {
+        "cascadeDelete": false,
+        "collectionId": "_pb_users_auth_",
+        "help": "",
+        "hidden": false,
+        "id": "relation100000201",
+        "maxSelect": 1,
+        "minSelect": 0,
+        "name": "generated_by",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "relation"
+      },
+      {
+        "hidden": false,
+        "id": "autodate100000201",
+        "name": "created",
+        "onCreate": true,
+        "onUpdate": false,
+        "presentable": false,
+        "system": false,
+        "type": "autodate"
+      },
+      {
+        "hidden": false,
+        "id": "autodate100000202",
+        "name": "updated",
+        "onCreate": true,
+        "onUpdate": true,
+        "presentable": false,
+        "system": false,
+        "type": "autodate"
+      }
+    ],
+    "indexes": [
+      "CREATE UNIQUE INDEX `idx_product_barcode_labels_code` ON `product_barcode_labels` (`code`) WHERE `code` != ''",
+      "CREATE INDEX `idx_product_barcode_labels_generated_by` ON `product_barcode_labels` (`generated_by`)"
+    ],
+    "created": "2026-08-06 00:00:00.000Z",
+    "updated": "2026-08-06 00:00:00.000Z",
+    "system": false
+  },
+  {
+    "id": "_pb_users_auth_",
     "listRule": null,
     "viewRule": null,
     "createRule": null,

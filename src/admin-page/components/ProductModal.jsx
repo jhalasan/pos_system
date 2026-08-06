@@ -563,6 +563,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     const emptySellingUnit = normalizedSellingUnits.find((row) => !row.unit)
     if (emptySellingUnit) { dialog.alert('Selling unit names cannot be empty.', { title: 'Check selling units' }); return }
 
+    if (form.hasMultipleUnits && !normalizedSellingUnits.some((row) => row.barcode)) {
+      dialog.alert('At least one selling unit needs a barcode.', { title: 'Check selling units' })
+      return
+    }
+
     const invalidPrice = normalizedSellingUnits.find((row) => Number(row.price) <= 0)
     if (form.hasMultipleUnits && invalidPrice) { dialog.alert('Selling price must be greater than zero.', { title: 'Check selling units' }); return }
 
@@ -582,7 +587,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     const savedInitialStock = isEdit
       ? Math.max(0, Number(product?.initialStock ?? product?.initial_stock) || 0)
       : initialStock
-    const baseBarcode = String(normalizedSellingUnits[0]?.barcode || '').trim()
+    const baseBarcode = String(
+      normalizedSellingUnits.find((row) => row.barcode)?.barcode
+      || normalizedSellingUnits[0]?.barcode
+      || '',
+    ).trim()
     const savedProductPrice = form.hasMultipleUnits
       ? Number(normalizedSellingUnits.find((row) => Number(row.conversion) === 1)?.price) || 0
       : (form.isPriceManual ? Number(form.price) || 0 : basePrice)

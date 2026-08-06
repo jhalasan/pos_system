@@ -77,6 +77,13 @@ export async function getProductByBarcode(barcode) {
   const normalizedBarcode = normalizeBarcode(barcode)
   if (!normalizedBarcode) return undefined
 
+  // Fast path: the vast majority of scans hit the base product barcode
+  // exactly as stored, so an indexed lookup avoids a full-table scan of the
+  // (potentially thousands of rows) product catalog. Falls through to the
+  // slower case-insensitive/digit-only matching below for edge cases.
+  const indexedMatch = await cashierDb.products.where('barcode').equals(normalizedBarcode).first()
+  if (indexedMatch && (indexedMatch.lifecycleStatus || 'active') === 'active') return indexedMatch
+
   const baseProduct = await cashierDb.products
     .filter((product) => (product.lifecycleStatus || 'active') === 'active' && barcodesMatch(product.barcode, normalizedBarcode))
     .first()
