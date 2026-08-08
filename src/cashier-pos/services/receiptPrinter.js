@@ -1,5 +1,4 @@
 const RECEIPT_WIDTH = 32
-const DEFAULT_PRINTER_NAME = 'XP-58H'
 const DEFAULT_COPY_COUNT = 1
 const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings'
 const STORE_NAME = 'ARJOV CONSUMER GOODS TRADING'
@@ -16,6 +15,21 @@ const REFUND_RETURN_POLICY_LINES = [
 
 function tauriInvoke() {
   return window.__TAURI__?.core?.invoke || window.__TAURI__?.invoke
+}
+
+// When no printer is explicitly configured, resolve the real Windows default
+// printer name so PDF-virtual-printer detection (isVirtualPdfPrinter) can see
+// it too. Passing an empty name straight to print_receipt/printer_status also
+// resolves the default on the backend, but without the name in hand here we
+// can't tell whether that default happens to be a PDF printer.
+async function resolveDefaultPrinterName(invoke) {
+  try {
+    const printers = await invoke('list_printers')
+    const defaultPrinter = Array.isArray(printers) ? printers.find((printer) => printer.isDefault) : null
+    return defaultPrinter?.name || ''
+  } catch {
+    return ''
+  }
 }
 
 function envNumber(value, fallback) {
@@ -39,7 +53,10 @@ function savedReceiptPrinterName() {
 }
 
 function receiptPrinterName(options = {}) {
-  return String(options.printerName || savedReceiptPrinterName() || import.meta.env.VITE_RECEIPT_PRINTER_NAME || DEFAULT_PRINTER_NAME).trim()
+  // Empty string is intentional here: it tells the Tauri backend to resolve
+  // the actual Windows default printer (GetDefaultPrinterW) instead of
+  // guessing a fixed name that may not match what's installed.
+  return String(options.printerName || savedReceiptPrinterName() || import.meta.env.VITE_RECEIPT_PRINTER_NAME || '').trim()
 }
 
 function savedReceiptSpacing() {
@@ -386,7 +403,7 @@ function isVirtualPdfPrinter(printerName) {
 }
 
 export async function printCompletedReceipt(receiptData, options = {}) {
-  const printerName = receiptPrinterName(options)
+  let printerName = receiptPrinterName(options)
   const receipts = receiptTexts(receiptData, options)
   const openCashDrawer = Boolean(options.openCashDrawer)
   const spacing = savedReceiptSpacing()
@@ -394,6 +411,10 @@ export async function printCompletedReceipt(receiptData, options = {}) {
   const afterFeedLines = clampNumber(options.afterFeedLines ?? spacing.afterLines, 0, 0, 8)
   const documentName = options.documentName || `Receipt ${receiptData?.transactionNo || ''}`.trim()
   const invoke = tauriInvoke()
+
+  if (invoke && !printerName) {
+    printerName = await resolveDefaultPrinterName(invoke)
+  }
 
   // Windows PDF printers cannot render the RAW ESC/POS bytes used by thermal
   // printers and otherwise create a zero-byte file. Generate a real PDF instead.
@@ -482,11 +503,15 @@ export async function printShiftCloseReceipt(shiftCloseData, options = {}) {
 }
 
 export async function openCashDrawer(options = {}) {
-  const printerName = receiptPrinterName(options)
+  let printerName = receiptPrinterName(options)
   const invoke = tauriInvoke()
 
   if (!invoke) {
     throw new Error('Cash drawer opening is only available in the desktop app.')
+  }
+
+  if (!printerName) {
+    printerName = await resolveDefaultPrinterName(invoke)
   }
 
   if (isVirtualPdfPrinter(printerName)) {

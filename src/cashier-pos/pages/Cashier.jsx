@@ -2701,15 +2701,23 @@ const Cashier = ({ onLogout, user }) => {
           customerNameOverride: customerName,
         });
         const splitCash = parseFloat(flowSplitPayments.cash) || 0;
+        const opensDrawer = method === 'cash' || (method === 'split' && splitCash > 0);
+        const drawerOpenSucceeded = opensDrawer
+          ? await openCashRegisterForActivity(
+              'completed transaction',
+              `Cash drawer open command sent after completed transaction ${completedTxn?.completedSale?.transactionNo || completedTxn?.transactionNo || activeTxn.transactionNo}; physical status is not detectable.`
+            )
+          : false;
         setPaymentFlow((current) => ({
           ...current,
           busy: false,
-          step: method === 'cash' || (method === 'split' && splitCash > 0) ? 'change' : 'receipt',
+          step: opensDrawer ? 'change' : 'receipt',
           amount: String(paidCash),
           gcashAmount: String(paidGcash),
           splitPayments: flowSplitPayments,
           customerName,
           completedTxn,
+          drawerOpenSucceeded,
         }));
       } catch (err) {
         setPaymentFlow((current) => ({
@@ -2722,26 +2730,12 @@ const Cashier = ({ onLogout, user }) => {
     }
 
     if (paymentFlow.step === 'change') {
-      setPaymentFlow((current) => ({ ...current, busy: true, error: '' }));
-      try {
-        const txn = paymentFlow.completedTxn;
-        const drawerOpenSucceeded = await openCashRegisterForActivity(
-          'completed transaction',
-          `Cash drawer open command sent after completed transaction ${txn?.completedSale?.transactionNo || txn?.transactionNo || activeTxn.transactionNo}; physical status is not detectable.`
-        );
-        const nextStep = getPostChangeFlowStep({
-          method: paymentFlow.method,
-          splitCash: Number(paymentFlow.splitPayments?.cash || 0),
-          drawerOpenSucceeded,
-        });
-        setPaymentFlow((current) => ({ ...current, busy: false, step: nextStep }));
-      } catch (err) {
-        setPaymentFlow((current) => ({
-          ...current,
-          busy: false,
-          error: (typeof err === 'string' ? err : err.message) || 'Unable to open cash register.',
-        }));
-      }
+      const nextStep = getPostChangeFlowStep({
+        method: paymentFlow.method,
+        splitCash: Number(paymentFlow.splitPayments?.cash || 0),
+        drawerOpenSucceeded: paymentFlow.drawerOpenSucceeded,
+      });
+      setPaymentFlow((current) => ({ ...current, step: nextStep }));
       return;
     }
 
@@ -3580,7 +3574,7 @@ const Cashier = ({ onLogout, user }) => {
                   : paymentFlow.step === 'customer'
                     ? 'Continue'
                   : paymentFlow.step === 'change'
-                    ? 'Open Register'
+                    ? 'Continue'
                     : 'Print Receipt'}
             </button>
           </div>
@@ -3720,7 +3714,11 @@ const Cashier = ({ onLogout, user }) => {
           )}
 
           {paymentFlow.step === 'change' && (
-            <p className={styles['payment-flow-instruction']}>Press Enter to open the cash register.</p>
+            <p className={styles['payment-flow-instruction']}>
+              {paymentFlow.drawerOpenSucceeded
+                ? 'Cash drawer opened automatically. Press Enter to continue.'
+                : 'Cash drawer did not open automatically. Press Enter to continue.'}
+            </p>
           )}
 
           {paymentFlow.step === 'register' && (
@@ -4933,7 +4931,13 @@ const Cashier = ({ onLogout, user }) => {
                       value={receiptSettings.printerName || ''}
                       onChange={(e) => saveReceiptSettings({ printerName: e.target.value })}
                     >
-                      <option value="">System default ({import.meta.env.VITE_RECEIPT_PRINTER_NAME || 'XP-58H'})</option>
+                      <option value="">
+                        System default{import.meta.env.VITE_RECEIPT_PRINTER_NAME
+                          ? ` (${import.meta.env.VITE_RECEIPT_PRINTER_NAME})`
+                          : receiptPrinters.find((printer) => printer.isDefault)
+                            ? ` (${receiptPrinters.find((printer) => printer.isDefault).name})`
+                            : ' (Windows default printer)'}
+                      </option>
                       {receiptSettings.printerName && !receiptPrinters.some((printer) => printer.name === receiptSettings.printerName) && (
                         <option value={receiptSettings.printerName}>{receiptSettings.printerName}</option>
                       )}
