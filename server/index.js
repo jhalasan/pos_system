@@ -19,8 +19,10 @@ import {
   activityLogPayload,
   cashierFormData,
   deriveStatus,
+  isFractional,
   productPayload,
   productFormData,
+  quantizeQty,
   toActivityLog,
   toCashier,
   toProduct,
@@ -564,7 +566,7 @@ function productRelationId(value) {
 
 function numberFieldValue(value) {
   const number = Number(value)
-  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+  return String(Number.isFinite(number) ? Math.max(0, quantizeQty(number)) : 0)
 }
 
 function parseSellingUnits(value) {
@@ -1110,8 +1112,8 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   })
 
   for (const { product, item, quantity, baseQuantity } of productRecords) {
-    const previousQty = Number(product.quantity) || 0
-    const nextQty = Math.max(0, previousQty - baseQuantity)
+    const previousQty = quantizeQty(product.quantity)
+    const nextQty = Math.max(0, quantizeQty(previousQty - baseQuantity))
     await saleItems.create({
       sale_id: sale.id,
       product_id: product.id,
@@ -1187,7 +1189,7 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
     const productId = productRelationId(item.product_id)
     if (!productId) continue
     const product = await products.getOne(productId)
-    const previousQty = Number(product.quantity) || 0
+    const previousQty = quantizeQty(product.quantity)
     let returnedQty = Number(item.base_quantity_sold) || 0
     if (!returnedQty) {
       // Fallback: try to infer conversion from matching_unit_barcode or unit price
@@ -1205,7 +1207,7 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
         }
       }
     }
-    const nextQty = previousQty + returnedQty
+    const nextQty = quantizeQty(previousQty + returnedQty)
     await products.update(product.id, {
       quantity: numberFieldValue(nextQty),
     })
@@ -1283,7 +1285,6 @@ app.delete('/api/products/:id', asyncRoute(async (req, res) => {
 app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
   const barcode = String(req.body.barcode || '').trim()
   const productId = String(req.body.productId || '').trim()
-  const qty = Number(req.body.qty) || 1
   if (!barcode && !productId) return res.status(400).json({ error: 'Barcode or product is required.' })
 
   const products = await pbCollection('products')
@@ -1292,14 +1293,16 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
     : await findProductByScanBarcode(barcode)
   if (!record) return res.status(404).json({ error: barcode ? `No product found for barcode "${barcode}".` : 'No product found.' })
 
+  const fractional = isFractional(record)
+  const qty = fractional ? Math.max(0.001, quantizeQty(req.body.qty)) : Math.max(1, Math.floor(Number(req.body.qty) || 1))
   const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
   const requestConversion = Number(req.body.unitConversion)
   const conversion = Number(matchingUnit?.conversion) > 0
     ? Number(matchingUnit.conversion)
     : (Number.isFinite(requestConversion) && requestConversion > 0 ? requestConversion : 1)
-  const previousQty = Number(record.quantity) || 0
-  const movementQty = qty * conversion
-  const nextQty = previousQty + movementQty
+  const previousQty = quantizeQty(record.quantity)
+  const movementQty = quantizeQty(qty * conversion)
+  const nextQty = quantizeQty(previousQty + movementQty)
   const updated = await products.update(record.id, { quantity: numberFieldValue(nextQty) }, { expand: 'category' })
   await createStockMovement({
     productId: record.id,
@@ -1310,14 +1313,13 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
     referenceType: 'inventory_scan',
     notes: `Stock in by ${barcode ? `barcode ${barcode}` : `${qty} ${req.body.unitLabel || 'unit(s)'}`}`,
   })
-  await createLog({ action: 'Stock Update', detail: `Added ${qty * conversion} base unit(s) to "${record.name}"` })
+  await createLog({ action: 'Stock Update', detail: `Added ${movementQty} base unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
 }))
 
 app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
   const barcode = String(req.body.barcode || '').trim()
   const productId = String(req.body.productId || '').trim()
-  const qty = Math.max(1, Math.floor(Number(req.body.qty) || 1))
   const reason = String(req.body.reason || 'other').trim()
   const note = String(req.body.note || '').trim()
   if (!barcode && !productId) return res.status(400).json({ error: 'Barcode or product is required.' })
@@ -1328,16 +1330,18 @@ app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
     : await findProductByScanBarcode(barcode)
   if (!record) return res.status(404).json({ error: barcode ? `No product found for barcode "${barcode}".` : 'No product found.' })
 
+  const fractional = isFractional(record)
+  const qty = fractional ? Math.max(0.001, quantizeQty(req.body.qty)) : Math.max(1, Math.floor(Number(req.body.qty) || 1))
   const matchingUnit = parseSellingUnits(record.selling_units).find((unit) => String(unit?.barcode || '').trim() === barcode)
   const requestConversion = Number(req.body.unitConversion)
   const conversion = Number(matchingUnit?.conversion) > 0
     ? Number(matchingUnit.conversion)
     : (Number.isFinite(requestConversion) && requestConversion > 0 ? requestConversion : 1)
-  const currentQty = Number(record.quantity) || 0
-  const baseUnitsToRemove = qty * conversion
+  const currentQty = quantizeQty(record.quantity)
+  const baseUnitsToRemove = quantizeQty(qty * conversion)
   if (currentQty < baseUnitsToRemove) return res.status(409).json({ error: `"${record.name}" has only ${currentQty} base unit(s) in stock.` })
 
-  const nextQty = currentQty - baseUnitsToRemove
+  const nextQty = quantizeQty(currentQty - baseUnitsToRemove)
   const updated = await products.update(record.id, {
     quantity: numberFieldValue(nextQty),
   }, { expand: 'category' })
@@ -1867,7 +1871,7 @@ app.get('/api/gcash-payments', asyncRoute(async (_req, res) => {
 
 app.post('/api/inventory/adjust-count', asyncRoute(async (req, res) => {
   const productId = String(req.body.productId || '').trim()
-  const countedQty = Number(req.body.countedQty)
+  const countedQty = quantizeQty(Number(req.body.countedQty))
   const reason = String(req.body.reason || '').trim()
   const note = String(req.body.note || '').trim()
   if (!productId) return res.status(400).json({ error: 'Product is required.' })
@@ -1876,8 +1880,11 @@ app.post('/api/inventory/adjust-count', asyncRoute(async (req, res) => {
   const products = await pbCollection('products')
   const record = await products.getOne(productId, { expand: 'category' }).catch(() => null)
   if (!record) return res.status(404).json({ error: 'Product was not found.' })
-  const previousQty = Number(record.quantity) || 0
-  const delta = countedQty - previousQty
+  if (!isFractional(record) && !Number.isInteger(countedQty)) {
+    return res.status(400).json({ error: `"${record.name}" does not accept fractional quantities.` })
+  }
+  const previousQty = quantizeQty(record.quantity)
+  const delta = quantizeQty(countedQty - previousQty)
   if (!delta) return res.status(409).json({ error: 'Physical count already matches system stock.' })
   const updated = await products.update(record.id, { quantity: numberFieldValue(countedQty) }, { expand: 'category' })
   await createStockMovement({ productId: record.id, movementType: 'adjustment', quantity: Math.abs(delta), previousQuantity: previousQty, newQuantity: countedQty, referenceType: 'physical_count', notes: `${reason}${note ? ` (${note})` : ''}` })

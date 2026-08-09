@@ -15,3 +15,11 @@ test('defaults to one base unit when conversion is missing', () => {
 test('converts two reams into four hundred base sticks', () => {
   assert.equal(toBaseStockQuantity(2, 200), 400);
 });
+
+test('a fractional product sold as 1.75 kg converts exactly (base unit, no case conversion)', () => {
+  assert.equal(toBaseStockQuantity(1.75, 1), 1.75);
+});
+
+test('half of a 24-unit case decrements exactly 12 base units', () => {
+  assert.equal(toBaseStockQuantity(0.5, 24), 12);
+});

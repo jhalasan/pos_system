@@ -9,6 +9,7 @@ import {
 } from '../../utils/pocketbaseRateLimit'
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
 import { resolveRequiredProductPrice } from './productPricing'
+import { quantizeQty } from '../../utils/quantity'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
@@ -17,7 +18,7 @@ const MAX_ATTEMPTS = 10
 
 function numberFieldValue(value) {
   const number = Number(value)
-  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+  return String(Number.isFinite(number) ? Math.max(0, quantizeQty(number)) : 0)
 }
 
 function emitSyncStatus(state, message) {
@@ -111,6 +112,7 @@ async function productBody(pb, data) {
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: Boolean(data.hasMultipleUnits ?? data.has_multiple_units),
+    allow_fractional: Boolean(data.allowFractional ?? data.allow_fractional),
     lifecycle_status: ['inactive', 'archived'].includes(data.lifecycleStatus || data.lifecycle_status) ? (data.lifecycleStatus || data.lifecycle_status) : 'active',
   }
   // include selling units when present so desktop/admin sync preserves additional units
@@ -187,7 +189,7 @@ function stockDeltaForOp(op) {
 }
 
 async function createStockMovement(pb, product, op, previousQuantity, nextQuantity) {
-  const delta = Number(nextQuantity) - Number(previousQuantity)
+  const delta = quantizeQty(Number(nextQuantity) - Number(previousQuantity))
   if (!product?.id || delta === 0) return
 
   const movementType = op.type === 'adjustInventoryCount' ? 'adjustment' : delta > 0 ? 'stock_in' : 'stock_out'
@@ -655,8 +657,8 @@ export class AdminSyncEngine extends EventTarget {
         return
       }
 
-      const previousQuantity = Number(product.quantity) || 0
-      const nextQuantity = previousQuantity + Number(op.payload.qty || 0)
+      const previousQuantity = quantizeQty(product.quantity)
+      const nextQuantity = quantizeQty(previousQuantity + Number(op.payload.qty || 0))
       const updated = await this.pb.collection('products').update(product.id, {
         quantity: numberFieldValue(nextQuantity),
       }, {
@@ -676,8 +678,8 @@ export class AdminSyncEngine extends EventTarget {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
 
-      const previousQuantity = Number(product.quantity) || 0
-      const nextQuantity = Math.max(0, previousQuantity - Number(op.payload.qty || 0))
+      const previousQuantity = quantizeQty(product.quantity)
+      const nextQuantity = Math.max(0, quantizeQty(previousQuantity - Number(op.payload.qty || 0)))
       const updated = await this.pb.collection('products').update(product.id, {
         quantity: numberFieldValue(nextQuantity),
       }, {
@@ -696,8 +698,8 @@ export class AdminSyncEngine extends EventTarget {
     if (op.type === 'adjustInventoryCount') {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
-      const previousQuantity = Number(product.quantity) || 0
-      const nextQuantity = Math.max(0, previousQuantity + (Number(op.payload.delta) || 0))
+      const previousQuantity = quantizeQty(product.quantity)
+      const nextQuantity = Math.max(0, quantizeQty(previousQuantity + (Number(op.payload.delta) || 0)))
       const updated = await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { expand: 'category', requestKey: op.id })
       await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
       await replaceLocalProductWithCloud(op.productId, updated, this.pb, { preservePendingStock: true, currentOpId: op.id })

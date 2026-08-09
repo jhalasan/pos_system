@@ -1,3 +1,5 @@
+import { formatQty, roundMoney } from '../../utils/quantity'
+
 const RECEIPT_WIDTH = 32
 const DEFAULT_COPY_COUNT = 1
 const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings'
@@ -195,10 +197,10 @@ function itemLines(item) {
   const name = cleanText(item.name || 'Item')
   const quantity = Number(item.quantity) || 0
   const price = Number(item.price) || 0
-  const total = quantity * price
+  const total = roundMoney(quantity * price)
   return [
     name.slice(0, RECEIPT_WIDTH),
-    columns(`${quantity} x ${moneyValue(price)}`, moneyValue(total)),
+    columns(`${formatQty(quantity)} x ${moneyValue(price)}`, moneyValue(total)),
   ]
 }
 
@@ -238,7 +240,10 @@ function paymentRows(payment = {}) {
 }
 
 export function buildReceiptText({ transactionNo, cashierName, customerName, completedAt, items, payment }) {
-  const itemCount = items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+  // Standard POS convention: total units purchased (3 cans = "3 items"), not
+  // distinct cart lines. A fractional quantity (e.g. 1.75 kg of rice) doesn't
+  // make sense summed into that count, so fractional lines count as 1 each.
+  const itemCount = items.reduce((sum, item) => sum + (item.fractional ? 1 : (Number(item.quantity) || 0)), 0)
   const subtotal = Number(payment.subtotalAmount) || 0
   const discountPercent = Number(payment.discountPercent) || 0
   const discountAmount = Number(payment.discountAmount) || 0

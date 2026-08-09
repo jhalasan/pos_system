@@ -1,8 +1,23 @@
+// Kept in sync with src/utils/quantity.js's QTY_DECIMALS — the server has no
+// bundler step, so this stays a small local copy rather than a cross-import.
+const QTY_SCALE = 1000
+
+export function quantizeQty(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * QTY_SCALE) / QTY_SCALE
+}
+
+export function isFractional(product) {
+  return Boolean(product?.allowFractional ?? product?.allow_fractional)
+}
+
 export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
   const lowStock = Number(product.lowStock ?? product.min_stock ?? 10)
   if (qty <= 0) return 'out-of-stock'
-  if (qty <= 5) return 'critical'
+  const criticalThreshold = isFractional(product) ? lowStock * 0.5 : 5
+  if (qty <= criticalThreshold) return 'critical'
   if (qty <= lowStock) return 'low'
   return 'in-stock'
 }
@@ -35,7 +50,7 @@ function firstRelationValue(value) {
 
 function numberFieldValue(value) {
   const number = Number(value)
-  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+  return String(Number.isFinite(number) ? Math.max(0, quantizeQty(number)) : 0)
 }
 
 function booleanFieldValue(value) {
@@ -85,6 +100,7 @@ export function toProduct(record) {
     cost: Number(record.cost) || 0,
     profitMargin: Number(record.profitMargin) || 0,
     hasMultipleUnits: booleanFieldValue(record.has_multiple_units ?? record.hasMultipleUnits),
+    allowFractional: booleanFieldValue(record.allow_fractional ?? record.allowFractional),
     image: firstFileValue(record.product_img) || '',
     imageUrl: productImageUrl(record),
     tiers: [{ label: 'Retail', price: Number(record.price) || 0 }],
@@ -119,6 +135,7 @@ export function productPayload(input, categoryId) {
     cost: Number.isFinite(cost) ? Math.max(0, cost) : 0,
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: hasMultipleUnits,
+    allow_fractional: booleanFieldValue(input.allowFractional ?? input.allow_fractional),
     selling_units: parseSellingUnits(input.sellingUnits || input.selling_units),
     lifecycle_status: ['inactive', 'archived'].includes(input.lifecycleStatus || input.lifecycle_status) ? (input.lifecycleStatus || input.lifecycle_status) : 'active',
   }

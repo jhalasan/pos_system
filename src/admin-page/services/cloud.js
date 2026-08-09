@@ -1,4 +1,5 @@
 import PocketBase from 'pocketbase'
+import { quantizeQty } from '../../utils/quantity'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 if (!baseUrl) throw new Error('VITE_POCKETBASE_URL is required for the admin dashboard.')
@@ -37,8 +38,12 @@ export async function fetchSalesReport({ from, to, page = 1, perPage = 100 } = {
 
 export async function updateProductStock(productId, quantity) {
   const nextQuantity = Number(quantity)
-  if (!Number.isInteger(nextQuantity) || nextQuantity < 0) {
-    throw new Error('Stock quantity must be a non-negative integer.')
+  // Non-fractional products still get whole numbers in practice — every UI
+  // path that writes their stock already floors/rounds to an integer before
+  // calling here. This guard only rejects genuinely malformed input (NaN,
+  // negative, or more precise than the 3-decimal quantity precision).
+  if (!Number.isFinite(nextQuantity) || nextQuantity < 0 || quantizeQty(nextQuantity) !== nextQuantity) {
+    throw new Error('Stock quantity must be a non-negative number with at most 3 decimal places.')
   }
 
   return pb.collection('products').update(productId, {

@@ -3,6 +3,7 @@ import Modal from './Modal'
 import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconImage, IconPlus, IconTrash } from './Icons'
 import { defaultCategories } from '../services/api'
+import { quantizeQty } from '../../utils/quantity'
 
 const baseUnitOptions = ['Piece', 'Stick', 'Bottle', 'Sachet', 'Kilogram', 'Liter', 'Pack', 'Box', 'Case', 'Sack', 'Tray', 'Ream', 'Bag', 'Can', 'Jar', 'Roll']
 const purchaseUnitOptions = ['Ream', 'Box', 'Case', 'Pack', 'Sack', 'Tray', 'Carton', 'Pouch', 'Bag', 'Bundle', 'Crate']
@@ -84,6 +85,7 @@ const blank = {
   wholesalePrice: 0,
   hasMultipleUnits: false,
   unitTemplate: 'custom',
+  allowFractional: false,
 }
 
 function normalizeSellingUnits(rawUnits = [], fallback = {}) {
@@ -261,6 +263,7 @@ function buildInitialForm(product, categories, isEdit = false) {
       sellingUnits: preparedSellingUnits,
     }) : 'custom',
     sellingUnits: preparedSellingUnits,
+    allowFractional: Boolean(product?.allowFractional ?? product?.allow_fractional),
   }
 }
 
@@ -289,7 +292,7 @@ function deriveSellingPrice(costValue, profitMargin, conversionValue, conversion
 function resolveInventoryBaseQty(initialStock, conversionQuantity) {
   const normalizedInitialStock = Number(initialStock) || 0
   const normalizedConversion = Number(conversionQuantity) > 0 ? Number(conversionQuantity) : 1
-  return normalizedInitialStock * normalizedConversion
+  return quantizeQty(normalizedInitialStock * normalizedConversion)
 }
 
 export default function ProductModal({ mode, product, categories = defaultCategories, onClose, onSave }) {
@@ -582,7 +585,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     // change independently afterwards, so an ordinary details edit must never
     // recalculate or overwrite the live quantity.
     const baseInventory = isEdit
-      ? Math.max(0, Number(product?.qty ?? product?.quantity) || 0)
+      ? Math.max(0, quantizeQty(product?.qty ?? product?.quantity))
       : resolveInventoryBaseQty(initialStock, conversionQuantity)
     const savedInitialStock = isEdit
       ? Math.max(0, Number(product?.initialStock ?? product?.initial_stock) || 0)
@@ -700,13 +703,33 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
         <div className="field">
           <label>{stockInputLabel(form, isEdit)}</label>
-          <input className="input" type="number" min="0" value={form.initialStock} onChange={(e) => setFormValue('initialStock', e.target.value)} disabled={isEdit} />
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step={form.allowFractional ? '0.001' : '1'}
+            value={form.initialStock}
+            onChange={(e) => setFormValue('initialStock', e.target.value)}
+            disabled={isEdit}
+          />
           {isEdit ? <small>Current inventory is managed from Inventory Scanner and is preserved when product details are edited.</small> : null}
           {form.hasMultipleUnits || isEdit ? (
             <small style={{ marginTop: 2 }}>
               {stockInputHelp(form, baseInventoryPreview, isEdit)}
             </small>
           ) : null}
+        </div>
+
+        <div className="field">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input
+              type="checkbox"
+              checked={Boolean(form.allowFractional)}
+              onChange={(e) => setFormValue('allowFractional', e.target.checked)}
+            />
+            Allow fractional quantity
+          </label>
+          <small>For goods sold by weight or partial unit, e.g. rice by the kilogram or half a case of soft drinks.</small>
         </div>
 
         {!form.hasMultipleUnits ? (

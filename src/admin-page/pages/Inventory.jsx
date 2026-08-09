@@ -10,6 +10,8 @@ import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { buildStockOutText, printStockOutRecords } from '../utils/thermalInventoryPrinter'
+import { normalizeSellingUnits } from '../../utils/sellingUnits'
+import { formatQty, pluralizeUnit, quantizeQty, floorQty, isFractional } from '../../utils/quantity'
 
 const stockOutReasons = {
   expired: 'Expired goods',
@@ -17,48 +19,12 @@ const stockOutReasons = {
   other: 'Other stock-out',
 }
 
-function normalizeSellingUnits(product = {}) {
-  const rawUnits = Array.isArray(product.sellingUnits)
-    ? product.sellingUnits
-    : (Array.isArray(product.selling_units) ? product.selling_units : [])
-  const fallbackUnit = String(product.unit || 'Piece').trim() || 'Piece'
-  const fallbackBarcode = String(product.barcode || '').trim()
-  const fallbackPrice = Number(product.price) || 0
-
-  const units = rawUnits.length > 0
-    ? rawUnits.map((unit) => ({
-      barcode: String(unit?.barcode || '').trim(),
-      unit: String(unit?.unit || '').trim() || fallbackUnit,
-      conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
-      price: Number(unit?.price) || fallbackPrice,
-    }))
-    : []
-
-  const purchaseUnit = String(product.purchaseUnit || product.purchase_unit || '').trim()
-  const purchaseConversion = Number(product.conversionQuantity ?? product.conversion_quantity)
-  if (purchaseUnit && purchaseConversion > 1 && purchaseUnit.toLowerCase() !== fallbackUnit.toLowerCase()) {
-    const hasPurchaseUnit = units.some((unit) => (
-      unit.unit.toLowerCase() === purchaseUnit.toLowerCase()
-      || Number(unit.conversion) === purchaseConversion
-    ))
-    if (!hasPurchaseUnit) {
-      units.push({
-        barcode: '',
-        unit: purchaseUnit,
-        conversion: purchaseConversion,
-        price: fallbackPrice * purchaseConversion,
-      })
-    }
+function sanitizeQty(value, fractional) {
+  if (fractional) {
+    const q = quantizeQty(Number(value) || 0)
+    return q > 0 ? q : 0.001
   }
-
-  if (units.length > 0) return units
-
-  return [{
-    barcode: fallbackBarcode,
-    unit: fallbackUnit,
-    conversion: 1,
-    price: fallbackPrice,
-  }]
+  return Math.max(1, Math.floor(Number(value) || 1))
 }
 
 function matchSellingUnit(product, barcode) {
@@ -132,26 +98,18 @@ function scanPayloadForUnit(product, unit, qty) {
   }
 }
 
-function formatQty(value) {
-  return Number(value || 0).toLocaleString('en-PH')
-}
-
-function pluralizeUnit(unit, quantity) {
-  const cleanUnit = String(unit || 'unit').trim() || 'unit'
-  if (Number(quantity) === 1 || /s$/i.test(cleanUnit)) return cleanUnit
-  return `${cleanUnit}s`
-}
-
 function unitEquivalentText(product, unit, qty = 1) {
   if (!product || !unit) return ''
-  const baseQty = Math.max(1, Number(qty) || 1) * (Number(unit.conversion) > 0 ? Number(unit.conversion) : 1)
+  const fractional = isFractional(product)
+  const qtyFactor = fractional ? Math.max(quantizeQty(qty) || quantizeQty(1), quantizeQty(1)) : Math.max(1, Number(qty) || 1)
+  const baseQty = qtyFactor * (Number(unit.conversion) > 0 ? Number(unit.conversion) : 1)
   const units = normalizeSellingUnits(product)
     .filter((candidate) => Number(candidate.conversion) > 0 && baseQty >= Number(candidate.conversion))
     .sort((a, b) => Number(b.conversion) - Number(a.conversion))
 
   const parts = units.map((candidate) => {
     const count = baseQty / Number(candidate.conversion)
-    if (!Number.isInteger(count)) return null
+    if (!fractional && !Number.isInteger(count)) return null
     return `${formatQty(count)} ${pluralizeUnit(candidate.unit, count)}`
   }).filter(Boolean)
 
@@ -334,9 +292,11 @@ export default function Inventory() {
     event.preventDefault()
     const product = products.find((item) => item.id === reconcileProductId)
     if (!product) return flash('Select a product to reconcile.')
-    const expected = Number(product.qty) || 0
-    const actual = Math.max(0, Number(physicalCount) || 0)
-    const variance = actual - expected
+    const fractional = isFractional(product)
+    const expected = quantizeQty(product.qty)
+    const actual = quantizeQty(Math.max(0, Number(physicalCount) || 0))
+    const variance = quantizeQty(actual - expected)
+    if (!fractional && !Number.isInteger(actual)) return flash('This product does not accept fractional quantities.')
     if (!variance) return flash('Physical count already matches system stock.')
     if (!await dialog.confirm(`Approve the inventory adjustment for “${product.name}”?\n\nSystem stock: ${expected}\nPhysical count: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`, { title: 'Approve stock adjustment', confirmLabel: 'Approve adjustment' })) return
     setReconciling(true)
@@ -395,6 +355,7 @@ export default function Inventory() {
           baseUnit: product.unit || 'unit(s)',
           sellingUnits: normalizeSellingUnits(product),
           conversion,
+          fractional: isFractional(product),
           qty: count,
           baseQty,
           equivalentText,
@@ -406,24 +367,23 @@ export default function Inventory() {
   }
 
   function updateBatchItemQty(productId, itemUnitKey, value) {
-    const nextQty = Math.max(1, Math.floor(Number(value) || 1))
-    setBatchItems((items) => items.map((item) => (
-      item.id === productId && item.unitKey === itemUnitKey
-        ? {
-          ...item,
-          qty: nextQty,
-          baseQty: nextQty * (Number(item.conversion) || 1),
-          equivalentText: unitEquivalentText({ ...item, unit: item.baseUnit }, item, nextQty),
-        }
-        : item
-    )))
+    setBatchItems((items) => items.map((item) => {
+      if (item.id !== productId || item.unitKey !== itemUnitKey) return item
+      const nextQty = sanitizeQty(value, item.fractional)
+      return {
+        ...item,
+        qty: nextQty,
+        baseQty: nextQty * (Number(item.conversion) || 1),
+        equivalentText: unitEquivalentText({ ...item, unit: item.baseUnit }, item, nextQty),
+      }
+    }))
   }
 
   async function scan(e) {
     e.preventDefault()
     const code = barcode.trim()
     if (!code) return
-    const stockInQty = Math.max(1, Math.floor(Number(qty) || 1))
+    const stockInQty = sanitizeQty(qty, isFractional(scannedProduct))
 
     if (scanMode === 'batch') {
       if (!scannedProduct) {
@@ -576,6 +536,7 @@ export default function Inventory() {
           baseUnit: product.unit || 'unit(s)',
           sellingUnits: normalizeSellingUnits(product),
           conversion,
+          fractional: isFractional(product),
           qty: count,
           baseQty,
           equivalentText,
@@ -591,11 +552,13 @@ export default function Inventory() {
   }
 
   function updateStockOutBatchItemQty(productId, itemUnitKey, value) {
-    const requestedQty = Math.max(1, Math.floor(Number(value) || 1))
     setStockOutBatch((items) => items.map((item) => {
       if (item.id !== productId || item.unitKey !== itemUnitKey) return item
+      const requestedQty = sanitizeQty(value, item.fractional)
       const conversion = Number(item.conversion) || 1
-      const maxQty = Math.max(1, Math.floor((Number(item.currentQty) || 0) / conversion))
+      const maxQty = item.fractional
+        ? Math.max(0.001, floorQty((Number(item.currentQty) || 0) / conversion))
+        : Math.max(1, Math.floor((Number(item.currentQty) || 0) / conversion))
       const nextQty = Math.min(requestedQty, maxQty)
       if (requestedQty > maxQty) {
         setStockOutError(`"${item.name}" has only ${maxQty} ${item.unit || 'unit(s)'} available.`)
@@ -637,7 +600,7 @@ export default function Inventory() {
     e.preventDefault()
     const code = stockOutBarcode.trim()
     if (!code) return
-    const removeQty = Math.max(1, Math.floor(Number(stockOutQty) || 1))
+    const removeQty = sanitizeQty(stockOutQty, isFractional(stockOutProduct))
 
     if (!stockOutProduct) {
       setStockOutError(`No product found for barcode "${code}".`)
@@ -859,7 +822,14 @@ export default function Inventory() {
           </div>
           <div className="field">
             <label><span className="scan-step-no">2</span>Qty per Scan</label>
-            <input className="input" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} />
+            <input
+              className="input"
+              type="number"
+              min={isFractional(scannedProduct) ? '0.001' : '1'}
+              step={isFractional(scannedProduct) ? '0.001' : '1'}
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
           </div>
           <div className="field">
             <label><span className="scan-step-no">3</span>Unit per Scan</label>
@@ -976,7 +946,8 @@ export default function Inventory() {
                       <input
                         className="input"
                         type="number"
-                        min="1"
+                        min={item.fractional ? '0.001' : '1'}
+                        step={item.fractional ? '0.001' : '1'}
                         value={item.qty}
                         onChange={(e) => updateBatchItemQty(item.id, item.unitKey, e.target.value)}
                       />
@@ -1109,7 +1080,14 @@ export default function Inventory() {
           </div>
           <div className="field">
             <label><span className="scan-step-no">2</span>Qty Out</label>
-            <input className="input" type="number" min="1" value={stockOutQty} onChange={(e) => setStockOutQty(e.target.value)} />
+            <input
+              className="input"
+              type="number"
+              min={isFractional(stockOutProduct) ? '0.001' : '1'}
+              step={isFractional(stockOutProduct) ? '0.001' : '1'}
+              value={stockOutQty}
+              onChange={(e) => setStockOutQty(e.target.value)}
+            />
           </div>
           <div className="field">
             <label><span className="scan-step-no">3</span>Unit Out</label>
@@ -1233,8 +1211,11 @@ export default function Inventory() {
                       <input
                         className="input"
                         type="number"
-                        min="1"
-                        max={Math.max(1, Math.floor((Number(item.currentQty) || 0) / (Number(item.conversion) || 1)))}
+                        min={item.fractional ? '0.001' : '1'}
+                        step={item.fractional ? '0.001' : '1'}
+                        max={item.fractional
+                          ? Math.max(0.001, floorQty((Number(item.currentQty) || 0) / (Number(item.conversion) || 1)))
+                          : Math.max(1, Math.floor((Number(item.currentQty) || 0) / (Number(item.conversion) || 1)))}
                         value={item.qty}
                         onChange={(e) => updateStockOutBatchItemQty(item.id, item.unitKey, e.target.value)}
                       />

@@ -10,48 +10,8 @@ import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
-
-function normalizeSellingUnits(product = {}) {
-  const rawUnits = Array.isArray(product.sellingUnits)
-    ? product.sellingUnits
-    : (Array.isArray(product.selling_units) ? product.selling_units : [])
-  const fallbackUnit = String(product.unit || 'Piece').trim() || 'Piece'
-  const fallbackBarcode = String(product.barcode || '').trim()
-  const fallbackPrice = Number(product.price) || 0
-
-  const units = rawUnits.map((unit) => ({
-    barcode: String(unit?.barcode || '').trim(),
-    unit: String(unit?.unit || '').trim() || fallbackUnit,
-    conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
-    price: Number(unit?.price) || fallbackPrice,
-  }))
-
-  const purchaseUnit = String(product.purchaseUnit || product.purchase_unit || '').trim()
-  const purchaseConversion = Number(product.conversionQuantity ?? product.conversion_quantity)
-  if (purchaseUnit && purchaseConversion > 1 && purchaseUnit.toLowerCase() !== fallbackUnit.toLowerCase()) {
-    const hasPurchaseUnit = units.some((unit) => (
-      unit.unit.toLowerCase() === purchaseUnit.toLowerCase()
-      || Number(unit.conversion) === purchaseConversion
-    ))
-    if (!hasPurchaseUnit) {
-      units.push({
-        barcode: '',
-        unit: purchaseUnit,
-        conversion: purchaseConversion,
-        price: fallbackPrice * purchaseConversion,
-      })
-    }
-  }
-
-  if (units.length > 0) return units
-
-  return [{
-    barcode: fallbackBarcode,
-    unit: fallbackUnit,
-    conversion: 1,
-    price: fallbackPrice,
-  }]
-}
+import { normalizeSellingUnits } from '../../utils/sellingUnits'
+import { formatQty, pluralizeUnit, floorQty, isFractional } from '../../utils/quantity'
 
 function getProductBarcodes(product) {
   return [...new Set(normalizeSellingUnits(product).map((unit) => unit.barcode).filter(Boolean))]
@@ -59,17 +19,19 @@ function getProductBarcodes(product) {
 
 function getInventoryBreakdown(product) {
   const baseQty = Number(product.qty) || 0
+  const fractional = isFractional(product)
   const units = normalizeSellingUnits(product)
     .filter((unit) => Number(unit.conversion) > 0)
     .sort((a, b) => Number(b.conversion) - Number(a.conversion))
 
   return units.map((unit) => ({
     ...unit,
-    total: Math.floor(baseQty / Number(unit.conversion)),
+    total: fractional ? floorQty(baseQty / Number(unit.conversion)) : Math.floor(baseQty / Number(unit.conversion)),
   }))
 }
 
 function getInventoryRemainderBreakdown(product) {
+  const fractional = isFractional(product)
   let remainingQty = Number(product.qty) || 0
   const units = normalizeSellingUnits(product)
     .filter((unit) => Number(unit.conversion) > 0)
@@ -79,25 +41,14 @@ function getInventoryRemainderBreakdown(product) {
     const conversion = Number(unit.conversion)
     const count = index === units.length - 1
       ? remainingQty
-      : Math.floor(remainingQty / conversion)
+      : (fractional ? floorQty(remainingQty / conversion) : Math.floor(remainingQty / conversion))
     remainingQty -= count * conversion
     return {
       ...unit,
       count,
-      total: Math.floor((Number(product.qty) || 0) / conversion),
+      total: fractional ? floorQty((Number(product.qty) || 0) / conversion) : Math.floor((Number(product.qty) || 0) / conversion),
     }
   })
-}
-
-function formatQty(value) {
-  return Number(value || 0).toLocaleString('en-PH')
-}
-
-function pluralizeUnit(unit, quantity) {
-  const cleanUnit = String(unit || 'unit').trim() || 'unit'
-  if (Number(quantity) === 1) return cleanUnit
-  if (/s$/i.test(cleanUnit)) return cleanUnit
-  return `${cleanUnit}s`
 }
 
 function primaryInventoryLabel(product) {

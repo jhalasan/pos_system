@@ -16,3 +16,11 @@ test('returns zero when available stock is exhausted', () => {
   assert.equal(getAvailableStockUnits({ qty: 0 }, { conversion: 12 }), 0);
   assert.equal(getAvailableStockUnits({ quantity: 3 }, { conversion: 4 }), 0);
 });
+
+test('a fractional product reports the exact remainder instead of flooring', () => {
+  assert.equal(getAvailableStockUnits({ qty: 2.5, allowFractional: true }, { conversion: 1 }), 2.5);
+});
+
+test('a discrete product with the same stock still floors to whole selling units', () => {
+  assert.equal(getAvailableStockUnits({ qty: 2.5 }, { conversion: 1 }), 2);
+});

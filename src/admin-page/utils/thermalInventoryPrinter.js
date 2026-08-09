@@ -1,3 +1,5 @@
+import { formatQty, quantizeQty } from '../../utils/quantity'
+
 const RECEIPT_WIDTH = 32
 const DEFAULT_PRINTER_NAME = 'XP-58H'
 
@@ -46,14 +48,14 @@ function inventoryProductLines(product) {
   return [
     name.slice(0, RECEIPT_WIDTH),
     barcode ? barcode.slice(0, RECEIPT_WIDTH) : '',
-    columns(`Qty ${qty} ${unit}`, productStatus(product)),
+    columns(`Qty ${formatQty(qty)} ${unit}`, productStatus(product)),
     category.slice(0, RECEIPT_WIDTH),
   ].filter(Boolean)
 }
 
 function buildInventoryText(products, { title = 'Inventory Report' } = {}) {
   const printedAt = new Date()
-  const totalUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+  const totalUnits = quantizeQty(products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0))
 
   return [
     center('NEXA POS'),
@@ -61,7 +63,7 @@ function buildInventoryText(products, { title = 'Inventory Report' } = {}) {
     line(),
     columns('Printed', printedAt.toLocaleString('en-PH')),
     columns('Products', products.length),
-    columns('Total Units', totalUnits),
+    columns('Total Units', formatQty(totalUnits)),
     line(),
     ...products.flatMap((product, index) => [
       ...inventoryProductLines(product),
@@ -83,15 +85,15 @@ function stockOutLines(record) {
   return [
     name.slice(0, RECEIPT_WIDTH),
     barcode ? barcode.slice(0, RECEIPT_WIDTH) : '',
-    columns(`Qty Out ${qty}`, reason),
+    columns(`Qty Out ${formatQty(qty)}`, reason),
     note ? `Note: ${note}`.slice(0, RECEIPT_WIDTH) : '',
-    columns('Stock Now', Number(record.newQty) || 0),
+    columns('Stock Now', formatQty(Number(record.newQty) || 0)),
   ].filter(Boolean)
 }
 
 export function buildStockOutText(records, { title = 'Stock-Out Report' } = {}) {
   const printedAt = new Date()
-  const totalUnits = records.reduce((sum, record) => sum + (Number(record.qty) || 0), 0)
+  const totalUnits = quantizeQty(records.reduce((sum, record) => sum + (Number(record.qty) || 0), 0))
 
   return [
     center('NEXA POS'),
@@ -99,7 +101,7 @@ export function buildStockOutText(records, { title = 'Stock-Out Report' } = {}) 
     line(),
     columns('Printed', printedAt.toLocaleString('en-PH')),
     columns('Records', records.length),
-    columns('Units Out', totalUnits),
+    columns('Units Out', formatQty(totalUnits)),
     line(),
     ...records.flatMap((record, index) => [
       ...stockOutLines(record),

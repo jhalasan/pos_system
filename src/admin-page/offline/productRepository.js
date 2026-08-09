@@ -1,5 +1,6 @@
 import { adminDb } from './db'
 import { mergeProductWithCloudRecord } from './productSyncUtils'
+import { isFractional } from '../../utils/quantity'
 
 function firstRelation(value) {
   return Array.isArray(value) ? value[0] : value
@@ -9,7 +10,12 @@ export function deriveStatus(product) {
   const qty = Number(product.qty ?? product.quantity) || 0
   const lowStock = Number(product.lowStock ?? product.min_stock ?? 10)
   if (qty <= 0) return 'out-of-stock'
-  if (qty <= 5) return 'critical'
+  // The flat "5 units" critical threshold assumes whole, discrete units. For
+  // a fractional product (e.g. rice sold by the kg) that constant reads
+  // oddly — 4kg left is not "critical" the way 4 cans left would be — so
+  // scale it relative to the product's own low-stock threshold instead.
+  const criticalThreshold = isFractional(product) ? lowStock * 0.5 : 5
+  if (qty <= criticalThreshold) return 'critical'
   if (qty <= lowStock) return 'low'
   return 'in-stock'
 }
@@ -39,6 +45,7 @@ export function normalizeProduct(record, pb) {
     cost: Number(record.cost) || 0,
     profitMargin: Number(record.profitMargin) || 0,
     hasMultipleUnits: Boolean(record.has_multiple_units ?? record.hasMultipleUnits),
+    allowFractional: Boolean(record.allow_fractional ?? record.allowFractional),
     image: image || record.image || '',
     imageUrl: record.imageUrl || (pb && image ? pb.files.getURL(record, image) : ''),
     imageBlob: record.imageBlob,

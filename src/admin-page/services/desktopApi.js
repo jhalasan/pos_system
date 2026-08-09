@@ -18,6 +18,7 @@ import {
   pocketBaseRateLimitMessage,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
+import { quantizeQty, isFractional } from '../../utils/quantity'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
 import { resolveRequiredProductPrice } from '../offline/productPricing'
 
@@ -1230,7 +1231,8 @@ async function imageData(data) {
 }
 
 async function localProductFromForm(data, id = newId('product')) {
-  const qty = Number(data.qty)
+  const allowFractional = Boolean(data.allowFractional)
+  const qty = allowFractional ? quantizeQty(data.qty) : Number(data.qty)
   const lowStock = Number(data.lowStock)
   const price = resolveRequiredProductPrice(data)
   const cost = Number(data.cost)
@@ -1265,6 +1267,7 @@ async function localProductFromForm(data, id = newId('product')) {
     image: '',
     tiers: data.tiers || [{ label: 'Retail', price: Number(data.price) || 0 }],
     sellingUnits: Array.isArray(data.sellingUnits) ? data.sellingUnits : [],
+    allowFractional,
     lifecycleStatus: ['inactive', 'archived'].includes(data.lifecycleStatus) ? data.lifecycleStatus : 'active',
     status: deriveStatus(data),
     pendingSync: true,
@@ -1623,7 +1626,6 @@ export const desktopAdminApi = {
     return enqueueInventoryScan(async () => {
       assertAdmin()
       await startAdminRuntime()
-      const stockInQty = Math.max(1, Number(qty) || 1)
       let product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       if (!product && (await isCloudReachable())) {
         await refreshAdminLocalCache({ pb })
@@ -1631,6 +1633,8 @@ export const desktopAdminApi = {
       }
       if (!product) throw new Error(barcode ? `No product found for barcode "${barcode}".` : 'No product found.')
 
+      const fractional = isFractional(product)
+      const stockInQty = fractional ? Math.max(0.001, quantizeQty(qty)) : Math.max(1, Math.floor(Number(qty) || 1))
       const matchingUnit = Array.isArray(product?.sellingUnits)
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
@@ -1648,7 +1652,7 @@ export const desktopAdminApi = {
 
         updated = {
           ...currentProduct,
-          qty: Number(currentProduct.qty) + (stockInQty * conversion),
+          qty: quantizeQty(Number(currentProduct.qty) + (stockInQty * conversion)),
           pendingSync: true,
           updated: new Date().toISOString(),
         }
@@ -1657,7 +1661,7 @@ export const desktopAdminApi = {
         await queueOperation('scanInventory', updated.id, {
           id: updated.id,
           barcode,
-          qty: stockInQty * conversion,
+          qty: quantizeQty(stockInQty * conversion),
         })
       })
       await recordActivity('Stock Update', `Added ${stockInQty} ${unitLabel || updated.unit || 'unit(s)'} to "${updated.name}".`)
@@ -1669,7 +1673,6 @@ export const desktopAdminApi = {
     return enqueueInventoryScan(async () => {
       assertAdmin()
       await startAdminRuntime()
-      const stockOutQty = Math.max(1, Number(qty) || 1)
       let product = productId ? await adminDb.products.get(productId).catch(() => null) : await getProductByBarcode(barcode)
       if (!product && (await isCloudReachable())) {
         await refreshAdminLocalCache({ pb })
@@ -1677,6 +1680,8 @@ export const desktopAdminApi = {
       }
       if (!product) throw new Error(barcode ? `No product found for barcode "${barcode}".` : 'No product found.')
 
+      const fractional = isFractional(product)
+      const stockOutQty = fractional ? Math.max(0.001, quantizeQty(qty)) : Math.max(1, Math.floor(Number(qty) || 1))
       const matchingUnit = Array.isArray(product?.sellingUnits)
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
@@ -1684,7 +1689,7 @@ export const desktopAdminApi = {
       const conversion = Number(matchingUnit?.conversion) > 0
         ? Number(matchingUnit.conversion)
         : (Number.isFinite(requestedConversion) && requestedConversion > 0 ? requestedConversion : 1)
-      const baseUnitsToRemove = stockOutQty * conversion
+      const baseUnitsToRemove = quantizeQty(stockOutQty * conversion)
 
       let updated
       await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
@@ -1698,7 +1703,7 @@ export const desktopAdminApi = {
 
         updated = {
           ...currentProduct,
-          qty: Math.max(0, Number(currentProduct.qty) - baseUnitsToRemove),
+          qty: Math.max(0, quantizeQty(Number(currentProduct.qty) - baseUnitsToRemove)),
           pendingSync: true,
           updated: new Date().toISOString(),
         }
@@ -1722,7 +1727,7 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const normalizedReason = String(reason || '').trim()
     if (!normalizedReason) throw new Error('An adjustment reason is required.')
-    const actual = Number(countedQty)
+    const actual = quantizeQty(Number(countedQty))
     if (!Number.isFinite(actual) || actual < 0) throw new Error('Physical count must be zero or greater.')
 
     let updated
@@ -1730,8 +1735,11 @@ export const desktopAdminApi = {
     await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
       const product = await adminDb.products.get(productId)
       if (!product || product.deleted) throw new Error('Product was not found in the local catalog.')
+      if (!isFractional(product) && !Number.isInteger(actual)) {
+        throw new Error(`"${product.name}" does not accept fractional quantities.`)
+      }
       previousQty = Number(product.qty) || 0
-      const delta = actual - previousQty
+      const delta = quantizeQty(actual - previousQty)
       if (!delta) throw new Error('Physical count already matches system stock.')
       updated = { ...product, qty: actual, pendingSync: true, updated: new Date().toISOString() }
       updated.status = deriveStatus(updated)

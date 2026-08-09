@@ -9,6 +9,7 @@ import {
 } from '../../utils/pocketbaseRateLimit'
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
 import { activityLogPayloadForSync, minimalActivityLogPayload } from './activityLogSync'
+import { quantizeQty } from '../../utils/quantity'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 2 * 60_000
@@ -17,7 +18,7 @@ const MAX_ATTEMPTS = 10
 
 function numberFieldValue(value) {
   const number = Number(value)
-  return String(Number.isFinite(number) ? Math.max(0, number) : 0)
+  return String(Number.isFinite(number) ? Math.max(0, quantizeQty(number)) : 0)
 }
 
 function emitSyncStatus(state, message) {
@@ -144,13 +145,13 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     if (!productId) continue
 
     const product = await pb.collection('products').getOne(productId, { requestKey: null })
-    const previousQuantity = Number(product.quantity) || 0
+    const previousQuantity = quantizeQty(product.quantity)
     const matchingSaleItems = cloudSaleItems.filter((saleItem) => {
       const saleItemProductId = Array.isArray(saleItem.product_id) ? saleItem.product_id[0] : saleItem.product_id
       return saleItemProductId === productId
     })
-    const syncedQty = matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0)
-    const baseQuantityToDeduct = toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1)
+    const syncedQty = quantizeQty(matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0))
+    const baseQuantityToDeduct = quantizeQty(toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1))
     const effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
     const movementReference = `sale:${sale.clientSaleId}:${productId}`
     if (await findStockMovement(pb, productId, movementReference)) {
@@ -160,7 +161,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
       await reconcileProductStock(pb, productId)
       continue
     }
-    const nextQuantity = Math.max(0, previousQuantity - effectiveQtyToDeduct)
+    const nextQuantity = quantizeQty(Math.max(0, previousQuantity - effectiveQtyToDeduct))
 
     await pb.collection('products').update(product.id, {
       quantity: numberFieldValue(nextQuantity),
@@ -654,11 +655,11 @@ export class CashierSyncEngine extends EventTarget {
             { requestKey: null },
           ).catch(() => null)
           if (existingMovement) continue
-          const returnedQuantity = toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1)
+          const returnedQuantity = quantizeQty(toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1))
           if (returnedQuantity <= 0) continue
           const product = await this.pb.collection('products').getOne(productId, { requestKey: null })
-          const previousQuantity = Number(product.quantity) || 0
-          const nextQuantity = previousQuantity + returnedQuantity
+          const previousQuantity = quantizeQty(product.quantity)
+          const nextQuantity = quantizeQty(previousQuantity + returnedQuantity)
           await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { requestKey: `${op.id}:${productId}:stock` })
           await this.pb.collection('stock_movements').create({
             product_id: product.id,

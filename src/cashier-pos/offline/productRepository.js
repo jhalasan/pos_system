@@ -1,5 +1,6 @@
 import { cashierDb } from './db.js'
 import { barcodesMatch, normalizeBarcode } from '../utils/barcodeUtils.js'
+import { toMillis, fromMillis, quantizeQty } from '../../utils/quantity.js'
 
 function firstFileValue(value) {
   return Array.isArray(value) ? value[0] : value
@@ -25,6 +26,7 @@ export function normalizeProduct(record, pb) {
     price: Number(record.price) || 0,
     unit: record.base_unit || record.unit || 'Piece',
     minStock: Number(record.min_stock ?? record.minStock ?? record.lowStock) || 0,
+    allowFractional: Boolean(record.allow_fractional ?? record.allowFractional),
     sellingUnits: sellingUnits.map((unit) => ({
       barcode: String(unit?.barcode || '').trim(),
       unit: String(unit?.unit || '').trim(),
@@ -47,18 +49,20 @@ export async function replaceProductsFromCloud(records, pb) {
 
   await cashierDb.transaction('rw', cashierDb.products, cashierDb.pendingSales, async () => {
     const pendingSales = await cashierDb.pendingSales.toArray()
-    const pendingDeductions = new Map()
+    // Summed in integer thousandths (millis) so fractional quantities never
+    // drift — see stockMovementReconciler.js for the same pattern.
+    const pendingDeductionsMillis = new Map()
     for (const sale of pendingSales) {
       for (const item of sale.items || []) {
         const productId = String(item.productId || '')
         if (!productId) continue
-        const baseQuantity = (Number(item.quantity) || 0) * (Number(item.conversion) > 0 ? Number(item.conversion) : 1)
-        pendingDeductions.set(productId, (pendingDeductions.get(productId) || 0) + baseQuantity)
+        const baseQuantityMillis = toMillis(item.quantity) * (Number(item.conversion) > 0 ? Number(item.conversion) : 1)
+        pendingDeductionsMillis.set(productId, (pendingDeductionsMillis.get(productId) || 0) + baseQuantityMillis)
       }
     }
     const mergedProducts = products.map((product) => ({
       ...product,
-      quantity: Math.max(0, product.quantity - (pendingDeductions.get(product.id) || 0)),
+      quantity: Math.max(0, quantizeQty(product.quantity - fromMillis(pendingDeductionsMillis.get(product.id) || 0))),
     }))
     await cashierDb.products.clear()
     await cashierDb.products.bulkPut(mergedProducts)

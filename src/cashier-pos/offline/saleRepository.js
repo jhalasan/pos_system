@@ -4,6 +4,7 @@ import { barcodesMatch } from '../utils/barcodeUtils.js'
 import { normalizeProduct } from './productRepository.js'
 import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
+import { quantizeQty } from '../../utils/quantity.js'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -74,7 +75,7 @@ export async function finalizeSaleLocally(sale) {
       productId: String(item.productId || item.id || ''),
       name: String(item.name || ''),
       barcode: String(item.barcode || ''),
-      quantity: Number(item.quantity) || 0,
+      quantity: quantizeQty(item.quantity),
       conversion: Number(item.conversion) > 0 ? Number(item.conversion) : 1,
       price: Number(item.price) || 0,
       category: String(item.category || ''),
@@ -122,13 +123,13 @@ export async function finalizeSaleLocally(sale) {
         const product = await cashierDb.products.get(item.productId)
         if (!product) throw new Error(`Product "${item.name || item.productId}" is not available locally.`)
 
-        const baseQuantity = toBaseStockQuantity(item.quantity, item.conversion)
+        const baseQuantity = quantizeQty(toBaseStockQuantity(item.quantity, item.conversion))
         if (product.quantity < baseQuantity) {
           throw new Error(`"${product.name}" has only ${product.quantity} item(s) left.`)
         }
 
         await cashierDb.products.update(product.id, {
-          quantity: product.quantity - baseQuantity,
+          quantity: quantizeQty(product.quantity - baseQuantity),
         })
       }
 
@@ -180,7 +181,7 @@ async function restoreProductStock(items = []) {
     const product = await cashierDb.products.get(productId)
     if (!product) continue
     await cashierDb.products.update(product.id, {
-      quantity: (Number(product.quantity) || 0) + toBaseStockQuantity(item.quantity, item.conversion),
+      quantity: quantizeQty((Number(product.quantity) || 0) + toBaseStockQuantity(item.quantity, item.conversion)),
     })
   }
 }
@@ -256,18 +257,18 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
   const selectedItems = Array.isArray(adjustment.items) ? adjustment.items : []
   const selectedByProduct = new Map(selectedItems.map((item) => [
     String(item.productId || item.id || ''),
-    Math.max(0, Number(item.quantity) || 0),
+    Math.max(0, quantizeQty(item.quantity)),
   ]))
 
   const returnedItems = sale.items
     .map((item) => {
       const productId = String(item.productId || item.id || '')
       const requestedQty = selectedByProduct.get(productId) || 0
-      const alreadyAdjusted = (sale.adjustments || [])
+      const alreadyAdjusted = quantizeQty((sale.adjustments || [])
         .flatMap((entry) => entry.items || [])
         .filter((entry) => String(entry.productId || entry.id || '') === productId)
-        .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0)
-      const availableQty = Math.max(0, (Number(item.quantity) || 0) - alreadyAdjusted)
+        .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0))
+      const availableQty = Math.max(0, quantizeQty((Number(item.quantity) || 0) - alreadyAdjusted))
       const quantity = Math.min(availableQty, requestedQty)
 
       return quantity > 0
