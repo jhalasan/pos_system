@@ -17,14 +17,15 @@ import { getDeveloperModeSettings } from '../../utils/developerMode';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
+import { quantizeQty, floorQty, roundMoney, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
   const stockQty = Number(item.stockQty ?? item.qty) || 0;
   const lowStock = Number(item.lowStock) || 0;
   if (stockQty <= 0) return { key: 'out', label: 'Out of stock' };
-  if (lowStock > 0 && stockQty <= lowStock) return { key: 'low', label: `Low stock: ${stockQty} left` };
-  return { key: 'ok', label: `${stockQty} in stock` };
+  if (lowStock > 0 && stockQty <= lowStock) return { key: 'low', label: `Low stock: ${formatQty(stockQty)} left` };
+  return { key: 'ok', label: `${formatQty(stockQty)} in stock` };
 }
 
 function normalizeSellingUnits(product = {}) {
@@ -98,11 +99,9 @@ function findSellingUnit(product = {}, barcode = '') {
   return matchedUnit || units[0];
 }
 
+const pluralUnitIrregulars = { box: 'Boxes', piece: 'Pieces', tray: 'Trays' };
 function pluralUnit(unit, quantity = 2) {
-  const label = String(unit || 'item').trim() || 'item';
-  const irregular = { box: 'Boxes', piece: 'Pieces', tray: 'Trays' };
-  if (Number(quantity) === 1 || /s$/i.test(label)) return label;
-  return irregular[label.toLowerCase()] || `${label}s`;
+  return pluralizeUnit(unit || 'item', quantity, pluralUnitIrregulars);
 }
 
 function ProductThumb({ product }) {
@@ -189,6 +188,7 @@ function returnedQuantityForItem(sale, productId) {
 
 const RECEIPT_SETTINGS_KEY = 'nexa_receipt_print_settings';
 const CASHIER_SHORTCUT_SETTINGS_KEY = 'nexa_cashier_shortcut_settings';
+const CASHIER_QUICK_ADD_SETTINGS_KEY = 'nexa_cashier_quickadd_settings';
 const CASHIER_CASH_COUNT_HISTORY_KEY = 'nexa_cashier_cash_count_history';
 const DEFAULT_RECEIPT_SETTINGS = {
   autoPrint: false,
@@ -203,6 +203,7 @@ const CASHIER_SHORTCUTS = [
   { action: 'requestDiscount', label: 'Request discount', defaultKeys: 'F2' },
   { action: 'focusSearch', label: 'Focus product search', defaultKeys: 'F3' },
   { action: 'focusQuantity', label: 'Focus item quantity', defaultKeys: 'F4' },
+  { action: 'toggleQuickAdd', label: 'Toggle quick add', defaultKeys: 'F5' },
   { action: 'newTransaction', label: 'New transaction', defaultKeys: 'Ctrl+N' },
   { action: 'completeTransaction', label: 'Complete transaction / Pay', defaultKeys: 'F10' },
   { action: 'voidTransaction', label: 'Void current transaction', defaultKeys: 'Ctrl+Backspace' },
@@ -261,6 +262,14 @@ function loadShortcutSettings() {
     };
   } catch {
     return DEFAULT_SHORTCUT_SETTINGS;
+  }
+}
+
+function loadQuickAddMode() {
+  try {
+    return localStorage.getItem(CASHIER_QUICK_ADD_SETTINGS_KEY) === 'true';
+  } catch {
+    return false;
   }
 }
 
@@ -491,6 +500,7 @@ const Cashier = ({ onLogout, user }) => {
   const [showReceiptSettings, setShowReceiptSettings] = useState(false);
   const [receiptSettings, setReceiptSettings] = useState(loadReceiptSettings);
   const [shortcutSettings, setShortcutSettings] = useState(loadShortcutSettings);
+  const [quickAddMode, setQuickAddMode] = useState(loadQuickAddMode);
   const [settingsTab, setSettingsTab] = useState('shortcuts');
   const [theme, setTheme] = useState(getStoredTheme);
   const [cashierAuditEntry, setCashierAuditEntry] = useState(loadCashierAuditEntry);
@@ -711,8 +721,11 @@ const Cashier = ({ onLogout, user }) => {
   const pendingCartSelectedUnit = pendingCartUnits.find((unit) => sellingUnitKey(unit) === pendingCartUnitKey)
     || (pendingCartProduct ? findSellingUnit(pendingCartProduct) : null);
   const pendingCartConversion = Number(pendingCartSelectedUnit?.conversion) > 0 ? Number(pendingCartSelectedUnit.conversion) : 1;
+  const pendingCartFractional = isFractional(pendingCartProduct);
   const pendingCartAvailableQty = pendingCartProduct
-    ? Math.floor(stockForProduct(pendingCartProduct) / pendingCartConversion)
+    ? (pendingCartFractional
+      ? floorQty(stockForProduct(pendingCartProduct) / pendingCartConversion)
+      : Math.floor(stockForProduct(pendingCartProduct) / pendingCartConversion))
     : 0;
 
   const updateActiveTransaction = (changes) => {
@@ -888,6 +901,15 @@ const Cashier = ({ onLogout, user }) => {
         },
       };
       localStorage.setItem(CASHIER_SHORTCUT_SETTINGS_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const toggleQuickAddMode = () => {
+    setQuickAddMode((current) => {
+      const next = !current;
+      localStorage.setItem(CASHIER_QUICK_ADD_SETTINGS_KEY, String(next));
+      showNotification(`Quick Add ${next ? 'ON' : 'OFF'} — scans ${next ? 'add 1 unit instantly' : 'ask for quantity'}.`);
       return next;
     });
   };
@@ -1200,35 +1222,28 @@ const Cashier = ({ onLogout, user }) => {
     const closedSuccessfully = await closeShift(skipCashCount);
     if (!closedSuccessfully) return false;
 
+    // The drawer close and cash count are already saved on this terminal at
+    // this point. Cloud sync of the day's queued sales/operations continues
+    // in the background rather than blocking the cashier here — the sync
+    // engine safely retries once any cashier is authenticated again, so
+    // there's nothing to wait for before logging out.
     try {
-      const syncResult = await cashierApi.syncNow();
-      if ((syncResult?.pending || 0) > 0) {
-        const queue = await cashierApi.syncQueueSummary().catch(() => ({
-          pending: syncResult.pending,
-          failed: syncResult.failed || 0,
-          sales: syncResult.pending,
-        }));
+      const queue = await cashierApi.syncQueueSummary();
+      const total = (Number(queue?.pending) || 0) + (Number(queue?.failed) || 0);
+      if (total > 0) {
         const saleCount = Number(queue.sales) || 0;
-        const operationCount = Math.max(0, (Number(queue.pending) || 0) + (Number(queue.failed) || 0) - saleCount);
+        const operationCount = Math.max(0, total - saleCount);
         const queueParts = [
           saleCount > 0 ? `${saleCount} transaction${saleCount === 1 ? '' : 's'}` : '',
           operationCount > 0 ? `${operationCount} session or activity update${operationCount === 1 ? '' : 's'}` : '',
         ].filter(Boolean).join(' and ');
-        await requestConfirmation({
-          title: 'End of Day Saved on This Terminal',
-          message: `The drawer close and cash count are safely stored locally. ${queueParts || `${syncResult.pending} update(s)`} still ${saleCount + operationCount === 1 ? 'needs' : 'need'} cloud sync and will retry after the next online sign-in.`,
-          confirmLabel: 'Continue to Login',
-          hideCancel: true,
-        });
+        showNotification(`${queueParts || `${total} update(s)`} still syncing to the cloud in the background.`);
       }
-    } catch (error) {
-      await requestConfirmation({
-        title: 'End of Day Saved Offline',
-        message: `The drawer close and cash count are safely stored on this terminal. Cloud synchronization could not finish: ${error.message || 'connection unavailable'}. It will retry after the next online sign-in.`,
-        confirmLabel: 'Continue to Login',
-        hideCancel: true,
-      });
+    } catch {
+      // Local queue summary read failed; not worth blocking logout over.
     }
+
+    void cashierApi.syncNow();
 
     if (onLogout) {
       onLogout();
@@ -1429,17 +1444,11 @@ const Cashier = ({ onLogout, user }) => {
         key: jobKey,
         transactionNo,
         label: copyLabel,
-        status: 'Printing in 2.5 seconds',
+        status: 'Checking printer',
       },
     ]);
 
     try {
-      await new Promise((resolve) => window.setTimeout(resolve, 2500));
-      if (cancelledReceiptPrintJobsRef.current.has(jobId)) {
-        throw new Error('Receipt printing was canceled.');
-      }
-
-      updateReceiptPrintJob(jobId, { status: 'Checking printer' });
       const status = await refreshPrinterQueue();
       if (status && !status.isReady) {
         throw new Error((status.messages || []).join(' ') || 'Printer is not ready.');
@@ -2197,6 +2206,14 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
+    // Quick Add skips the confirmation modal and adds 1 unit straight to the
+    // cart. Fractional products (sold by weight) still always prompt, since
+    // defaulting to "1" of a weighed good is usually wrong.
+    if (quickAddMode && !isFractional(product)) {
+      commitProductToCart(product, 1, selectedUnit);
+      return;
+    }
+
     setPendingCartProduct(product);
     setPendingCartUnitKey(sellingUnitKey(selectedUnit));
     setInitialCartQuantity('1');
@@ -2229,11 +2246,12 @@ const Cashier = ({ onLogout, user }) => {
     const unitName = String(selectedUnit?.unit || product.unit || 'Unit').trim() || 'Unit'
     const unitBarcode = String(selectedUnit?.barcode || '').trim()
     const unitPrice = Number(selectedUnit?.price) || Number(product.price) || 0
-    const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product) }, selectedUnit)
-    const requestedQty = Math.floor(Number(quantity) || 0)
+    const fractional = isFractional(product)
+    const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product), allowFractional: fractional }, selectedUnit)
+    const requestedQty = fractional ? quantizeQty(quantity) : Math.floor(Number(quantity) || 0)
 
     if (requestedQty <= 0) {
-      setInitialCartQuantityError('Enter a quantity of at least 1.')
+      setInitialCartQuantityError(fractional ? 'Enter a quantity greater than zero.' : 'Enter a quantity of at least 1.')
       return false
     }
 
@@ -2246,10 +2264,10 @@ const Cashier = ({ onLogout, user }) => {
     const nextCartItems = (() => {
       const existing = cartItems.find((item) => item.id === itemId);
       if (existing) {
-        const nextQuantity = existing.quantity + requestedQty
+        const nextQuantity = fractional ? quantizeQty(existing.quantity + requestedQty) : existing.quantity + requestedQty
         return cartItems.map((item) =>
           item.id === itemId
-            ? { ...item, quantity: nextQuantity, total: item.price * nextQuantity }
+            ? { ...item, quantity: nextQuantity, total: roundMoney(item.price * nextQuantity) }
             : item
         );
       }
@@ -2264,6 +2282,7 @@ const Cashier = ({ onLogout, user }) => {
           unit: unitName,
           price: unitPrice,
           conversion,
+          fractional,
           stockQty: product.qty,
           lowStock: product.lowStock,
           barcode: unitBarcode || product.barcode,
@@ -2271,7 +2290,7 @@ const Cashier = ({ onLogout, user }) => {
           category: product.category,
           imageUrl: product.imageUrl,
           image: product.image,
-          total: unitPrice * requestedQty,
+          total: roundMoney(unitPrice * requestedQty),
         },
       ];
     })();
@@ -2397,11 +2416,14 @@ const Cashier = ({ onLogout, user }) => {
         if (item.id !== id) return item;
         const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1
         const availableBase = getRemainingStock(item, activeTransaction, item.id)
-        const maxAvailableQty = Math.max(0, Math.floor(availableBase / conversion));
-        const maxQty = Math.max(0, Math.min(maxAvailableQty, Math.floor(requested)));
+        const requestedQty = item.fractional ? quantizeQty(requested) : Math.floor(requested)
+        const maxAvailableQty = item.fractional
+          ? Math.max(0, floorQty(availableBase / conversion))
+          : Math.max(0, Math.floor(availableBase / conversion));
+        const maxQty = Math.max(0, Math.min(maxAvailableQty, requestedQty));
 
-        if (requested > maxQty) {
-          showNotification(`Only ${maxQty} ${pluralUnit(item.unit, maxQty)} available for ${item.name}.`);
+        if (requestedQty > maxQty) {
+          showNotification(`Only ${formatQty(maxQty)} ${pluralUnit(item.unit, maxQty)} available for ${item.name}.`);
         }
 
         if (maxQty === 0) return null;
@@ -2409,7 +2431,7 @@ const Cashier = ({ onLogout, user }) => {
         return {
           ...item,
           quantity: maxQty,
-          total: item.price * maxQty,
+          total: roundMoney(item.price * maxQty),
         };
       }).filter(Boolean),
     });
@@ -2545,6 +2567,11 @@ const Cashier = ({ onLogout, user }) => {
 
   const closePaymentFlow = () => {
     if (!['amount', 'customer'].includes(paymentFlow.step) && !paymentFlow.completedTxn) return;
+    // A finished sale's tab closes itself so the cashier lands straight on a
+    // fresh tab for the next transaction without touching the mouse.
+    if (paymentFlow.completedTxn?.id) {
+      handleDeleteTransaction(paymentFlow.completedTxn.id, { skipConfirm: true });
+    }
     setPaymentFlow({
       open: false,
       step: 'amount',
@@ -2782,19 +2809,7 @@ const Cashier = ({ onLogout, user }) => {
           confirmDrawerClosed: false,
         });
         showNotification(`Receipt printed for transaction ${txn.completedSale.transactionNo || txn.transactionNo}.`);
-        setPaymentFlow({
-          open: false,
-          step: 'amount',
-          method: 'cash',
-          amount: '',
-          gcashAmount: '',
-          gcashRef: '',
-          splitPayments: { cash: '', gcash: '', gcashRef: '' },
-          error: '',
-          busy: false,
-          completedTxn: null,
-        });
-        window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
+        closePaymentFlow();
       } catch (err) {
         setPaymentFlow((current) => ({
           ...current,
@@ -2843,9 +2858,9 @@ const Cashier = ({ onLogout, user }) => {
     setBarcode('');
   };
 
-  const handleDeleteTransaction = async (txnId) => {
+  const handleDeleteTransaction = async (txnId, { skipConfirm = false } = {}) => {
     const target = transactions.find((txn) => txn.id === txnId);
-    if (target?.status === 'completed') {
+    if (target?.status === 'completed' && !skipConfirm) {
       const accepted = await requestConfirmation({
         title: 'Close Completed Transaction',
         message: `Remove completed transaction ${target.transactionNo} from the open transaction tabs? Its sales record and receipt history will be kept.`,
@@ -2977,6 +2992,7 @@ const Cashier = ({ onLogout, user }) => {
         searchProductInputRef.current?.select?.();
       },
       focusQuantity: focusLatestQuantityInput,
+      toggleQuickAdd: toggleQuickAddMode,
       newTransaction: handleNewTransaction,
       completeTransaction: handleCompleteTransaction,
       voidTransaction: handleVoidTransaction,
@@ -3227,6 +3243,23 @@ const Cashier = ({ onLogout, user }) => {
           <div className={styles['add-product-section']}>
             <div className={styles['section-title-row']}>
               <h3 className={styles['section-title']}>Add Product</h3>
+              <Badge
+                variant={quickAddMode ? 'success' : 'info'}
+                size="sm"
+                role="button"
+                tabIndex={0}
+                onClick={toggleQuickAddMode}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    toggleQuickAddMode();
+                  }
+                }}
+                title="Toggle whether scans add 1 unit instantly or ask for quantity"
+                style={{ cursor: 'pointer' }}
+              >
+                {withShortcut(`Quick Add: ${quickAddMode ? 'ON' : 'OFF'}`, 'toggleQuickAdd')}
+              </Badge>
             </div>
 
             <div className={styles['input-group']}>
@@ -3335,7 +3368,9 @@ const Cashier = ({ onLogout, user }) => {
                 {cartItems.map((item) => {
                   const remainingStock = stockForProduct(item);
                   const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1;
-                  const maxQty = Math.max(1, Math.floor(getRemainingStock(item, activeTransaction) / conversion));
+                  const maxQty = item.fractional
+                    ? Math.max(0.001, floorQty(getRemainingStock(item, activeTransaction) / conversion))
+                    : Math.max(1, Math.floor(getRemainingStock(item, activeTransaction) / conversion));
                   const stock = stockState({ ...item, stockQty: remainingStock });
                   return (
                     <div key={item.id} className={styles['cart-item']}>
@@ -3352,7 +3387,7 @@ const Cashier = ({ onLogout, user }) => {
                         <button
                           type="button"
                           onClick={() => adjustQuantity(item.id, -1)}
-                          disabled={item.quantity <= 1}
+                          disabled={item.quantity <= (item.fractional ? 0.001 : 1)}
                           aria-label="Decrease quantity"
                         >
                           <Dash size={14} />
@@ -3363,7 +3398,8 @@ const Cashier = ({ onLogout, user }) => {
                             else quantityInputRefs.current.delete(item.id);
                           }}
                           type="number"
-                          min="1"
+                          min={item.fractional ? '0.001' : '1'}
+                          step={item.fractional ? '0.001' : '1'}
                           max={maxQty}
                           value={item.quantity}
                           onChange={(e) => handleQuantityChange(item.id, e.target.value)}
@@ -3817,7 +3853,7 @@ const Cashier = ({ onLogout, user }) => {
                 <strong>{pendingCartProduct.name}</strong>
                 <span>{pendingCartSelectedUnit?.barcode || pendingCartProduct.barcode || 'No barcode'} | {money(pendingCartSelectedUnit?.price || pendingCartProduct.price)}</span>
                 <small>
-                  Available: {pendingCartAvailableQty} {pluralUnit(pendingCartSelectedUnit?.unit || pendingCartProduct.unit || 'item', pendingCartAvailableQty)}
+                  Available: {formatQty(pendingCartAvailableQty)} {pluralUnit(pendingCartSelectedUnit?.unit || pendingCartProduct.unit || 'item', pendingCartAvailableQty)}
                   {pendingCartConversion > 1 ? ` (${pendingCartConversion} ${pluralUnit(pendingCartProduct.unit || 'base unit', pendingCartConversion)} each)` : ''}
                 </small>
               </div>
@@ -3844,9 +3880,9 @@ const Cashier = ({ onLogout, user }) => {
             <Input
               label={`Quantity (${pluralUnit(pendingCartSelectedUnit?.unit || pendingCartProduct.unit || 'item')})`}
               type="number"
-              min="1"
+              min={pendingCartFractional ? '0.001' : '1'}
               max={pendingCartAvailableQty}
-              step="1"
+              step={pendingCartFractional ? '0.001' : '1'}
               inputRef={initialQuantityInputRef}
               value={initialCartQuantity}
               onChange={(e) => {
@@ -4599,21 +4635,23 @@ const Cashier = ({ onLogout, user }) => {
                 const productId = String(item.productId || item.id || '');
                 const returnedQty = returnedQuantityForItem(lookupSale, productId);
                 const soldQty = Number(item.quantity) || 0;
-                const availableQty = Math.max(0, soldQty - returnedQty);
+                const availableQty = Math.max(0, quantizeQty(soldQty - returnedQty));
+                const itemFractional = isFractional(products.find((product) => product.id === productId));
                 return (
                   <div key={productId || item.name} className={styles['lookup-item-row']}>
                     <span>{item.name}</span>
-                    <span>{soldQty}</span>
-                    <span>{availableQty}</span>
+                    <span>{formatQty(soldQty)}</span>
+                    <span>{formatQty(availableQty)}</span>
                     <span>{money(Number(item.price || 0) * soldQty)}</span>
                     {(lookupMode === 'refund' || lookupMode === 'exchange') && (
                       <input
                         type="number"
                         min="0"
+                        step={itemFractional ? '0.001' : '1'}
                         max={availableQty}
                         value={lookupReturnQty[productId] || ''}
                         onChange={(e) => {
-                          const requested = Math.floor(Number(e.target.value) || 0);
+                          const requested = itemFractional ? quantizeQty(e.target.value) : Math.floor(Number(e.target.value) || 0);
                           setLookupReturnQty((current) => ({
                             ...current,
                             [productId]: Math.max(0, Math.min(availableQty, requested)),
