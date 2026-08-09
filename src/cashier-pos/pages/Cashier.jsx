@@ -410,6 +410,11 @@ const Cashier = ({ onLogout, user }) => {
   const splitCashInputRef = useRef(null);
   const splitGcashInputRef = useRef(null);
   const [transactions, setTransactions] = useState(() => [createTransaction(1)]);
+  // A plain ref counter (not derived from `transactions` state) so a new tab's id
+  // can never collide with another one created in the same render/async window —
+  // e.g. a rapid double-click on "New Transaction", or opening a new tab while a
+  // previous sale's completeActiveTransaction() is still awaiting a network call.
+  const nextTransactionIdRef = useRef(2);
   const [activeTransaction, setActiveTransaction] = useState(1);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
   const [barcode, setBarcode] = useState('');
@@ -438,7 +443,6 @@ const Cashier = ({ onLogout, user }) => {
   const cancelledReceiptPrintJobsRef = useRef(new Set());
   const receiptPrintJobIdRef = useRef(0);
   const [showVoidAuth, setShowVoidAuth] = useState(false);
-  const [managerBarcode, setManagerBarcode] = useState('');
   const voidApproval = useApproval('barcode');
   const [showCompletedVoidModal, setShowCompletedVoidModal] = useState(false);
   const [completedVoidTarget, setCompletedVoidTarget] = useState(null);
@@ -548,8 +552,12 @@ const Cashier = ({ onLogout, user }) => {
 
   const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
-  const discountAmount = (subtotal * discount) / 100;
-  const total = subtotal - discountAmount;
+  // Round to the nearest centavo here (not just at display time via money()) so
+  // the amount a cashier is asked to collect can never differ from what's shown
+  // on screen due to binary floating-point drift (e.g. subtotal * discount / 100
+  // landing a fraction of a centavo above its own rounded value).
+  const discountAmount = Math.round((subtotal * discount) / 100 * 100) / 100;
+  const total = Math.round((subtotal - discountAmount) * 100) / 100;
   const cashTendered = parseFloat(cashAmount) || 0;
   const change = paymentMethod === 'cash' ? cashTendered - total : 0;
   const completedPaymentSnapshot = isCompletedTxn ? activeTxn.completedSale : null;
@@ -885,9 +893,17 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const setShortcut = (action, value) => {
+    const combo = normalizeShortcut(value);
+    if (combo) {
+      const conflict = CASHIER_SHORTCUTS.find((item) => item.action !== action && shortcutFor(item.action) === combo);
+      if (conflict) {
+        showNotification(`"${combo}" is already assigned to "${conflict.label}". Clear that shortcut first or choose a different key.`);
+        return;
+      }
+    }
     saveShortcutSettings({
       shortcuts: {
-        [action]: normalizeShortcut(value),
+        [action]: combo,
       },
     });
   };
@@ -1905,6 +1921,7 @@ const Cashier = ({ onLogout, user }) => {
           completedSale: {
             ...txn.completedSale,
             status: 'adjusted',
+            rawStatus: 'adjusted',
             adjustments: result.adjustments || [],
           },
         };
@@ -2369,7 +2386,11 @@ const Cashier = ({ onLogout, user }) => {
   const handleQuantityChange = (id, value) => {
     if (isLockedTxn) return;
     const requested = Number(value);
-    if (!Number.isFinite(requested)) return;
+    // Ignore an empty/zero/invalid value while the cashier is mid-edit (e.g.
+    // clearing the field to retype a new quantity) instead of treating it as
+    // "remove this item" — onBlur commits a final value (falling back to 1)
+    // once they're done typing.
+    if (value === '' || !Number.isFinite(requested) || requested <= 0) return;
 
     updateActiveTransaction({
       cartItems: cartItems.map((item) => {
@@ -2473,7 +2494,7 @@ const Cashier = ({ onLogout, user }) => {
       const result = await cashierApi.nextTransactionNumber();
       const transactionNo = result.transactionNo || nextLocalTransactionNo(completedTransactionNo);
       setNextTransactionNo(transactionNo);
-      const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
+      const newId = nextTransactionIdRef.current++;
       const completedSale = {
         ...completedPayment,
         cashierId: user?.id,
@@ -2691,23 +2712,29 @@ const Cashier = ({ onLogout, user }) => {
         const paidCash = parseFloat(paymentFlow.amount) || 0;
         const paidGcash = parseFloat(paymentFlow.gcashAmount) || 0;
         const flowSplitPayments = paymentFlow.splitPayments || { cash: '', gcash: '', gcashRef: '' };
-        const completedTxn = await completeActiveTransaction({
-          paidCashOverride: method === 'cash' ? paidCash : 0,
-          paidGcashOverride: method === 'gcash' ? paidGcash : 0,
-          splitPaymentsOverride: flowSplitPayments,
-          gcashRefOverride: method === 'gcash' ? String(paymentFlow.gcashRef || '').trim() : '',
-          paymentMethodOverride: method === 'split' ? 'cash' : method,
-          isSplitPaymentOverride: method === 'split',
-          customerNameOverride: customerName,
-        });
         const splitCash = parseFloat(flowSplitPayments.cash) || 0;
         const opensDrawer = method === 'cash' || (method === 'split' && splitCash > 0);
-        const drawerOpenSucceeded = opensDrawer
-          ? await openCashRegisterForActivity(
-              'completed transaction',
-              `Cash drawer open command sent after completed transaction ${completedTxn?.completedSale?.transactionNo || completedTxn?.transactionNo || activeTxn.transactionNo}; physical status is not detectable.`
-            )
-          : false;
+        // Fire the drawer-open command alongside completeActiveTransaction rather
+        // than after it: completeActiveTransaction awaits a network product-catalog
+        // refresh before the sale is saved, and the cash still needs to come out
+        // now regardless of how long that sync takes.
+        const [completedTxn, drawerOpenSucceeded] = await Promise.all([
+          completeActiveTransaction({
+            paidCashOverride: method === 'cash' ? paidCash : 0,
+            paidGcashOverride: method === 'gcash' ? paidGcash : 0,
+            splitPaymentsOverride: flowSplitPayments,
+            gcashRefOverride: method === 'gcash' ? String(paymentFlow.gcashRef || '').trim() : '',
+            paymentMethodOverride: method === 'split' ? 'cash' : method,
+            isSplitPaymentOverride: method === 'split',
+            customerNameOverride: customerName,
+          }),
+          opensDrawer
+            ? openCashRegisterForActivity(
+                'completed transaction',
+                `Cash drawer open command sent after completed transaction ${activeTxn.transactionNo}; physical status is not detectable.`
+              )
+            : Promise.resolve(false),
+        ]);
         setPaymentFlow((current) => ({
           ...current,
           busy: false,
@@ -2806,11 +2833,11 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const handleNewTransaction = () => {
-    const newId = Math.max(...transactions.map((t) => t.id), 0) + 1;
+    const newId = nextTransactionIdRef.current++;
     const transactionNo = transactions.reduce((latest, txn) => (
       String(txn.transactionNo) > String(latest) ? txn.transactionNo : latest
     ), nextTransactionNo || activeTxn.transactionNo);
-    setTransactions([...transactions, createTransaction(newId, nextLocalTransactionNo(transactionNo))]);
+    setTransactions((current) => [...current, createTransaction(newId, nextLocalTransactionNo(transactionNo))]);
     setActiveTransaction(newId);
     setSearchProduct('');
     setBarcode('');
@@ -2938,7 +2965,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   useEffect(() => {
-    const modalOpen = idleLocked || Boolean(pendingCartProduct) || paymentFlow.open || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose;
+    const modalOpen = idleLocked || Boolean(pendingCartProduct) || paymentFlow.open || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose || showAdminLogout || showCloudAuth;
 
     const actions = {
       focusBarcode: () => {
@@ -3842,16 +3869,14 @@ const Cashier = ({ onLogout, user }) => {
         isOpen={showVoidAuth}
         onClose={() => {
           setShowVoidAuth(false);
-          voidApproval.setError('');
-          setManagerBarcode('');
+          voidApproval.reset();
         }}
         title="Manager Authorization Required"
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
             <button className="btn btn-outline" onClick={() => {
               setShowVoidAuth(false);
-              voidApproval.setError('');
-              setManagerBarcode('');
+              voidApproval.reset();
             }}>
               Cancel
             </button>
@@ -3863,8 +3888,8 @@ const Cashier = ({ onLogout, user }) => {
         <Input
           label="Manager Barcode"
           placeholder="Scan or enter manager barcode"
-          value={managerBarcode}
-          onChange={(e) => setManagerBarcode(e.target.value)}
+          value={voidApproval.code}
+          onChange={(e) => voidApproval.setCode(e.target.value)}
           onKeyDown={submitOnEnter(confirmVoidTransaction, (e) => ({ code: e.currentTarget.value }))}
           autoFocus
         />

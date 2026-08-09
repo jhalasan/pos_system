@@ -44,8 +44,8 @@ export const loadRetainedCompletedSales = (cashierId = '') => {
 
 const isCompletedSale = (sale = {}) => {
   const rawStatus = String(sale?.rawStatus || sale?.status || '').trim().toLowerCase();
-  if (rawStatus === 'voided' || rawStatus === 'adjusted') return false;
-  if (rawStatus === 'completed' || sale?.status === 'Completed' || sale?.status === 'completed') return true;
+  if (rawStatus === 'voided') return false;
+  if (rawStatus === 'completed' || rawStatus === 'adjusted' || sale?.status === 'Completed' || sale?.status === 'completed') return true;
   return Boolean(sale?.transactionNo || sale?.saleId || sale?.id) && (
     sale?.paymentMethod === 'cash'
     || sale?.paymentMethod === 'split'
@@ -60,19 +60,30 @@ export const normalizeCompletedSale = (sale = {}) => {
   if (!sale) return null;
   const normalized = { ...sale };
   if (isCompletedSale(normalized)) {
-    normalized.status = 'completed';
-    normalized.rawStatus = 'completed';
+    const rawStatus = String(sale?.rawStatus || sale?.status || '').trim().toLowerCase();
+    normalized.status = rawStatus === 'adjusted' ? 'adjusted' : 'completed';
+    normalized.rawStatus = normalized.status;
     return normalized;
   }
   return null;
 };
 
+// A refund pays cash back out of the drawer, so it reduces the sale's cash
+// contribution. An exchange just swaps goods (no cash changes hands) and any
+// price difference is rung up as its own separate transaction, so it does not
+// reduce cash here.
+const refundedCashAmount = (sale) => (Array.isArray(sale?.adjustments) ? sale.adjustments : [])
+  .filter((adjustment) => adjustment?.type === 'refund')
+  .reduce((sum, adjustment) => sum + (Number(adjustment.amount) || 0), 0);
+
 export const getCashSalesAmount = (sales = []) => (sales || []).reduce((sum, sale) => {
   const normalized = normalizeCompletedSale(sale);
   if (!normalized) return sum;
-  if (normalized.paymentMethod === 'cash') return sum + (Number(normalized.totalAmount) || 0);
-  if (normalized.paymentMethod === 'split') return sum + (Number(normalized.splitPayments?.cash ?? normalized.cashAmount) || 0);
-  return sum;
+  let cashAmount = 0;
+  if (normalized.paymentMethod === 'cash') cashAmount = Number(normalized.totalAmount) || 0;
+  else if (normalized.paymentMethod === 'split') cashAmount = Number(normalized.splitPayments?.cash ?? normalized.cashAmount) || 0;
+  const netCashAmount = Math.max(0, cashAmount - refundedCashAmount(normalized));
+  return sum + netCashAmount;
 }, 0);
 
 export const getCashSalesAmountFromSources = ({ retainedSales = [], currentSales = [], historySales = [], cashierId = '' } = {}) => {
