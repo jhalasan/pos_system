@@ -92,7 +92,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       const finalMessage = failed > 0
         ? `Cloud sync finished with ${failed} failed item(s).`
         : warnings.length > 0 && pending > 0
-          ? `Cloud sync checked. ${pending} item(s) will retry automatically.`
+          ? warnings[0]
           : uploaded > 0
             ? `Cloud sync complete. Uploaded ${uploaded} item(s).`
             : 'Cloud sync complete. Everything is up to date.'
@@ -101,7 +101,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       }))
       if ((result.uploaded || 0) === 0 && (result.failed || 0) === 0) {
         flash((result.warnings || []).length > 0
-          ? `Cloud uploads complete. ${result.pending || 0} pending; catalog refresh will retry automatically.`
+          ? result.warnings[0]
           : `Cloud sync complete. ${result.pending || 0} pending.`)
       } else if ((result.failed || 0) > 0 && result.errors?.[0]) {
         flash(`Cloud sync failed: ${result.errors[0]}`)

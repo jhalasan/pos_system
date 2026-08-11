@@ -56,3 +56,8 @@ export function pocketBaseRateLimitMessage() {
   const minutes = Math.max(1, Math.ceil(remainingMs / 60_000))
   return `PocketHost rate limit reached. Try again in about ${minutes} minute(s).`
 }
+
+/** Test-only: clears the module-level cooldown so suites don't leak state into each other. */
+export function resetPocketBaseRateLimit() {
+  rateLimitedUntil = 0
+}

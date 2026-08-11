@@ -1349,7 +1349,7 @@ async function recordActivity(action, detail) {
 
   await adminDb.activityLogs.add(log)
 
-  if (!globalThis.navigator || globalThis.navigator.onLine) {
+  if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
     try {
       const record = await pb.collection('activity_logs').create({
         user_id: log.userId,
@@ -1619,7 +1619,7 @@ export const desktopAdminApi = {
       await queueOperation('deleteProduct', id, { id })
     })
     if (deletedName) await recordActivity('Product', `Deleted product "${deletedName}".`)
-    syncEngine?.syncNow().catch(rememberPocketBaseRateLimit)
+    syncEngine?.schedule(0)
     return null
   },
 
@@ -1879,6 +1879,21 @@ export const desktopAdminApi = {
   async syncNow() {
     await startAdminRuntime()
     await initializeCashierDb()
+    if (isPocketBaseRateLimited()) {
+      const message = pocketBaseRateLimitMessage()
+      if (typeof globalThis.CustomEvent === 'function') {
+        globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+          detail: { scope: 'admin', state: 'waiting', message },
+        }))
+      }
+      return {
+        uploaded: 0,
+        failed: 0,
+        errors: [],
+        warnings: [message],
+        pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
+      }
+    }
     await adminDb.pendingOps.where('status').equals('failed').modify({
       status: 'pending',
       nextAttemptAt: 0,

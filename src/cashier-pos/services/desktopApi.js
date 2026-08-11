@@ -1049,6 +1049,21 @@ export const desktopCashierApi = {
 
   async syncNow() {
     const activeRuntime = await runtime()
+    if (isPocketBaseRateLimited()) {
+      const message = pocketBaseRateLimitMessage()
+      if (typeof globalThis.CustomEvent === 'function') {
+        globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
+          detail: { scope: 'cashier', state: 'waiting', message },
+        }))
+      }
+      return {
+        uploaded: 0,
+        failed: 0,
+        products: 0,
+        warnings: [message],
+        pending: (await cashierDb.pendingSales.count()) + (await cashierDb.pendingOps.count()),
+      }
+    }
     await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
     await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
     await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })

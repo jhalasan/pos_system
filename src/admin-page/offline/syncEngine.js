@@ -3,7 +3,9 @@ import { adminDb } from './db'
 import { deriveStatus, normalizeProduct } from './productRepository'
 import { refreshAdminLocalCache } from './cloudBootstrap'
 import {
+  isPocketBaseRateLimit,
   isPocketBaseRateLimited,
+  pocketBaseRateLimitMessage,
   pocketBaseRateLimitRemainingMs,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
@@ -32,6 +34,8 @@ function emitSyncStatus(state, message) {
 }
 
 function errorMessage(error) {
+  if (isPocketBaseRateLimit(error)) return pocketBaseRateLimitMessage()
+
   const fieldErrors = error?.response?.data || error?.data?.data || {}
   const details = Object.entries(fieldErrors)
     .map(([field, value]) => {
@@ -49,6 +53,7 @@ function errorMessage(error) {
 
 async function productSyncErrorMessage(pb, op, error) {
   const message = errorMessage(error)
+  if (isPocketBaseRateLimited()) return message
   const barcodeError = error?.response?.data?.barcode || error?.data?.data?.barcode
   if (!barcodeError || !op?.payload?.barcode) return message
 
@@ -345,15 +350,26 @@ export class AdminSyncEngine extends EventTarget {
 
     let uploaded = 0
     let failed = 0
+    let rateLimited = false
     const errors = []
 
     for (const op of queuedOps) {
       if (this.stopped) break
+      if (isPocketBaseRateLimited()) { rateLimited = true; break }
 
       try {
         await this.uploadOperation(op)
         uploaded += 1
       } catch (error) {
+        if (Number(error?.status) === 429) {
+          rememberPocketBaseRateLimit(error)
+          rateLimited = true
+          await adminDb.pendingOps.update(op.id, {
+            lastError: pocketBaseRateLimitMessage(),
+            nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
+          })
+          break
+        }
         rememberPocketBaseRateLimit(error)
         failed += 1
         const syncErrorMessage = await productSyncErrorMessage(this.pb, op, error)
@@ -380,11 +396,17 @@ export class AdminSyncEngine extends EventTarget {
 
     for (const log of queuedLogs) {
       if (this.stopped) break
+      if (isPocketBaseRateLimited()) { rateLimited = true; break }
 
       try {
         await this.uploadActivityLog(log)
         uploaded += 1
       } catch (error) {
+        if (Number(error?.status) === 429) {
+          rememberPocketBaseRateLimit(error)
+          rateLimited = true
+          break
+        }
         rememberPocketBaseRateLimit(error)
         failed += 1
         errors.push(errorMessage(error))
@@ -393,23 +415,27 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     let pulled = false
-    if (uploaded > 0 || shouldPullCloud) {
+    if (!rateLimited && !isPocketBaseRateLimited() && (uploaded > 0 || shouldPullCloud)) {
       pulled = await refreshAdminLocalCache({ pb: this.pb }).then(() => true).catch((error) => {
         rememberPocketBaseRateLimit(error)
+        if (Number(error?.status) === 429) rateLimited = true
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { error } }))
         return false
       })
       if (pulled) this.lastCloudPullAt = Date.now()
     }
 
+    const warnings = rateLimited ? [pocketBaseRateLimitMessage()] : []
     this.dispatchEvent(new CustomEvent('synccomplete', { detail: { uploaded, failed, errors } }))
     emitSyncStatus(
-      failed > 0 ? 'failed' : 'succeeded',
+      failed > 0 ? 'failed' : (rateLimited ? 'waiting' : 'succeeded'),
       failed > 0
         ? `Auto-Sync Finished with ${failed} Failed: ${errors[0] || 'Unknown error'}`
-        : `Auto-Sync Succeeded — ${await adminDb.pendingOps.count()} pending`,
+        : rateLimited
+          ? `${pocketBaseRateLimitMessage()} ${await adminDb.pendingOps.count()} change(s) will retry automatically.`
+          : `Auto-Sync Succeeded — ${await adminDb.pendingOps.count()} pending`,
     )
-    return { uploaded, failed, errors, pulled, pending: await adminDb.pendingOps.count() }
+    return { uploaded, failed, errors, warnings, pulled, pending: await adminDb.pendingOps.count() }
   }
 
   async uploadOperation(op) {

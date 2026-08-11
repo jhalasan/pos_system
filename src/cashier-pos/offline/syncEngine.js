@@ -3,7 +3,9 @@ import { cashierDb } from './db'
 import { refreshLocalProductCatalog } from './cloudBootstrap'
 import { toBaseStockQuantity } from './stockUtils'
 import {
+  isPocketBaseRateLimit,
   isPocketBaseRateLimited,
+  pocketBaseRateLimitMessage,
   pocketBaseRateLimitRemainingMs,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
@@ -32,6 +34,8 @@ function emitSyncStatus(state, message) {
 }
 
 function errorMessage(error) {
+  if (isPocketBaseRateLimit(error)) return pocketBaseRateLimitMessage()
+
   const base = error instanceof Error ? error.message : String(error)
   const response = error?.response || error?.data || {}
   const fields = response?.data || {}
@@ -326,14 +330,16 @@ export class CashierSyncEngine extends EventTarget {
     let uploaded = 0
     let failed = 0
     let products = 0
+    let rateLimited = false
     const warnings = []
 
-    if (shouldRefreshProducts) {
+    if (shouldRefreshProducts && !isPocketBaseRateLimited()) {
       try {
         products = await refreshLocalProductCatalog({ pb: this.pb })
         this.lastProductRefreshAt = Date.now()
       } catch (error) {
         rememberPocketBaseRateLimit(error)
+        if (Number(error?.status) === 429) rateLimited = true
         warnings.push(errorMessage(error))
         this.dispatchEvent(new CustomEvent('catalogrefresherror', {
           detail: { error },
@@ -343,11 +349,21 @@ export class CashierSyncEngine extends EventTarget {
 
     for (const sale of queuedSales) {
       if (this.stopped) break
+      if (rateLimited || isPocketBaseRateLimited()) { rateLimited = true; break }
 
       try {
         await this.uploadSale(sale)
         uploaded += 1
       } catch (error) {
+        if (Number(error?.status) === 429) {
+          rememberPocketBaseRateLimit(error)
+          rateLimited = true
+          await cashierDb.pendingSales.update(sale.clientSaleId, {
+            lastError: pocketBaseRateLimitMessage(),
+            nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
+          })
+          break
+        }
         rememberPocketBaseRateLimit(error)
         failed += 1
         const attempts = sale.attempts + 1
@@ -365,10 +381,21 @@ export class CashierSyncEngine extends EventTarget {
 
     for (const op of queuedOps) {
       if (this.stopped) break
+      if (rateLimited || isPocketBaseRateLimited()) { rateLimited = true; break }
+
       try {
         await this.uploadOperation(op)
         uploaded += 1
       } catch (error) {
+        if (Number(error?.status) === 429) {
+          rememberPocketBaseRateLimit(error)
+          rateLimited = true
+          await cashierDb.pendingOps.update(op.id, {
+            lastError: pocketBaseRateLimitMessage(),
+            nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
+          })
+          break
+        }
         rememberPocketBaseRateLimit(error)
         failed += 1
         const attempts = op.attempts + 1
@@ -381,17 +408,21 @@ export class CashierSyncEngine extends EventTarget {
       }
     }
 
+    if (rateLimited && !warnings.length) warnings.push(pocketBaseRateLimitMessage())
+
     const pending = await this.pendingCount()
     this.dispatchEvent(new CustomEvent('synccomplete', {
       detail: { uploaded, failed, warnings },
     }))
     emitSyncStatus(
-      failed > 0 ? 'failed' : pending > 0 ? 'waiting' : 'succeeded',
+      failed > 0 ? 'failed' : (rateLimited || pending > 0) ? 'waiting' : 'succeeded',
       failed > 0
         ? `Auto-Sync Finished with ${failed} Failed`
-        : pending > 0
-          ? `Auto-Sync Waiting — ${pending} pending`
-          : 'Auto-Sync Succeeded — 0 pending',
+        : rateLimited
+          ? `${pocketBaseRateLimitMessage()} ${pending} pending.`
+          : pending > 0
+            ? `Auto-Sync Waiting — ${pending} pending`
+            : 'Auto-Sync Succeeded — 0 pending',
     )
     return { uploaded, failed, products, warnings, pending }
   }
