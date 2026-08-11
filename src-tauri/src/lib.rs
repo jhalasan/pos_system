@@ -134,6 +134,7 @@ fn print_receipt(
     document_name: Option<String>,
     before_feed_lines: Option<u32>,
     after_feed_lines: Option<u32>,
+    drawer_pulse_ms: Option<u32>,
 ) -> Result<PrintReceiptResult, String> {
     let copy_count = copies.unwrap_or(1).clamp(1, 10);
     print_receipt_impl(
@@ -144,6 +145,12 @@ fn print_receipt(
         document_name.unwrap_or_else(|| "Nexa POS Receipt".to_string()),
         before_feed_lines.unwrap_or(0).clamp(0, 8),
         after_feed_lines.unwrap_or(0).clamp(0, 8),
+        // Different printer/drawer pairs need very different pulse widths to
+        // physically actuate the solenoid (confirmed by comparing working
+        // ESC/POS drawer commands across two real installs) even though pin 2
+        // has been correct in both cases seen so far, so only the on-time is
+        // exposed as a per-install setting.
+        drawer_pulse_ms.unwrap_or(50).clamp(2, 500),
     )
 }
 
@@ -616,6 +623,7 @@ fn print_receipt_impl(
     document_name: String,
     before_feed_lines: u32,
     after_feed_lines: u32,
+    drawer_pulse_ms: u32,
 ) -> Result<PrintReceiptResult, String> {
     use std::ffi::c_void;
     use std::ptr::{null, null_mut};
@@ -696,11 +704,16 @@ fn print_receipt_impl(
         open_cash_drawer: bool,
         before_feed_lines: u32,
         after_feed_lines: u32,
+        drawer_pulse_ms: u32,
     ) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&[0x1b, 0x40]); // ESC @, initialize printer.
         if open_cash_drawer {
-            bytes.extend_from_slice(&[0x1b, 0x70, 0x00, 0x19, 0xfa]); // ESC p, kick drawer pin 2.
+            // ESC p, pin 2, configurable on-time (ESC/POS units are 2ms each),
+            // fixed ~500ms off-time. The on-time is what actually needs to
+            // vary per printer/drawer pair to physically fire the solenoid.
+            let pulse_ticks = ((drawer_pulse_ms / 2).max(1)).min(255) as u8;
+            bytes.extend_from_slice(&[0x1b, 0x70, 0x00, pulse_ticks, 0xfa]);
         }
         if contents.trim().is_empty() {
             return bytes;
@@ -739,6 +752,7 @@ fn print_receipt_impl(
         open_cash_drawer,
         before_feed_lines,
         after_feed_lines,
+        drawer_pulse_ms,
     );
     let document_label = if document_name.trim().is_empty() {
         "Nexa POS Receipt".to_string()
@@ -811,6 +825,7 @@ fn print_receipt_impl(
     _document_name: String,
     _before_feed_lines: u32,
     _after_feed_lines: u32,
+    _drawer_pulse_ms: u32,
 ) -> Result<PrintReceiptResult, String> {
     let selected_printer = if printer_name.trim().is_empty() {
         "default printer".to_string()

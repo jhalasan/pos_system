@@ -197,6 +197,7 @@ const DEFAULT_RECEIPT_SETTINGS = {
   receiptBeforeFeedLines: 0,
   receiptAfterFeedLines: 0,
   receiptPdfDirectory: '',
+  drawerPulseMs: 50,
 };
 const CASHIER_SHORTCUTS = [
   { action: 'focusBarcode', label: 'Focus barcode scan', defaultKeys: 'F1' },
@@ -5013,6 +5014,25 @@ const Cashier = ({ onLogout, user }) => {
                   </label>
                   <small>
                     Select the Windows printer used for receipts and cash drawer commands.
+                  </small>
+                </div>
+                <div className={styles['receipt-printer-setting']}>
+                  <Input
+                    label="Cash Drawer Pulse (ms)"
+                    type="number"
+                    min="2"
+                    max="500"
+                    step="1"
+                    value={receiptSettings.drawerPulseMs ?? 50}
+                    onChange={(e) => {
+                      const value = Math.min(500, Math.max(2, Math.floor(Number(e.target.value) || 50)));
+                      saveReceiptSettings({ drawerPulseMs: value });
+                    }}
+                  />
+                  <small>
+                    How long the drawer-open signal stays on. Different printer/drawer models need
+                    different values to physically pop the drawer — increase this if the drawer
+                    doesn&apos;t open even though receipts print fine.
                   </small>
                 </div>
                 <label className={styles['receipt-settings-toggle']}>

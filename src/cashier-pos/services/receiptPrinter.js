@@ -73,6 +73,19 @@ function savedReceiptSpacing() {
   }
 }
 
+// Different printer/drawer pairs need different pulse widths to physically
+// fire the solenoid (confirmed across two real installs with the same pin
+// but very different on-times), so this is a per-PC setting rather than a
+// fixed constant.
+function savedDrawerPulseMs() {
+  try {
+    const settings = JSON.parse(localStorage.getItem(RECEIPT_SETTINGS_KEY) || '{}')
+    return clampNumber(settings.drawerPulseMs, 50, 2, 500)
+  } catch {
+    return 50
+  }
+}
+
 function printerStatusMessage(status) {
   const messages = Array.isArray(status?.messages) ? status.messages : []
   const queueCount = Array.isArray(status?.jobs) ? status.jobs.length : 0
@@ -414,6 +427,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
   const spacing = savedReceiptSpacing()
   const beforeFeedLines = clampNumber(options.beforeFeedLines ?? spacing.beforeLines, 0, 0, 8)
   const afterFeedLines = clampNumber(options.afterFeedLines ?? spacing.afterLines, 0, 0, 8)
+  const drawerPulseMs = clampNumber(options.drawerPulseMs ?? savedDrawerPulseMs(), 50, 2, 500)
   const documentName = options.documentName || `Receipt ${receiptData?.transactionNo || ''}`.trim()
   const invoke = tauriInvoke()
 
@@ -444,6 +458,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
         documentName,
         beforeFeedLines,
         afterFeedLines,
+        drawerPulseMs,
       })
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || ''
@@ -456,6 +471,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
           documentName,
           beforeFeedLines,
           afterFeedLines,
+          drawerPulseMs,
         })
       }
       throw error
@@ -525,6 +541,8 @@ export async function openCashDrawer(options = {}) {
 
   await assertReceiptPrinterReady({ ...options, printerName })
 
+  const drawerPulseMs = clampNumber(options.drawerPulseMs ?? savedDrawerPulseMs(), 50, 2, 500)
+
   try {
     return await invoke('print_receipt', {
       printerName,
@@ -534,6 +552,7 @@ export async function openCashDrawer(options = {}) {
       documentName: 'Cash drawer kick',
       beforeFeedLines: 0,
       afterFeedLines: 0,
+      drawerPulseMs,
     })
   } catch (error) {
     const message = typeof error === 'string' ? error : error?.message || ''
@@ -546,6 +565,7 @@ export async function openCashDrawer(options = {}) {
         documentName: 'Cash drawer kick',
         beforeFeedLines: 0,
         afterFeedLines: 0,
+        drawerPulseMs,
       })
     }
     throw error
