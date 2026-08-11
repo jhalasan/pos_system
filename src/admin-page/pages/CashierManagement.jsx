@@ -27,7 +27,7 @@ const cashierCapabilities = [
   ['cash_drawer', 'Record cash in/out'],
 ]
 const defaultCashierPermissions = cashierCapabilities.map(([value]) => value)
-const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', password: '', passwordConfirm: '', role: 'cashier', permissions: defaultCashierPermissions }
+const blank = { name: '', email: '', shift: 'Morning', status: 'active', cashierBarcode: '', oldPassword: '', password: '', passwordConfirm: '', role: 'cashier', permissions: defaultCashierPermissions }
 
 function nextStaffBarcode(role = 'cashier') {
   const prefix = role === 'manager' ? '92' : '81'
@@ -107,6 +107,7 @@ export default function CashierManagement() {
       shift: cashier.shift || 'Morning',
       status: cashier.status || 'active',
       cashierBarcode: cashier.cashierBarcode || '',
+      oldPassword: '',
       password: '',
       passwordConfirm: '',
       role: cashier.role || activeTab,
@@ -165,6 +166,10 @@ export default function CashierManagement() {
       }
       if (form.password !== form.passwordConfirm) {
         setFormError('Passwords do not match.')
+        return
+      }
+      if (isEdit && !form.oldPassword.trim()) {
+        setFormError(`Enter the ${staffNoun.toLowerCase()}'s current password to set a new one.`)
         return
       }
     }
@@ -644,6 +649,19 @@ export default function CashierManagement() {
             )}
             {(
               <>
+                {isEdit && (
+                  <div className="field">
+                    <label>Current Password</label>
+                    <input
+                      className="input"
+                      type="password"
+                      placeholder={`Required only to set a new password`}
+                      value={form.oldPassword}
+                      onChange={set('oldPassword')}
+                      autoComplete="off"
+                    />
+                  </div>
+                )}
                 <div className="field">
                   <label>{isEdit ? 'New Password (optional)' : 'Password'}</label>
                   <input

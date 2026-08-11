@@ -225,7 +225,7 @@ const CASHIER_SHIFT_KEY = 'nexa_cashier_shift_session';
 const CASHIER_SESSION_END_EVENTS_KEY = 'nexa_cashier_session_end_events';
 const CASHIER_TRANSACTIONS_KEY = 'nexa_cashier_transactions';
 const CASHIER_DEVICE_KEY = 'nexa_cashier_device_id';
-const IDLE_LOCK_MS = 5 * 60 * 1000;
+const IDLE_LOCK_MS = 15 * 60 * 1000;
 const CASH_FLOW_CATEGORIES = {
   in: ['Additional drawer fund', 'Correction', 'Customer change return', 'Other'],
   out: ['Supplier payment', 'Bank deposit', 'Petty cash', 'Correction', 'Other'],

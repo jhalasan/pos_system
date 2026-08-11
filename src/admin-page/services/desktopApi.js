@@ -734,6 +734,7 @@ function cashierPayload(data) {
   if (String(data.password || '').trim()) {
     payload.password = data.password
     payload.passwordConfirm = data.passwordConfirm || data.password
+    if (String(data.oldPassword || '').trim()) payload.oldPassword = data.oldPassword
   }
 
   return payload
@@ -2457,10 +2458,33 @@ export const desktopAdminApi = {
     const staffId = String(id || data?.id || data?.cashierId || '').trim()
     if (!staffId) throw new Error('Unable to save this staff account because its ID is missing. Refresh Staff Management and try again.')
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
+    const changingPassword = Boolean(String(data.password || '').trim())
+    if (changingPassword) {
+      // Password changes can't be queued offline, but the reachability check above is a
+      // heuristic (cached health check, rate-limit flag) that can false-negative. Attempt the
+      // real request so a genuine server response (e.g. wrong old password) isn't masked by a
+      // misleading "connect to the internet" message; only report offline when the request
+      // itself never reached the server.
+      const body = cashierUpdateBody(data)
+      const updated = await pb.collection('users').update(staffId, body, { requestKey: null }).catch((error) => {
+        if (!error?.status) throw new Error('Connect to the internet before changing a staff password.')
+        // PocketBase intentionally returns one ambiguous "Missing or invalid old password."
+        // message for both an empty and a wrong oldPassword, so it can't be used to probe
+        // which case applies. Since the caller already rejects an empty oldPassword before
+        // this request is made, a rejection reaching here always means the value was wrong.
+        const fieldErrors = error?.response?.data || error?.data?.data || {}
+        if (fieldErrors.oldPassword) {
+          throw new Error(String(data.oldPassword || '').trim()
+            ? 'Current password is incorrect.'
+            : 'Current password is required to set a new password.')
+        }
+        throw new Error(pocketBaseErrorMessage(error, `Unable to update ${roleLabel}.`))
+      })
+      await cacheUsers([updated])
+      await recordActivity(roleLabel === 'manager' ? 'Manager' : 'Cashier', `Updated ${roleLabel} "${updated.name || updated.email}".`)
+      return toCashierUser(updated)
+    }
     if (!(await isCloudReachable())) {
-      if (String(data.password || '').trim()) {
-        throw new Error('Connect to the internet before changing a staff password.')
-      }
       const existing = await adminDb.users.get(staffId)
       const payload = cashierPayload(data)
       delete payload.password
@@ -2690,6 +2714,34 @@ export const desktopAdminApi = {
     await queueOperation('updateUserSettings', id, { quick_login_enabled: Boolean(enabled), ...(enabled ? { emailVisibility: true } : {}) })
     const updated = await adminDb.users.get(id)
     await recordActivity('Settings', `${enabled ? 'Enabled' : 'Disabled'} cashier quick login for "${updated.name || updated.email}".`)
+    return toSettingsUser(updated)
+  },
+  async developerResetPassword({ targetUserId, superuserEmail, superuserPassword, newPassword } = {}) {
+    await startAdminRuntime()
+    const id = String(targetUserId || '').trim()
+    const email = String(superuserEmail || '').trim()
+    const suPassword = String(superuserPassword || '')
+    const password = String(newPassword || '')
+    if (!id) throw new Error('Select an account to reset.')
+    if (!email || !suPassword) throw new Error('Developer superuser email and password are required.')
+    if (password.length < 8) throw new Error('New password must be at least 8 characters.')
+    if (!(await isCloudReachable())) throw new Error('Connect to the internet to perform a developer password reset.')
+
+    const authClient = new PocketBase(baseUrl)
+    authClient.autoCancellation(false)
+    await authClient.collection('_superusers').authWithPassword(email, suPassword).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, 'Invalid developer (superuser) credentials.'))
+    })
+
+    const updated = await authClient.collection('users').update(id, {
+      password,
+      passwordConfirm: password,
+    }, { requestKey: null }).catch((error) => {
+      throw new Error(pocketBaseErrorMessage(error, `Unable to reset this account's password.`))
+    })
+
+    await cacheUsers([updated])
+    await recordActivity('Settings', `Developer hard-reset the password for "${updated.name || updated.email}".`)
     return toSettingsUser(updated)
   },
 }

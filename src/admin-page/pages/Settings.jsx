@@ -43,6 +43,13 @@ export default function Settings() {
   const [developerPinInput, setDeveloperPinInput] = useState('')
   const [developerPinModalOpen, setDeveloperPinModalOpen] = useState(false)
   const [developerPinError, setDeveloperPinError] = useState('')
+  const [resetTargetId, setResetTargetId] = useState('')
+  const [resetSuperuserEmail, setResetSuperuserEmail] = useState('')
+  const [resetSuperuserPassword, setResetSuperuserPassword] = useState('')
+  const [resetNewPassword, setResetNewPassword] = useState('')
+  const [resetNewPasswordConfirm, setResetNewPasswordConfirm] = useState('')
+  const [resetSubmitting, setResetSubmitting] = useState(false)
+  const [resetError, setResetError] = useState('')
   const [activeTab, setActiveTab] = useState(() => {
     const requested = searchParams.get('tab')
     return ['general', 'developer', 'offline', 'data'].includes(requested) ? requested : 'general'
@@ -103,6 +110,49 @@ export default function Settings() {
       flash(`${enabled ? 'Enabled' : 'Disabled'} quick login for ${admin.name}.`)
     } catch (err) {
       flash(err.message || 'Unable to update admin quick login.')
+    }
+  }
+
+  async function submitDeveloperPasswordReset(event) {
+    event.preventDefault()
+    setResetError('')
+    if (!resetTargetId) {
+      setResetError('Select an account to reset.')
+      return
+    }
+    if (resetNewPassword.length < 8) {
+      setResetError('New password must be at least 8 characters.')
+      return
+    }
+    if (resetNewPassword !== resetNewPasswordConfirm) {
+      setResetError('Passwords do not match.')
+      return
+    }
+    if (!api.developerResetPassword) {
+      setResetError('Developer password reset is not available in this build.')
+      return
+    }
+    setResetSubmitting(true)
+    try {
+      const updated = await api.developerResetPassword({
+        targetUserId: resetTargetId,
+        superuserEmail: resetSuperuserEmail,
+        superuserPassword: resetSuperuserPassword,
+        newPassword: resetNewPassword,
+      })
+      if (updated?.role === 'admin') {
+        setAdmins(admins.map((item) => (item.id === updated.id ? updated : item)))
+      } else {
+        setCashiers(cashiers.map((item) => (item.id === updated.id ? updated : item)))
+      }
+      setResetSuperuserPassword('')
+      setResetNewPassword('')
+      setResetNewPasswordConfirm('')
+      flash(`Password reset for "${updated?.name || updated?.email}".`)
+    } catch (err) {
+      setResetError(err.message || 'Unable to reset password.')
+    } finally {
+      setResetSubmitting(false)
     }
   }
 
@@ -688,6 +738,87 @@ export default function Settings() {
                   disabled={!developerModeSettings.enabled}
                 />
               </label>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="panel-head">
+              <div>
+                <h3>Emergency Password Reset</h3>
+                <span className="sub">Developer-only: hard-resets any admin, manager, or cashier account's password using PocketBase superuser credentials. The account's own current password is not needed.</span>
+              </div>
+              <span className="stat-icon ic-indigo"><IconUsers size={18} /></span>
+            </div>
+
+            <div className="panel-body">
+              <form className="grid-gap" onSubmit={submitDeveloperPasswordReset}>
+                <label className="field">
+                  <span>Account</span>
+                  <select
+                    className="select"
+                    value={resetTargetId}
+                    onChange={(event) => setResetTargetId(event.target.value)}
+                    disabled={!developerModeSettings.enabled || resetSubmitting}
+                  >
+                    <option value="">Select an account…</option>
+                    {[...(admins || []), ...(cashiers || [])].map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {(account.name || account.email)} ({account.role})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Superuser Email</span>
+                  <input
+                    className="input"
+                    type="email"
+                    value={resetSuperuserEmail}
+                    onChange={(event) => setResetSuperuserEmail(event.target.value)}
+                    placeholder="PocketBase superuser email"
+                    disabled={!developerModeSettings.enabled || resetSubmitting}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="field">
+                  <span>Superuser Password</span>
+                  <input
+                    className="input"
+                    type="password"
+                    value={resetSuperuserPassword}
+                    onChange={(event) => setResetSuperuserPassword(event.target.value)}
+                    disabled={!developerModeSettings.enabled || resetSubmitting}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="field">
+                  <span>New Password</span>
+                  <input
+                    className="input"
+                    type="password"
+                    value={resetNewPassword}
+                    onChange={(event) => setResetNewPassword(event.target.value)}
+                    placeholder="At least 8 characters"
+                    disabled={!developerModeSettings.enabled || resetSubmitting}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="field">
+                  <span>Confirm New Password</span>
+                  <input
+                    className="input"
+                    type="password"
+                    value={resetNewPasswordConfirm}
+                    onChange={(event) => setResetNewPasswordConfirm(event.target.value)}
+                    disabled={!developerModeSettings.enabled || resetSubmitting}
+                    autoComplete="off"
+                  />
+                </label>
+                {resetError && <div className="alert error" role="alert">{resetError}</div>}
+                <button type="submit" className="btn btn-danger" disabled={!developerModeSettings.enabled || resetSubmitting}>
+                  {resetSubmitting ? 'Resetting…' : 'Hard Reset Password'}
+                </button>
+              </form>
             </div>
           </div>
         </div>

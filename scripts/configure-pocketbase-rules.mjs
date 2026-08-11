@@ -82,6 +82,14 @@ await updateCollection('authorization_barcodes', {
   deleteRule: adminRule,
 })
 
+await updateCollection('product_barcode_labels', {
+  listRule: readRule,
+  viewRule: readRule,
+  createRule: adminRule,
+  updateRule: adminRule,
+  deleteRule: adminRule,
+})
+
 await updateCollection('activity_logs', {
   listRule: readRule,
   viewRule: readRule,
