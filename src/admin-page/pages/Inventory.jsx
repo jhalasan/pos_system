@@ -825,8 +825,8 @@ export default function Inventory() {
             <input
               className="input"
               type="number"
-              min={isFractional(scannedProduct) ? '0.001' : '1'}
-              step={isFractional(scannedProduct) ? '0.001' : '1'}
+              min="0.001"
+              step="any"
               value={qty}
               onChange={(e) => setQty(e.target.value)}
             />
@@ -1083,8 +1083,8 @@ export default function Inventory() {
             <input
               className="input"
               type="number"
-              min={isFractional(stockOutProduct) ? '0.001' : '1'}
-              step={isFractional(stockOutProduct) ? '0.001' : '1'}
+              min="0.001"
+              step="any"
               value={stockOutQty}
               onChange={(e) => setStockOutQty(e.target.value)}
             />
