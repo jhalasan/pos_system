@@ -10,6 +10,7 @@ Import `pb_schema.json` from the PocketBase dashboard:
 This schema includes the fields required by the POS backend:
 
 - `users.quick_login_enabled`
+- `products.allow_fractional` for products sold in decimal quantities (e.g. rice by the kilogram)
 - `sales.transaction_no` using daily sequence format `YYYYMMDD0001`
 - unique `idx_sales_transaction_no` index to prevent duplicate transaction numbers
 - cascading deletion of a sale's dependent `sale_items`

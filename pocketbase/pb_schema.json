@@ -411,6 +411,15 @@
         "type": "bool"
       },
       {
+        "hidden": false,
+        "id": "bool7461823950",
+        "name": "allow_fractional",
+        "presentable": false,
+        "required": false,
+        "system": false,
+        "type": "bool"
+      },
+      {
         "cascadeDelete": false,
         "collectionId": "pbc_3292755704",
         "help": "",

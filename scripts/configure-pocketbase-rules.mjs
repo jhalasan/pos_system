@@ -56,6 +56,15 @@ async function ensureJsonField(name, fieldName, help = '') {
   console.log(`${name}.${fieldName}: field created`)
 }
 
+async function ensureBoolField(name, fieldName, help = '') {
+  const collection = await pb.collections.getOne(name)
+  const fieldsKey = Array.isArray(collection.fields) ? 'fields' : 'schema'
+  const fields = collection[fieldsKey] || []
+  if (fields.some((field) => field.name === fieldName)) return
+  await pb.collections.update(collection.id, { [fieldsKey]: [...fields, { name: fieldName, type: 'bool', required: false, help }] })
+  console.log(`${name}.${fieldName}: field created`)
+}
+
 await authAsSuperuser()
 
 await updateCollection('categories', {
@@ -73,6 +82,7 @@ await updateCollection('products', {
   deleteRule: adminRule,
 })
 await patchField('products', 'quantity', { required: false, min: 0 })
+await ensureBoolField('products', 'allow_fractional', 'Whether this product can be stocked and sold in decimal quantities (e.g. rice by the kilogram).')
 
 await updateCollection('authorization_barcodes', {
   listRule: readRule,
