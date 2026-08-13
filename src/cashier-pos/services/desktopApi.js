@@ -959,7 +959,7 @@ export const desktopCashierApi = {
         // full catalog re-sync just to open the confirm-quantity popup.
         // Refresh in the background so later scans stay fresh.
         runtime()
-          .then((activeRuntime) => refreshLocalProductCatalog({ pb: activeRuntime.pb }))
+          .then((activeRuntime) => refreshLocalProductCatalog({ pb: activeRuntime.pb, background: true }))
           .catch((error) => rememberPocketBaseRateLimit(error))
       }
     }
