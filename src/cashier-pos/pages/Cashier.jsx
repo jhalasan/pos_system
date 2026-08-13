@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRepeat, ClockHistory, Dash, Gear, Plus, Printer, Receipt, Trash, XLg, Cart } from 'react-bootstrap-icons';
 import { useNavigate } from 'react-router-dom';
 import Input from '../../components/common/Input';
+import MoneyInput from '../../components/common/MoneyInput';
 import Button from '../../components/common/Button';
 import Badge from '../../components/common/Badge';
 import Modal from '../../components/common/Modal';
@@ -343,6 +344,15 @@ function loadCashierShift(cashierId = '') {
         session = legacySession;
         localStorage.setItem(scopedKey, JSON.stringify(legacySession));
         localStorage.removeItem(CASHIER_SHIFT_KEY);
+        // The in-progress cart under the old terminal-wide key belongs to
+        // whoever had this shift open, so it migrates alongside it — read it
+        // here, before it's gone, rather than in loadCashierTransactions()
+        // (which runs after this and would find the key already removed).
+        const legacyTransactions = localStorage.getItem(CASHIER_TRANSACTIONS_KEY);
+        if (legacyTransactions) {
+          localStorage.setItem(cashierTransactionsStorageKey(cashierId), legacyTransactions);
+          localStorage.removeItem(CASHIER_TRANSACTIONS_KEY);
+        }
       }
     }
     return session?.status === 'open' ? session : null;
@@ -528,6 +538,10 @@ const Cashier = ({ onLogout, user }) => {
   const [shiftSession, setShiftSession] = useState(() => loadCashierShift(user?.id));
   const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
+  const [showResumeCashCheck, setShowResumeCashCheck] = useState(false);
+  const [resumeCashAmount, setResumeCashAmount] = useState('');
+  const [resumeCashError, setResumeCashError] = useState('');
+  const [resumeCashSaving, setResumeCashSaving] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
   const [endOfDaySync, setEndOfDaySync] = useState({ pending: 0, failed: 0, sales: 0, loading: false });
   const [logoutTab, setLogoutTab] = useState('session');
@@ -1067,6 +1081,70 @@ const Cashier = ({ onLogout, user }) => {
       showNotification(`Shift opened with ${money(openingAmount)}.`);
     } finally {
       setShiftSaving(false);
+    }
+  };
+
+  const confirmResumeCash = async () => {
+    const declared = Number(resumeCashAmount);
+    if (!Number.isFinite(declared) || declared < 0) {
+      setResumeCashError('Enter a valid cash amount.');
+      return;
+    }
+
+    setResumeCashSaving(true);
+    setResumeCashError('');
+    try {
+      // The drawer's actual cash naturally differs from the opening float by
+      // now (net cash sales since opening), so compare against the running
+      // expected total rather than the original opening amount. Any gap is
+      // real-world drift (e.g. a change-making mistake) that would otherwise
+      // stay hidden until the final Z-read.
+      const difference = roundMoney(declared - expectedShiftCash);
+      if (Math.abs(difference) >= 0.01) {
+        const type = difference > 0 ? 'in' : 'out';
+        const amount = Math.abs(difference);
+        const label = type === 'in' ? 'Cash In' : 'Cash Out';
+        const signedAmount = type === 'in' ? amount : -amount;
+        const nextSession = shiftSession
+          ? {
+              ...shiftSession,
+              cashIn: (Number(shiftSession.cashIn) || 0) + (type === 'in' ? amount : 0),
+              cashOut: (Number(shiftSession.cashOut) || 0) + (type === 'out' ? amount : 0),
+            }
+          : null;
+        if (nextSession) persistShiftSession(nextSession);
+        await cashierApi.recordCashMovement?.({
+          sessionId: shiftSession?.id,
+          cashierId: user?.id,
+          type,
+          amount,
+          category: 'resume-reconciliation',
+          note: `Resumed with PHP ${declared.toFixed(2)} vs expected PHP ${expectedShiftCash.toFixed(2)}.`,
+          deviceId,
+          createdAt: new Date().toISOString(),
+        }).catch(() => {});
+        // Logged as Cash In/Out (not a separate action) with the same detail
+        // shape confirmCashFlow() uses, so the admin Audit page — which reads
+        // cash movements only by parsing this exact log format — counts it
+        // correctly instead of silently missing it.
+        await cashierApi.logActivity({
+          cashierId: user?.id,
+          action: label,
+          detail: withDevice(`${label} PHP ${amount.toFixed(2)} by ${user?.name || user?.email || 'Cashier'} to reconcile resumed cash beginning (expected PHP ${expectedShiftCash.toFixed(2)}, declared PHP ${declared.toFixed(2)}); category resume-reconciliation; signed PHP ${signedAmount.toFixed(2)}.`),
+        }).catch(() => {});
+        showNotification(`Resumed with ${money(declared)} (${type === 'in' ? '+' : '-'}${money(amount)} reconciled).`);
+      } else {
+        await cashierApi.logActivity({
+          cashierId: user?.id,
+          action: 'Cash Beginning Confirmed',
+          detail: withDevice(`${user?.name || user?.email || 'Cashier'} resumed with PHP ${declared.toFixed(2)} in the drawer, matching the expected amount.`),
+        }).catch(() => {});
+        showNotification(`Resumed with ${money(declared)}.`);
+      }
+      setShowResumeCashCheck(false);
+      setResumeCashAmount('');
+    } finally {
+      setResumeCashSaving(false);
     }
   };
 
@@ -1647,6 +1725,13 @@ const Cashier = ({ onLogout, user }) => {
         setTransactions(savedTransactions.transactions);
         setActiveTransaction(savedTransactions.activeTransaction);
       }
+      // A found session always means this cashier is resuming after a break
+      // (pausing requires logging out, which is what re-runs this effect).
+      // The cash actually in the drawer can differ from what the system
+      // expects — confirm it before letting them ring up any sales.
+      setResumeCashAmount('');
+      setResumeCashError('');
+      setShowResumeCashCheck(true);
     } else {
       setTransactions([createTransaction(1)]);
       setActiveTransaction(1);
@@ -2937,21 +3022,13 @@ const Cashier = ({ onLogout, user }) => {
     adminLogoutApproval.setError('');
     try {
       if (shiftSession) {
+        // A break is a pause, not a close: the session, its running opening
+        // amount/cash sales, and the in-progress cart stay exactly as they
+        // are under this cashier's own storage keys, ready to resume with no
+        // re-entry. Only the final "End of Day" Z-read actually closes and
+        // resets the session.
+        persistShiftSession(shiftSession);
         saveCashierTransactions(transactions, activeTransaction, user?.id);
-        const pausedSession = {
-          ...shiftSession,
-          status: 'closed',
-          closingAmount: expectedShiftCash,
-          expectedClosingAmount: expectedShiftCash,
-          variance: 0,
-          countMode: 'cashier-break',
-          closedAt: new Date().toISOString(),
-          closeNote: 'Cashier ended their work session and removed their assigned drawer cash.',
-          deviceId,
-        };
-        await cashierApi.closeCashRegisterSession?.(pausedSession);
-        localStorage.removeItem(shiftStorageKey(user?.id));
-        setShiftSession(null);
       }
       setShowAdminLogout(false);
       setShowShiftClose(false);
@@ -2977,7 +3054,7 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cashier Work Session Ended',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} ended their drawer session for a break and removed expected cash of PHP ${expectedShiftCash.toFixed(2)}. Their sales remain assigned to their account.`),
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} paused their session for a break with PHP ${expectedShiftCash.toFixed(2)} expected in their drawer. Their session resumes on next login; sales remain assigned to their account.`),
       });
       if (onLogout) {
         onLogout();
@@ -3009,7 +3086,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   useEffect(() => {
-    const modalOpen = idleLocked || Boolean(pendingCartProduct) || paymentFlow.open || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showShiftClose || showAdminLogout || showCloudAuth;
+    const modalOpen = idleLocked || Boolean(pendingCartProduct) || paymentFlow.open || showVoidAuth || showCompletedVoidModal || showDiscountModal || showHistory || showReceiptLookup || showReceiptSettings || showCashFlowModal || showShiftOpen || showResumeCashCheck || showShiftClose || showAdminLogout || showCloudAuth;
 
     const actions = {
       focusBarcode: () => {
@@ -3546,7 +3623,7 @@ const Cashier = ({ onLogout, user }) => {
 
                 {displayPaymentMethod === 'gcash' && (
                   <>
-                    <Input label="GCash Amount" type="number" placeholder="Enter GCash amount" value={displayGcashAmount} onChange={(e) => updateActiveTransaction({ gcashAmount: e.target.value })} disabled={isLockedTxn} />
+                    <MoneyInput label="GCash Amount" placeholder="Enter GCash amount" value={displayGcashAmount} onChange={(e) => updateActiveTransaction({ gcashAmount: e.target.value })} disabled={isLockedTxn} />
                     <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={displayGcashRef} onChange={(e) => updateActiveTransaction({ gcashRef: e.target.value })} disabled={isLockedTxn} />
                     <div className={styles['total-display']}><span>Total amount: {money(displayTotal)}</span></div>
                   </>
@@ -3555,8 +3632,8 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <div className={styles['payment-method']}>
                 <label className={styles['filter-label']}>Split Payment Breakdown</label>
-                <Input inputRef={splitCashInputRef} label="Cash Amount" type="number" placeholder="Enter cash amount" value={displaySplitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
-                <Input inputRef={splitGcashInputRef} label="GCash Amount" type="number" placeholder="Enter GCash amount" value={displaySplitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
+                <MoneyInput inputRef={splitCashInputRef} label="Cash Amount" placeholder="Enter cash amount" value={displaySplitPayments.cash} onChange={(e) => handleSplitPaymentChange('cash', e.target.value)} disabled={isLockedTxn} />
+                <MoneyInput inputRef={splitGcashInputRef} label="GCash Amount" placeholder="Enter GCash amount" value={displaySplitPayments.gcash} onChange={(e) => handleSplitPaymentChange('gcash', e.target.value)} disabled={isLockedTxn} />
                 <Input label="GCash Reference Number" placeholder="Enter GCash reference" value={displaySplitPayments.gcashRef || ''} onChange={(e) => handleSplitPaymentChange('gcashRef', e.target.value)} disabled={isLockedTxn} />
                 <div className={styles['change-display']}>
                   <div className={styles['change-row']}><span>Total Paid:</span><span>{money(displaySplitPaid)}</span></div>
@@ -3695,11 +3772,8 @@ const Cashier = ({ onLogout, user }) => {
           </div>
 
           {paymentFlow.step === 'amount' && paymentFlow.method === 'cash' && (
-            <Input
+            <MoneyInput
               label="Cash Amount"
-              type="number"
-              min={total}
-              step="0.01"
               placeholder="Enter cash amount"
               inputRef={paymentAmountInputRef}
               value={paymentFlow.amount}
@@ -3710,11 +3784,8 @@ const Cashier = ({ onLogout, user }) => {
 
           {paymentFlow.step === 'amount' && paymentFlow.method === 'gcash' && (
             <>
-              <Input
+              <MoneyInput
                 label="GCash Amount"
-                type="number"
-                min={total}
-                step="0.01"
                 placeholder="Enter GCash amount"
                 inputRef={paymentAmountInputRef}
                 value={paymentFlow.gcashAmount || ''}
@@ -3733,11 +3804,8 @@ const Cashier = ({ onLogout, user }) => {
 
           {paymentFlow.step === 'amount' && paymentFlow.method === 'split' && (
             <>
-              <Input
+              <MoneyInput
                 label="Cash Amount"
-                type="number"
-                min="0"
-                step="0.01"
                 placeholder="Enter cash amount"
                 inputRef={paymentAmountInputRef}
                 value={paymentFlow.splitPayments?.cash || ''}
@@ -3748,11 +3816,8 @@ const Cashier = ({ onLogout, user }) => {
                 }))}
                 disabled={paymentFlow.busy}
               />
-              <Input
+              <MoneyInput
                 label="GCash Amount"
-                type="number"
-                min="0"
-                step="0.01"
                 placeholder="Enter GCash amount"
                 value={paymentFlow.splitPayments?.gcash || ''}
                 onChange={(e) => setPaymentFlow((current) => ({
@@ -4035,7 +4100,11 @@ const Cashier = ({ onLogout, user }) => {
                 <option value="peso">Peso amount (₱)</option>
               </select>
             </label>
-            <Input label={discountInputType === 'percentage' ? 'Discount (%)' : 'Discount Amount (₱)'} type="number" min="0" max={discountInputType === 'percentage' ? '100' : subtotal} step="0.01" placeholder={discountInputType === 'percentage' ? 'Enter discount percent' : 'Enter peso amount'} value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
+            {discountInputType === 'percentage' ? (
+              <Input label="Discount (%)" type="number" min="0" max="100" step="0.01" placeholder="Enter discount percent" value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
+            ) : (
+              <MoneyInput label="Discount Amount (₱)" placeholder="Enter peso amount" value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
+            )}
           </>
         )}
         {discountApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountApproval.error}</div>}
@@ -4058,11 +4127,8 @@ const Cashier = ({ onLogout, user }) => {
         }
       >
         <p>Enter the beginning cash before using the cashier POS.</p>
-        <Input
+        <MoneyInput
           label="Opening Cash"
-          type="number"
-          min="0"
-          step="0.01"
           placeholder="0.00"
           value={shiftOpeningAmount}
           onChange={(e) => setShiftOpeningAmount(e.target.value)}
@@ -4077,6 +4143,39 @@ const Cashier = ({ onLogout, user }) => {
           disabled={shiftSaving}
         />
         {shiftError && <div style={{ color: '#dc2626', marginTop: 10 }}>{shiftError}</div>}
+      </Modal>
+
+      <Modal
+        isOpen={showResumeCashCheck}
+        onClose={() => {
+          // Modal cannot be closed without confirming the resumed cash amount
+        }}
+        title="Confirm Cash Beginning"
+        closeButton={false}
+        footer={
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary" onClick={confirmResumeCash} disabled={resumeCashSaving}>
+              {resumeCashSaving ? 'Confirming...' : 'Resume Session'}
+            </button>
+          </div>
+        }
+      >
+        <p>Welcome back. Count the cash you're putting back in the drawer before resuming.</p>
+        <div className={styles['shared-drawer-summary']}>
+          <span>System expects</span>
+          <strong>{money(expectedShiftCash)}</strong>
+          <small>Opening cash plus your cash sales since you last logged in.</small>
+        </div>
+        <MoneyInput
+          label="Cash Beginning Now"
+          placeholder="0.00"
+          value={resumeCashAmount}
+          onChange={(e) => setResumeCashAmount(e.target.value)}
+          disabled={resumeCashSaving}
+          autoFocus
+        />
+        <small>If this differs from the expected amount, the difference is recorded automatically as a cash in/out so your day stays reconciled.</small>
+        {resumeCashError && <div style={{ color: '#dc2626', marginTop: 10 }}>{resumeCashError}</div>}
       </Modal>
 
       <Modal
@@ -4133,14 +4232,14 @@ const Cashier = ({ onLogout, user }) => {
         </div>
         {logoutTab === 'session' ? (
           <div className={styles['end-session-panel']}>
-            <h3>End cashier work session</h3>
-            <p>Your drawer session will end for this break. Remove your cash; the next cashier will enter their own beginning cash.</p>
+            <h3>Pause cashier work session</h3>
+            <p>You'll be logged out, but your session stays paused. Sign back in anytime to resume with the same opening cash, cash sales, and cart — nothing is reset.</p>
             <div className={styles['shared-drawer-summary']}>
-              <span>Expected cash to remove</span>
+              <span>Expected cash in your drawer</span>
               <strong>{money(expectedShiftCash)}</strong>
-              <small>Your beginning cash and cash sales stay separate from every other cashier on this computer.</small>
+              <small>Your session stays separate from every other cashier on this computer.</small>
             </div>
-            <div className={styles['end-session-warning']}>When you return, sign in and enter the cash you brought back as a new beginning cash. Your earlier sales remain assigned to your account.</div>
+            <div className={styles['end-session-warning']}>No cash count or Z-read happens now. Only use "End of Day" once your session is ready for final reconciliation.</div>
           </div>
         ) : <>
         <div className={styles['end-of-day-heading']}>
@@ -4219,11 +4318,8 @@ const Cashier = ({ onLogout, user }) => {
               </div>
             </>
           ) : (
-            <Input
+            <MoneyInput
               label="Counted Cash"
-              type="number"
-              min="0"
-              step="0.01"
               placeholder="0.00"
               value={shiftClosingAmount}
               onChange={(e) => setShiftClosingAmount(e.target.value)}
@@ -4418,7 +4514,7 @@ const Cashier = ({ onLogout, user }) => {
             setCashFlowCategory(CASH_FLOW_CATEGORIES.out[0]);
           }}>Cash Out</button>
         </div>
-        <Input label="Amount" type="number" placeholder="Enter amount" value={cashFlowAmount} onChange={(e) => setCashFlowAmount(e.target.value)} />
+        <MoneyInput label="Amount" placeholder="Enter amount" value={cashFlowAmount} onChange={(e) => setCashFlowAmount(e.target.value)} />
         <label className={styles['cash-flow-field']}>
           <span>Category</span>
           <select value={cashFlowCategory} onChange={(e) => setCashFlowCategory(e.target.value)}>
@@ -4929,31 +5025,22 @@ const Cashier = ({ onLogout, user }) => {
                   </button>
                 </div>
                 <div className={styles['audit-entry-grid']}>
-                  <Input
+                  <MoneyInput
                     label="Opening Cash"
-                    type="number"
-                    min="0"
-                    step="0.01"
                     placeholder="0.00"
                     value={cashierAuditEntry.cashBeginning}
                     onChange={(e) => updateCashierAuditEntry('cashBeginning', e.target.value)}
                     disabled={cashierAuditSaving}
                   />
-                  <Input
+                  <MoneyInput
                     label="Expected Cash"
-                    type="number"
-                    min="0"
-                    step="0.01"
                     placeholder="0.00"
                     value={cashierAuditEntry.cashEnding || auditExpectedCash.toFixed(2)}
                     onChange={(e) => updateCashierAuditEntry('cashEnding', e.target.value)}
                     disabled={cashierAuditSaving}
                   />
-                  <Input
+                  <MoneyInput
                     label="Counted Cash"
-                    type="number"
-                    min="0"
-                    step="0.01"
                     placeholder="0.00"
                     value={auditCountMode === 'denomination'
                       ? auditDenominationTotal.toFixed(2)
