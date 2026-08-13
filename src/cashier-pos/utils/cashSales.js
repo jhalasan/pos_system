@@ -21,7 +21,20 @@ export const saveRetainedCompletedSales = (sales = [], cashierId = '') => {
     const scoped = cashierId
       ? nextPayload.filter((sale) => String(sale?.cashierId || sale?.cashier_id || '') === String(cashierId))
       : nextPayload;
-    store.setItem(RETAINED_COMPLETED_SALES_KEY, JSON.stringify(scoped));
+    if (cashierId) {
+      const existing = (() => {
+        try {
+          const parsed = JSON.parse(store.getItem(RETAINED_COMPLETED_SALES_KEY) || '[]');
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      const otherCashiers = existing.filter((sale) => String(sale?.cashierId || sale?.cashier_id || '') !== String(cashierId));
+      store.setItem(RETAINED_COMPLETED_SALES_KEY, JSON.stringify([...scoped, ...otherCashiers]));
+    } else {
+      store.setItem(RETAINED_COMPLETED_SALES_KEY, JSON.stringify(scoped));
+    }
     return scoped;
   }
   return payload;

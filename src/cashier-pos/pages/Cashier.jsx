@@ -18,6 +18,7 @@ import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUti
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { quantizeQty, floorQty, roundMoney, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
+import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -31,7 +32,7 @@ function stockState(item) {
 function normalizeSellingUnits(product = {}) {
   const baseUnit = String(product.unit || 'Piece').trim() || 'Piece';
   const baseBarcode = String(product.barcode || '').trim();
-  const parsedUnits = Array.isArray(product.sellingUnits) ? product.sellingUnits : [];
+  const parsedUnits = normalizeBaseSellingUnits(product);
   const savedUnits = parsedUnits.map((unit) => ({
     barcode: String(unit?.barcode || '').trim(),
     unit: String(unit?.unit || '').trim() || baseUnit,
@@ -290,9 +291,13 @@ function loadCashierAuditEntry() {
   }
 }
 
-function loadCashierTransactions() {
+function cashierTransactionsStorageKey(cashierId = '') {
+  return cashierId ? `${CASHIER_TRANSACTIONS_KEY}:${cashierId}` : CASHIER_TRANSACTIONS_KEY;
+}
+
+function loadCashierTransactions(cashierId = '') {
   try {
-    const value = JSON.parse(localStorage.getItem(CASHIER_TRANSACTIONS_KEY) || 'null');
+    const value = JSON.parse(localStorage.getItem(cashierTransactionsStorageKey(cashierId)) || 'null');
     if (!value || !Array.isArray(value.transactions)) return null;
     return {
       transactions: value.transactions,
@@ -303,9 +308,9 @@ function loadCashierTransactions() {
   }
 }
 
-function saveCashierTransactions(transactions, activeTransaction) {
+function saveCashierTransactions(transactions, activeTransaction, cashierId = '') {
   try {
-    localStorage.setItem(CASHIER_TRANSACTIONS_KEY, JSON.stringify({
+    localStorage.setItem(cashierTransactionsStorageKey(cashierId), JSON.stringify({
       transactions,
       activeTransaction,
     }));
@@ -314,21 +319,32 @@ function saveCashierTransactions(transactions, activeTransaction) {
   }
 }
 
-function clearCashierTransactions() {
+function clearCashierTransactions(cashierId = '') {
   try {
-    localStorage.removeItem(CASHIER_TRANSACTIONS_KEY);
+    localStorage.removeItem(cashierTransactionsStorageKey(cashierId));
   } catch {
     // ignore storage errors
   }
 }
 
-function shiftStorageKey() {
-  return CASHIER_SHIFT_KEY;
+function shiftStorageKey(cashierId = '') {
+  return cashierId ? `${CASHIER_SHIFT_KEY}:${cashierId}` : CASHIER_SHIFT_KEY;
 }
 
-function loadCashierShift() {
+function loadCashierShift(cashierId = '') {
   try {
-    const session = JSON.parse(localStorage.getItem(shiftStorageKey()) || 'null');
+    const scopedKey = shiftStorageKey(cashierId);
+    let session = JSON.parse(localStorage.getItem(scopedKey) || 'null');
+    // Migrate the former terminal-wide drawer session only to the cashier who
+    // originally opened it. Other cashiers must start with their own cash.
+    if (!session && cashierId) {
+      const legacySession = JSON.parse(localStorage.getItem(CASHIER_SHIFT_KEY) || 'null');
+      if (legacySession?.status === 'open' && String(legacySession.cashierId || '') === String(cashierId)) {
+        session = legacySession;
+        localStorage.setItem(scopedKey, JSON.stringify(legacySession));
+        localStorage.removeItem(CASHIER_SHIFT_KEY);
+      }
+    }
     return session?.status === 'open' ? session : null;
   } catch {
     return null;
@@ -462,6 +478,7 @@ const Cashier = ({ onLogout, user }) => {
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const discountApproval = useApproval('barcode');
   const [discountAmountInput, setDiscountAmountInput] = useState('');
+  const [discountInputType, setDiscountInputType] = useState('percentage');
   const [discountApproved, setDiscountApproved] = useState(false);
   const [showCashFlowModal, setShowCashFlowModal] = useState(false);
   const [cashFlowType, setCashFlowType] = useState('out');
@@ -508,7 +525,7 @@ const Cashier = ({ onLogout, user }) => {
   const [cashCountHistory, setCashCountHistory] = useState(loadCashCountHistory);
   const [cashierAuditSaving, setCashierAuditSaving] = useState(false);
   const [cashierAuditMessage, setCashierAuditMessage] = useState('');
-  const [shiftSession, setShiftSession] = useState(() => loadCashierShift());
+  const [shiftSession, setShiftSession] = useState(() => loadCashierShift(user?.id));
   const [receiptPrinters, setReceiptPrinters] = useState([]);
   const [showShiftOpen, setShowShiftOpen] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
@@ -641,12 +658,14 @@ const Cashier = ({ onLogout, user }) => {
         rawStatus: txn?.completedSale?.rawStatus || 'completed',
       }))
       .filter(Boolean);
-    // If a shift is open (shared session), include global retained sales across cashiers.
-    const cashierFilter = shiftSession ? '' : user?.id;
+    const currentSessionId = String(shiftSession?.id || '');
+    const salesForCurrentSession = (sales) => sales.filter((sale) => (
+      !currentSessionId || String(sale?.sessionId || sale?.session_id || '') === currentSessionId
+    ));
     return getCashSalesAmountFromSources({
-      retainedSales: retainedCompletedSales,
-      currentSales: transactionSales,
-      cashierId: cashierFilter,
+      retainedSales: salesForCurrentSession(retainedCompletedSales),
+      currentSales: salesForCurrentSession(transactionSales),
+      cashierId: user?.id,
     });
   }, [retainedCompletedSales, transactions, shiftSession, user?.id]);
 
@@ -967,7 +986,7 @@ const Cashier = ({ onLogout, user }) => {
 
   const persistShiftSession = (session) => {
     setShiftSession(session);
-    localStorage.setItem(shiftStorageKey(), JSON.stringify(session));
+    localStorage.setItem(shiftStorageKey(user?.id), JSON.stringify(session));
   };
 
   const resetShiftCloseForm = () => {
@@ -1203,16 +1222,15 @@ const Cashier = ({ onLogout, user }) => {
         denominations: denominationBreakdown,
         deviceId,
       });
-      localStorage.removeItem(shiftStorageKey());
-      clearCashierTransactions();
+      localStorage.removeItem(shiftStorageKey(user?.id));
+      clearCashierTransactions(user?.id);
       setRetainedCompletedSales([]);
-      // clear global retained sales (and any per-cashier entries)
-      saveRetainedCompletedSales([], '');
+      saveRetainedCompletedSales([], user?.id);
       setShiftSession(null);
       setShowShiftClose(false);
       setShowAdminLogout(false);
       resetShiftCloseForm();
-      showNotification(`End of day completed${shouldSkipCashCount ? ' (admin override)' : ''}. Shared drawer reconciled with a variance of ${money(variance)}.`);
+      showNotification(`End of day completed${shouldSkipCashCount ? ' (admin override)' : ''}. Cashier drawer reconciled with a variance of ${money(variance)}.`);
       return true;
     } finally {
       setShiftSaving(false);
@@ -1614,8 +1632,8 @@ const Cashier = ({ onLogout, user }) => {
       return;
     }
 
-    const session = loadCashierShift();
-    const retained = session ? loadRetainedCompletedSales() : loadRetainedCompletedSales(user?.id);
+    const session = loadCashierShift(user.id);
+    const retained = loadRetainedCompletedSales(user.id);
     setShiftSession(session);
     setRetainedCompletedSales(retained);
     setShowShiftOpen(!session);
@@ -1624,7 +1642,7 @@ const Cashier = ({ onLogout, user }) => {
         ...current,
         cashBeginning: current.cashBeginning || String(session.openingAmount ?? ''),
       }));
-      const savedTransactions = loadCashierTransactions();
+      const savedTransactions = loadCashierTransactions(user.id);
       if (savedTransactions?.transactions?.length) {
         setTransactions(savedTransactions.transactions);
         setActiveTransaction(savedTransactions.activeTransaction);
@@ -1632,15 +1650,15 @@ const Cashier = ({ onLogout, user }) => {
     } else {
       setTransactions([createTransaction(1)]);
       setActiveTransaction(1);
-      clearCashierTransactions();
+      clearCashierTransactions(user.id);
     }
   }, [user?.id]);
 
   useEffect(() => {
     if (shiftSession) {
-      saveCashierTransactions(transactions, activeTransaction);
-    } else if (!loadCashierShift()) {
-      clearCashierTransactions();
+      saveCashierTransactions(transactions, activeTransaction, user?.id);
+    } else if (!loadCashierShift(user?.id)) {
+      // Keep this cashier's saved cart available for their next session.
     }
   }, [transactions, activeTransaction, shiftSession]);
 
@@ -2521,6 +2539,7 @@ const Cashier = ({ onLogout, user }) => {
       const completedSale = {
         ...completedPayment,
         cashierId: user?.id,
+        sessionId: shiftSession?.id || '',
         saleId: sale.id,
         transactionNo: sale.transactionNo || completedTransactionNo,
         status: 'completed',
@@ -2545,11 +2564,7 @@ const Cashier = ({ onLogout, user }) => {
           const next = !key || current.some((entry) => String(entry.saleId || entry.transactionNo || entry.id || '') === String(key))
             ? current
             : [completedSale, ...current];
-          if (shiftSession) {
-            saveRetainedCompletedSales(next);
-          } else {
-            saveRetainedCompletedSales(next, user?.id);
-          }
+          saveRetainedCompletedSales(next, user?.id);
         return next;
       });
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
@@ -2922,8 +2937,21 @@ const Cashier = ({ onLogout, user }) => {
     adminLogoutApproval.setError('');
     try {
       if (shiftSession) {
-        persistShiftSession(shiftSession);
-        saveCashierTransactions(transactions, activeTransaction);
+        saveCashierTransactions(transactions, activeTransaction, user?.id);
+        const pausedSession = {
+          ...shiftSession,
+          status: 'closed',
+          closingAmount: expectedShiftCash,
+          expectedClosingAmount: expectedShiftCash,
+          variance: 0,
+          countMode: 'cashier-break',
+          closedAt: new Date().toISOString(),
+          closeNote: 'Cashier ended their work session and removed their assigned drawer cash.',
+          deviceId,
+        };
+        await cashierApi.closeCashRegisterSession?.(pausedSession);
+        localStorage.removeItem(shiftStorageKey(user?.id));
+        setShiftSession(null);
       }
       setShowAdminLogout(false);
       setShowShiftClose(false);
@@ -2949,7 +2977,7 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cashier Work Session Ended',
-        detail: withDevice(`${user?.name || user?.email || 'Cashier'} ended their work session while keeping the shared drawer open.`),
+        detail: withDevice(`${user?.name || user?.email || 'Cashier'} ended their drawer session for a break and removed expected cash of PHP ${expectedShiftCash.toFixed(2)}. Their sales remain assigned to their account.`),
       });
       if (onLogout) {
         onLogout();
@@ -3128,7 +3156,7 @@ const Cashier = ({ onLogout, user }) => {
         </div>
         <div className={styles['header-actions']}>
           <ConnectionStatusBar scope="cashier" placement="header" />
-          {shiftSession && <span className={styles['shared-drawer-badge']}>Shared Drawer Active</span>}
+          {shiftSession && <span className={styles['shared-drawer-badge']}>My Drawer Session Active</span>}
           {user && (
             <div className={styles['cashier-operator']}>
               <span className={styles['cashier-avatar']} aria-hidden="true">
@@ -3940,6 +3968,7 @@ const Cashier = ({ onLogout, user }) => {
           setDiscountApproved(false);
           discountApproval.reset();
           setDiscountAmountInput('');
+          setDiscountInputType('percentage');
         }}
         title="Discount Approval"
         footer={
@@ -3949,6 +3978,7 @@ const Cashier = ({ onLogout, user }) => {
               setDiscountApproved(false);
               discountApproval.reset();
               setDiscountAmountInput('');
+              setDiscountInputType('percentage');
             }}>
               Cancel
             </button>
@@ -3959,16 +3989,19 @@ const Cashier = ({ onLogout, user }) => {
             ) : (
               <button className="btn btn-success" onClick={() => {
                 const amount = parseFloat(discountAmountInput);
-                if (Number.isNaN(amount) || amount < 0 || amount > 100) {
-                  discountApproval.setError('Enter a valid discount percentage from 0 to 100.');
+                const isPercentage = discountInputType === 'percentage';
+                if (Number.isNaN(amount) || amount < 0 || (isPercentage && amount > 100) || (!isPercentage && amount > subtotal)) {
+                  discountApproval.setError(isPercentage ? 'Enter a valid discount percentage from 0 to 100.' : `Enter a valid peso discount from ₱0.00 to ${money(subtotal)}.`);
                   return;
                 }
-                updateActiveTransaction({ discount: amount });
+                const discountPercent = isPercentage ? amount : (subtotal > 0 ? (amount / subtotal) * 100 : 0);
+                updateActiveTransaction({ discount: discountPercent });
                 setShowDiscountModal(false);
                 setDiscountApproved(false);
                 discountApproval.reset();
                 setDiscountAmountInput('');
-                showNotification(`Discount applied: ${amount}%`);
+                setDiscountInputType('percentage');
+                showNotification(`Discount applied: ${isPercentage ? `${amount}%` : money(amount)}`);
               }}>
                 Apply Discount
               </button>
@@ -3994,8 +4027,15 @@ const Cashier = ({ onLogout, user }) => {
           </>
         ) : (
           <>
-            <p>Manager approved. Enter discount percentage to apply.</p>
-            <Input label="Discount (%)" type="number" placeholder="Enter discount percent" value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
+            <p>Manager approved. Choose a discount type and enter the amount to apply.</p>
+            <label className={styles['unit-picker']}>
+              <span>Discount Type</span>
+              <select value={discountInputType} onChange={(e) => { setDiscountInputType(e.target.value); setDiscountAmountInput(''); discountApproval.setError('') }}>
+                <option value="percentage">Percentage (%)</option>
+                <option value="peso">Peso amount (₱)</option>
+              </select>
+            </label>
+            <Input label={discountInputType === 'percentage' ? 'Discount (%)' : 'Discount Amount (₱)'} type="number" min="0" max={discountInputType === 'percentage' ? '100' : subtotal} step="0.01" placeholder={discountInputType === 'percentage' ? 'Enter discount percent' : 'Enter peso amount'} value={discountAmountInput} onChange={(e) => setDiscountAmountInput(e.target.value)} />
           </>
         )}
         {discountApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{discountApproval.error}</div>}
@@ -4094,18 +4134,18 @@ const Cashier = ({ onLogout, user }) => {
         {logoutTab === 'session' ? (
           <div className={styles['end-session-panel']}>
             <h3>End cashier work session</h3>
-            <p>You will be logged out, but the shared drawer session will remain active for the next cashier.</p>
+            <p>Your drawer session will end for this break. Remove your cash; the next cashier will enter their own beginning cash.</p>
             <div className={styles['shared-drawer-summary']}>
-              <span>Shared drawer</span>
-              <strong>Open</strong>
-              <small>Opened by {shiftSession?.cashierName || 'Cashier'} at {shiftSession?.openedAt ? new Date(shiftSession.openedAt).toLocaleString('en-PH') : 'the start of this shift'}</small>
+              <span>Expected cash to remove</span>
+              <strong>{money(expectedShiftCash)}</strong>
+              <small>Your beginning cash and cash sales stay separate from every other cashier on this computer.</small>
             </div>
-            <div className={styles['end-session-warning']}>No cash count or Z-read will be created. Select “End of Day” only at closing time when the shared drawer is ready for final reconciliation.</div>
+            <div className={styles['end-session-warning']}>When you return, sign in and enter the cash you brought back as a new beginning cash. Your earlier sales remain assigned to your account.</div>
           </div>
         ) : <>
         <div className={styles['end-of-day-heading']}>
           <h3>End-of-Day Reconciliation</h3>
-          <p>Count the shared drawer, print the Z-read, and close the business day.</p>
+          <p>Count this cashier's drawer, print the Z-read, and close their current drawer session.</p>
         </div>
         <div className={styles['end-of-day-readiness']}>
           <div><strong>Closing readiness</strong><small>Pending uploads do not prevent an offline close; they remain saved on this terminal.</small></div>

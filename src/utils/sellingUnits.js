@@ -23,13 +23,24 @@ export function normalizeSellingUnits(product = {}) {
     price: Number(unit?.price) || fallbackPrice,
   }))
 
+  // Some legacy cigarette records stored a ream conversion as the number of
+  // packs in a ream (10), while pack conversion is stored in base sticks (20).
+  // All current inventory math expects conversions to be in the smallest/base
+  // unit, so expand that hierarchical value to 200 sticks.
+  const packUnit = units.find((unit) => unit.unit.toLowerCase() === 'pack' && unit.conversion > 1)
+  const reamUnit = units.find((unit) => unit.unit.toLowerCase() === 'ream')
+  if (packUnit && reamUnit && reamUnit.conversion > 1 && reamUnit.conversion < packUnit.conversion) {
+    reamUnit.conversion *= packUnit.conversion
+  }
+
   const purchaseUnit = String(product.purchaseUnit || product.purchase_unit || '').trim()
   const purchaseConversion = Number(product.conversionQuantity ?? product.conversion_quantity)
   if (purchaseUnit && purchaseConversion > 1 && purchaseUnit.toLowerCase() !== fallbackUnit.toLowerCase()) {
-    const hasPurchaseUnit = units.some((unit) => (
-      unit.unit.toLowerCase() === purchaseUnit.toLowerCase()
-      || Number(unit.conversion) === purchaseConversion
-    ))
+    const matchingPurchaseUnit = units.find((unit) => unit.unit.toLowerCase() === purchaseUnit.toLowerCase())
+    if (matchingPurchaseUnit && purchaseConversion > matchingPurchaseUnit.conversion) {
+      matchingPurchaseUnit.conversion = purchaseConversion
+    }
+    const hasPurchaseUnit = Boolean(matchingPurchaseUnit || units.some((unit) => Number(unit.conversion) === purchaseConversion))
     if (!hasPurchaseUnit) {
       units.push({
         barcode: '',

@@ -194,6 +194,7 @@ export default function Inventory() {
   const [reconcileProductId, setReconcileProductId] = useState('')
   const [reconcileSearch, setReconcileSearch] = useState('')
   const [physicalCount, setPhysicalCount] = useState('')
+  const [reconcileUnit, setReconcileUnit] = useState('')
   const [reconcileReason, setReconcileReason] = useState('cycle-count')
   const [reconcileNote, setReconcileNote] = useState('')
   const [reconciling, setReconciling] = useState(false)
@@ -259,6 +260,10 @@ export default function Inventory() {
       .filter((product) => !query || productMatchesQuery(product, query))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [products, reconcileSearch])
+  const reconcileProduct = useMemo(() => products.find((item) => item.id === reconcileProductId) || null, [products, reconcileProductId])
+  const reconcileUnitOptions = useMemo(() => reconcileProduct ? normalizeSellingUnits(reconcileProduct) : [], [reconcileProduct])
+  const selectedReconcileUnit = useMemo(() => reconcileProduct ? unitFromOption(reconcileProduct, reconcileUnit) : null, [reconcileProduct, reconcileUnit])
+  const reconcileCountInBaseUnits = quantizeQty((Number(physicalCount) || 0) * (Number(selectedReconcileUnit?.conversion) || 1))
   const pendingStockOutById = useMemo(() => {
     return stockOutBatch.reduce((map, item) => ({ ...map, [item.id]: (map[item.id] || 0) + (Number(item.baseQty) || Number(item.qty) || 0) }), {})
   }, [stockOutBatch])
@@ -294,11 +299,13 @@ export default function Inventory() {
     if (!product) return flash('Select a product to reconcile.')
     const fractional = isFractional(product)
     const expected = quantizeQty(product.qty)
-    const actual = quantizeQty(Math.max(0, Number(physicalCount) || 0))
+    const count = Math.max(0, Number(physicalCount) || 0)
+    const countUnit = selectedReconcileUnit || normalizeSellingUnits(product)[0]
+    const actual = quantizeQty(count * (Number(countUnit?.conversion) || 1))
     const variance = quantizeQty(actual - expected)
     if (!fractional && !Number.isInteger(actual)) return flash('This product does not accept fractional quantities.')
     if (!variance) return flash('Physical count already matches system stock.')
-    if (!await dialog.confirm(`Approve the inventory adjustment for “${product.name}”?\n\nSystem stock: ${expected}\nPhysical count: ${actual}\nVariance: ${variance > 0 ? '+' : ''}${variance}`, { title: 'Approve stock adjustment', confirmLabel: 'Approve adjustment' })) return
+    if (!await dialog.confirm(`Approve the inventory adjustment for “${product.name}”?\n\nSystem stock: ${formatQty(expected)} ${pluralizeUnit(product.unit, expected)}\nPhysical count: ${formatQty(count)} ${pluralizeUnit(countUnit?.unit || product.unit, count)} (${formatQty(actual)} ${pluralizeUnit(product.unit, actual)})\nVariance: ${variance > 0 ? '+' : ''}${formatQty(variance)} ${pluralizeUnit(product.unit, variance)}`, { title: 'Approve stock adjustment', confirmLabel: 'Approve adjustment' })) return
     setReconciling(true)
     try {
       const updated = await api.adjustInventoryCount({
@@ -309,8 +316,9 @@ export default function Inventory() {
       })
       setProducts((current) => mergeUpdatedProduct(current, updated))
       setPhysicalCount('')
+      setReconcileUnit('')
       setReconcileNote('')
-      flash(`Reconciled ${product.name}; variance ${variance > 0 ? '+' : ''}${variance}.`)
+      flash(`Reconciled ${product.name}; variance ${variance > 0 ? '+' : ''}${formatQty(variance)} ${pluralizeUnit(product.unit, variance)}.`)
     } catch (err) {
       flash(err.message || 'Unable to reconcile inventory.')
     } finally {
@@ -1329,23 +1337,33 @@ export default function Inventory() {
                 type="search"
                 value={reconcileSearch}
                 onChange={(event) => {
-                  setReconcileSearch(event.target.value)
-                  setReconcileProductId('')
+                  const nextSearch = event.target.value
+                  const exactProduct = findProductByBarcode(products, nextSearch)
+                  const exactUnit = exactProduct ? matchSellingUnit(exactProduct, nextSearch) : null
+                  setReconcileSearch(nextSearch)
+                  setReconcileProductId(exactProduct?.id || '')
+                  setReconcileUnit(exactUnit ? unitOptionValue(exactUnit) : '')
+                  setPhysicalCount('')
                 }}
                 placeholder="Search name, barcode, or selling unit"
               />
             </label>
             <label className="field">
               <span>Product</span>
-              <select className="select" value={reconcileProductId} onChange={(event) => setReconcileProductId(event.target.value)} required>
+              <select className="select" value={reconcileProductId} onChange={(event) => {
+                setReconcileProductId(event.target.value)
+                setReconcileUnit('')
+                setPhysicalCount('')
+              }} required>
                 <option value="">{reconciliationProducts.length ? `Select product (${reconciliationProducts.length} found)…` : 'No matching products'}</option>
                 {reconciliationProducts.map((product) => <option value={product.id} key={product.id}>{product.name}{product.barcode ? ` — ${product.barcode}` : ''} — system {formatQty(product.qty)}</option>)}
               </select>
             </label>
-            <label className="field"><span>Physical Count</span><input className="input" type="number" min="0" step="any" value={physicalCount} onChange={(event) => setPhysicalCount(event.target.value)} required /></label>
+            {reconcileProduct && <label className="field"><span>Count Unit</span><select className="select" value={reconcileUnit || unitOptionValue(reconcileUnitOptions[0])} onChange={(event) => { setReconcileUnit(event.target.value); setPhysicalCount('') }}>{reconcileUnitOptions.map((unit, index) => <option key={unitOptionValue(unit, index)} value={unitOptionValue(unit, index)}>{unit.unit}{Number(unit.conversion) > 1 ? ` (${formatQty(unit.conversion)} ${pluralizeUnit(reconcileProduct.unit, unit.conversion)} each)` : ' (base unit)'}</option>)}</select></label>}
+            <label className="field"><span>Physical Count{selectedReconcileUnit?.unit ? ` (${selectedReconcileUnit.unit})` : ''}</span><input className="input" type="number" min="0" step={isFractional(reconcileProduct) ? 'any' : '1'} value={physicalCount} onChange={(event) => setPhysicalCount(event.target.value)} required /></label>
             <label className="field"><span>Adjustment Reason</span><select className="select" value={reconcileReason} onChange={(event) => setReconcileReason(event.target.value)}><option value="cycle-count">Cycle count</option><option value="initial-count">Initial count correction</option><option value="damage-found">Damage found during count</option><option value="shrinkage">Missing or shrinkage</option><option value="data-correction">Legacy data correction</option></select></label>
             <label className="field"><span>Count Note</span><input className="input" value={reconcileNote} onChange={(event) => setReconcileNote(event.target.value)} placeholder="Counter, location, discrepancy details" /></label>
-            {reconcileProductId && physicalCount !== '' && <div className="reconciliation-variance">Variance: <strong>{(Number(physicalCount) || 0) - (Number(products.find((item) => item.id === reconcileProductId)?.qty) || 0)}</strong></div>}
+            {reconcileProduct && physicalCount !== '' && <div className="reconciliation-variance">Count in base units: <strong>{formatQty(reconcileCountInBaseUnits)} {pluralizeUnit(reconcileProduct.unit, reconcileCountInBaseUnits)}</strong> &middot; Variance: <strong>{formatQty(reconcileCountInBaseUnits - (Number(reconcileProduct.qty) || 0))} {pluralizeUnit(reconcileProduct.unit, reconcileCountInBaseUnits - (Number(reconcileProduct.qty) || 0))}</strong></div>}
             <button className="btn btn-primary" disabled={reconciling}>{reconciling ? 'Applying…' : 'Review and Apply Adjustment'}</button>
           </form>
         </div>

@@ -1640,9 +1640,9 @@ export const desktopAdminApi = {
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
       const requestedConversion = Number(unitConversion)
-      const conversion = Number(matchingUnit?.conversion) > 0
-        ? Number(matchingUnit.conversion)
-        : (Number.isFinite(requestedConversion) && requestedConversion > 0 ? requestedConversion : 1)
+      const conversion = Number.isFinite(requestedConversion) && requestedConversion > 0
+        ? requestedConversion
+        : (Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1)
 
       let updated
       await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
@@ -1687,9 +1687,9 @@ export const desktopAdminApi = {
         ? product.sellingUnits.find((unit) => String(unit?.barcode || '').trim() === barcode)
         : null
       const requestedConversion = Number(unitConversion)
-      const conversion = Number(matchingUnit?.conversion) > 0
-        ? Number(matchingUnit.conversion)
-        : (Number.isFinite(requestedConversion) && requestedConversion > 0 ? requestedConversion : 1)
+      const conversion = Number.isFinite(requestedConversion) && requestedConversion > 0
+        ? requestedConversion
+        : (Number(matchingUnit?.conversion) > 0 ? Number(matchingUnit.conversion) : 1)
       const baseUnitsToRemove = quantizeQty(stockOutQty * conversion)
 
       let updated
