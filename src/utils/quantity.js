@@ -44,6 +44,21 @@ export function roundMoney(value) {
   return Math.round(n * 100) / 100
 }
 
+/**
+ * A sale's discount is applied once across the whole cart, but line items
+ * only ever store their pre-discount unit price. Refunding/exchanging at
+ * that raw price overpays relative to what the customer actually paid, so
+ * anywhere a per-item price is needed after the sale (refund preview,
+ * refund/exchange amount persisted to the sale record) must go through
+ * this instead of reading item.price directly.
+ */
+export function discountedUnitPrice(price, discountPercent) {
+  const percent = Number(discountPercent) || 0
+  const base = Number(price) || 0
+  if (!percent) return base
+  return roundMoney(base * (1 - percent / 100))
+}
+
 /** Format a quantity for display, trimming trailing zeros (2, 0.5, 1.75 — never "2.000"). */
 export function formatQty(value) {
   const n = quantizeQty(value)

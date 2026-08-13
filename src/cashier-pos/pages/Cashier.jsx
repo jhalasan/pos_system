@@ -18,7 +18,7 @@ import { getDeveloperModeSettings } from '../../utils/developerMode';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
-import { quantizeQty, floorQty, roundMoney, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
+import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import styles from '../styles/Cashier.module.css';
 
@@ -1835,6 +1835,12 @@ const Cashier = ({ onLogout, user }) => {
     resetLookupApproval();
   };
 
+  // Line items only ever carry their pre-discount unit price; the sale's
+  // discount is applied once at the whole-cart level. adjustLocalSale
+  // applies the same discountedUnitPrice() to compute the persisted refund
+  // amount, so this preview always matches what actually gets recorded.
+  const lookupDiscountedUnitPrice = (price) => discountedUnitPrice(price, lookupSale?.discountPercent);
+
   const selectedLookupReturnItems = () => {
     if (!lookupSale) return [];
     return (lookupSale.items || [])
@@ -1843,6 +1849,7 @@ const Cashier = ({ onLogout, user }) => {
         return {
           ...item,
           productId,
+          price: lookupDiscountedUnitPrice(item.price),
           quantity: Math.max(0, Number(lookupReturnQty[productId]) || 0),
         };
       })
@@ -4779,7 +4786,7 @@ const Cashier = ({ onLogout, user }) => {
                     <span>{item.name}</span>
                     <span>{formatQty(soldQty)}</span>
                     <span>{formatQty(availableQty)}</span>
-                    <span>{money(Number(item.price || 0) * soldQty)}</span>
+                    <span>{money(lookupDiscountedUnitPrice(item.price) * soldQty)}</span>
                     {(lookupMode === 'refund' || lookupMode === 'exchange') && (
                       <input
                         type="number"

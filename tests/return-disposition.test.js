@@ -34,3 +34,28 @@ test('refund returns sellable goods to available stock', { concurrency: false },
   assert.equal(adjusted.adjustments.at(-1).restock, true)
   await cashierDb.delete()
 })
+
+// A sale's discount is applied once across the whole cart; line items only
+// ever carry their pre-discount unit price. Refunding at that raw price
+// overpays the customer relative to what they actually paid for the item.
+test('refund of a discounted sale is prorated by the sale discount, not the raw line price', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+  await cashierDb.products.put({ id: 'product-1', barcode: '1001', name: 'Test Product', qty: 5, quantity: 5, unit: 'Piece' })
+  await cashierDb.completedSales.put({
+    clientSaleId: 'DISCOUNTED',
+    cashierId: 'cashier-1',
+    transactionNo: 'DISCOUNTED',
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    discountPercent: 10,
+    items: [{ productId: 'product-1', name: 'Test Product', barcode: '1001', quantity: 2, price: 10 }],
+    adjustments: [],
+  })
+
+  const adjusted = await adjustLocalSale('DISCOUNTED', { type: 'refund', items: [{ productId: 'product-1', quantity: 1 }], reason: 'Wrong item' })
+  const lastAdjustment = adjusted.adjustments.at(-1)
+  assert.equal(lastAdjustment.items[0].price, 9, 'refunded unit price must reflect the 10% sale discount')
+  assert.equal(lastAdjustment.amount, 9)
+  await cashierDb.delete()
+})

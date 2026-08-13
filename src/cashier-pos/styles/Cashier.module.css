@@ -2180,7 +2180,11 @@
 }
 
 .lookup-modal {
+  /* The shared .modal rule caps max-width at 620px; without overriding it
+     here too, this width rule alone couldn't grow the modal, so the item
+     table's Return Qty column was squeezed off the right edge. */
   width: min(920px, calc(100vw - 32px));
+  max-width: min(920px, calc(100vw - 32px));
 }
 
 .history-tools {

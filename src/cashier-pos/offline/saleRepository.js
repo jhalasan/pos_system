@@ -4,7 +4,7 @@ import { barcodesMatch } from '../utils/barcodeUtils.js'
 import { normalizeProduct } from './productRepository.js'
 import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
-import { quantizeQty } from '../../utils/quantity.js'
+import { discountedUnitPrice, quantizeQty } from '../../utils/quantity.js'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -277,7 +277,10 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
             name: String(item.name || ''),
             barcode: String(item.barcode || ''),
             quantity,
-            price: Number(item.price) || 0,
+            // The stored line price is pre-discount; the sale's discount was
+            // applied once across the whole cart, so it must be re-applied
+            // here or a discounted sale gets refunded at full price.
+            price: discountedUnitPrice(item.price, sale.discountPercent),
           }
         : null
     })
