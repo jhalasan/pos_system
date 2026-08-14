@@ -8,10 +8,11 @@ import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { peso } from '../services/api'
 import { localDateKey } from '../utils/localDate'
+import CashierSalesReport from './CashierSalesReport'
 
 const emptyAnalytics = {
   stats: { totalRevenue: 0, transactionCount: 0, averageSale: 0, cashSales: 0, gcashSales: 0, unitsSold: 0, voidCount: 0 },
@@ -77,20 +78,23 @@ export default function Analytics() {
   const [customTo, setCustomTo] = useState('')
   const [lastUpdated, setLastUpdated] = useState('')
 
-  useEffect(() => {
+  const dateRangeFilter = useMemo(() => {
     const now = new Date()
     const fromDate = new Date(now)
     if (datePreset !== 'all' && datePreset !== 'custom') fromDate.setDate(fromDate.getDate() - (Number(datePreset) - 1))
-    const filters = {
-      source: dataSource,
+    return {
       from: datePreset === 'custom' ? customFrom : (datePreset === 'all' ? '' : localDateKey(fromDate)),
       to: datePreset === 'custom' ? customTo : (datePreset === 'all' ? '' : localDateKey(now)),
     }
+  }, [customFrom, customTo, datePreset])
+
+  useEffect(() => {
+    const filters = { source: dataSource, from: dateRangeFilter.from, to: dateRangeFilter.to }
     void api.dashboard(filters).then((result) => {
       setData(result)
       setLastUpdated(new Date().toISOString())
     })
-  }, [customFrom, customTo, dataSource, datePreset, setData])
+  }, [dataSource, dateRangeFilter, setData])
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
   const activeSalesRange = salesRanges[salesRange] || salesRanges.hourlySales
   const activeSalesData = data[salesRange] || []
@@ -166,6 +170,7 @@ export default function Analytics() {
       <div className="scan-mode-row analytics-tabs analytics-tabs-sticky" role="tablist" aria-label="Analytics sections">
         <button type="button" className={`scan-mode ${analyticsTab === 'sales' ? 'active' : ''}`} onClick={() => setAnalyticsTab('sales')} role="tab" aria-selected={analyticsTab === 'sales'}>Sales Analytics</button>
         <button type="button" className={`scan-mode ${analyticsTab === 'movement' ? 'active' : ''}`} onClick={() => setAnalyticsTab('movement')} role="tab" aria-selected={analyticsTab === 'movement'}>Inventory Movement</button>
+        <button type="button" className={`scan-mode ${analyticsTab === 'cashier' ? 'active' : ''}`} onClick={() => setAnalyticsTab('cashier')} role="tab" aria-selected={analyticsTab === 'cashier'}>By Cashier</button>
       </div>
 
       <div className="card analytics-filter-card">
@@ -339,6 +344,10 @@ export default function Analytics() {
             </div>
           </div>
         </div>
+      )}
+
+      {analyticsTab === 'cashier' && (
+        <CashierSalesReport dateRangeFilter={dateRangeFilter} dataSource={dataSource} />
       )}
     </>
   )
