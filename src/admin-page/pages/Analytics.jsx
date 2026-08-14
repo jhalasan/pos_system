@@ -347,7 +347,7 @@ export default function Analytics() {
       )}
 
       {analyticsTab === 'cashier' && (
-        <CashierSalesReport dateRangeFilter={dateRangeFilter} dataSource={dataSource} />
+        <CashierSalesReport dateRangeFilter={dateRangeFilter} />
       )}
     </>
   )

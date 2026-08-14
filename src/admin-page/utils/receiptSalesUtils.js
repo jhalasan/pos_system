@@ -60,11 +60,16 @@ export function summarizeByCategory(productSummary = []) {
   return Object.values(groups).sort((a, b) => b.revenue - a.revenue)
 }
 
-export function filterReceiptsByProductCategory(receipts = [], { productFilter = 'all', categoryFilter = 'all' } = {}) {
-  return (receipts || []).filter((receipt) => {
-    const items = receipt.items || []
-    const matchesProduct = productFilter === 'all' || items.some((item) => item.name === productFilter)
-    const matchesCategory = categoryFilter === 'all' || items.some((item) => item.category === categoryFilter)
-    return matchesProduct && matchesCategory
-  })
+export function summarizeSalesByProductFiltered(receipts = [], { productFilter = 'all', categoryFilter = 'all' } = {}) {
+  const summary = new Map()
+  for (const receipt of receipts || []) for (const item of receipt.items || []) {
+    if (productFilter !== 'all' && item.name !== productFilter) continue
+    if (categoryFilter !== 'all' && item.category !== categoryFilter) continue
+    const key = `${item.category || 'Uncategorized'}|${item.name || 'Item'}`
+    const current = summary.get(key) || { category: item.category || 'Uncategorized', product: item.name || 'Item', quantity: 0, revenue: 0 }
+    current.quantity += Number(item.quantity) || 0
+    current.revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0)
+    summary.set(key, current)
+  }
+  return [...summary.values()].sort((a, b) => b.revenue - a.revenue)
 }

@@ -1023,9 +1023,12 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
   const fromDate = String(req.query?.fromDate || '').trim()
   const toDate = String(req.query?.toDate || '').trim()
 
+  const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
+  const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
+
   const dateFilterParts = []
-  if (fromDate) dateFilterParts.push(pb.filter('created_at >= {:from}', { from: `${fromDate} 00:00:00` }))
-  if (toDate) dateFilterParts.push(pb.filter('created_at <= {:to}', { to: `${toDate} 23:59:59` }))
+  if (fromTime !== null) dateFilterParts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: new Date(fromTime).toISOString() }))
+  if (toTime !== null) dateFilterParts.push(pb.filter('(created_at <= {:to} || created_at = "")', { to: new Date(toTime).toISOString() }))
 
   const sales = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
@@ -1035,9 +1038,6 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
   })
   const saleItems = await pbCollection('sale_items')
   const records = await Promise.all(sales.map((sale) => receiptRecordFromSale(sale, saleItems)))
-
-  const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
-  const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
 
   res.json(records.filter((record) => {
     const createdTime = new Date(record.createdAt).getTime()

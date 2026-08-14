@@ -4,12 +4,11 @@ import { exportCsv, safeFilenamePart } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import {
   resolveReceiptCategories,
-  summarizeSalesByProduct,
   summarizeByCategory,
-  filterReceiptsByProductCategory,
+  summarizeSalesByProductFiltered,
 } from '../utils/receiptSalesUtils'
 
-export default function CashierSalesReport({ dateRangeFilter, dataSource }) {
+export default function CashierSalesReport({ dateRangeFilter }) {
   const [cashiers, setCashiers] = useState([])
   const [catalogCategories, setCatalogCategories] = useState([])
   const [catalogProducts, setCatalogProducts] = useState([])
@@ -70,7 +69,7 @@ export default function CashierSalesReport({ dateRangeFilter, dataSource }) {
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [catalogProducts])
 
-  const currentKey = `${dataSource}|${dateRangeFilter.from}|${dateRangeFilter.to}|${selectedCashier}`
+  const currentKey = `${dateRangeFilter.from}|${dateRangeFilter.to}|${selectedCashier}`
   const isStale = reportReceipts !== null && generatedKey !== currentKey
 
   async function generateReport() {
@@ -81,6 +80,7 @@ export default function CashierSalesReport({ dateRangeFilter, dataSource }) {
         cashierName: selectedCashier === 'all' ? '' : selectedCashier,
         fromDate: dateRangeFilter.from,
         toDate: dateRangeFilter.to,
+        status: 'completed',
       })
       setReportReceipts(resolveReceiptCategories(data, catalogCategories, catalogProducts))
       setGeneratedKey(currentKey)
@@ -91,11 +91,10 @@ export default function CashierSalesReport({ dateRangeFilter, dataSource }) {
     }
   }
 
-  const filteredReceipts = useMemo(
-    () => filterReceiptsByProductCategory(reportReceipts || [], { productFilter: selectedProduct, categoryFilter: selectedCategory }),
+  const productSummary = useMemo(
+    () => summarizeSalesByProductFiltered(reportReceipts || [], { productFilter: selectedProduct, categoryFilter: selectedCategory }),
     [reportReceipts, selectedProduct, selectedCategory],
   )
-  const productSummary = useMemo(() => summarizeSalesByProduct(filteredReceipts), [filteredReceipts])
   const categorySummary = useMemo(() => summarizeByCategory(productSummary), [productSummary])
   const rows = groupBy === 'category' ? categorySummary : productSummary
   const totals = rows.reduce((acc, row) => ({ quantity: acc.quantity + row.quantity, revenue: acc.revenue + row.revenue }), { quantity: 0, revenue: 0 })

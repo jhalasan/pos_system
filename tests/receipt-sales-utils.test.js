@@ -4,7 +4,7 @@ import {
   resolveReceiptCategories,
   summarizeSalesByProduct,
   summarizeByCategory,
-  filterReceiptsByProductCategory,
+  summarizeSalesByProductFiltered,
 } from '../src/admin-page/utils/receiptSalesUtils.js'
 
 const catalogCategories = [{ id: 'cat1', name: 'Beverages' }, { id: 'cat2', name: 'Snacks' }]
@@ -57,26 +57,32 @@ test('summarizeByCategory rolls a product summary up to category totals', () => 
   ])
 })
 
-test('filterReceiptsByProductCategory keeps only receipts containing the selected product', () => {
+test('summarizeSalesByProductFiltered only aggregates matching items within a receipt, not the whole receipt', () => {
   const receipts = [
-    { id: 'r1', items: [{ name: 'Coke 1L', category: 'Beverages' }] },
-    { id: 'r2', items: [{ name: 'Chips', category: 'Snacks' }] },
+    { items: [
+      { name: 'Coke 1L', category: 'Beverages', quantity: 2, price: 50 },
+      { name: 'Chips', category: 'Snacks', quantity: 3, price: 20 },
+    ] },
   ]
-  const result = filterReceiptsByProductCategory(receipts, { productFilter: 'Coke 1L' })
-  assert.deepEqual(result.map((r) => r.id), ['r1'])
+  const summary = summarizeSalesByProductFiltered(receipts, { productFilter: 'Coke 1L' })
+  assert.deepEqual(summary, [{ category: 'Beverages', product: 'Coke 1L', quantity: 2, revenue: 100 }])
 })
 
-test('filterReceiptsByProductCategory keeps only receipts containing the selected category', () => {
+test('summarizeSalesByProductFiltered applies product and category filters together (AND)', () => {
   const receipts = [
-    { id: 'r1', items: [{ name: 'Coke 1L', category: 'Beverages' }] },
-    { id: 'r2', items: [{ name: 'Chips', category: 'Snacks' }] },
+    { items: [
+      { name: 'Coke 1L', category: 'Beverages', quantity: 2, price: 50 },
+      { name: 'Sprite 1L', category: 'Beverages', quantity: 1, price: 45 },
+    ] },
   ]
-  const result = filterReceiptsByProductCategory(receipts, { categoryFilter: 'Snacks' })
-  assert.deepEqual(result.map((r) => r.id), ['r2'])
+  const summary = summarizeSalesByProductFiltered(receipts, { productFilter: 'Coke 1L', categoryFilter: 'Beverages' })
+  assert.deepEqual(summary, [{ category: 'Beverages', product: 'Coke 1L', quantity: 2, revenue: 100 }])
+  const emptyResult = summarizeSalesByProductFiltered(receipts, { productFilter: 'Coke 1L', categoryFilter: 'Snacks' })
+  assert.deepEqual(emptyResult, [])
 })
 
-test('filterReceiptsByProductCategory returns everything when filters are "all"', () => {
-  const receipts = [{ id: 'r1', items: [] }, { id: 'r2', items: [] }]
-  const result = filterReceiptsByProductCategory(receipts, { productFilter: 'all', categoryFilter: 'all' })
-  assert.equal(result.length, 2)
+test('summarizeSalesByProductFiltered returns everything when filters are "all"', () => {
+  const receipts = [{ items: [{ name: 'Coke 1L', category: 'Beverages', quantity: 1, price: 50 }] }]
+  const summary = summarizeSalesByProductFiltered(receipts, { productFilter: 'all', categoryFilter: 'all' })
+  assert.equal(summary.length, 1)
 })
