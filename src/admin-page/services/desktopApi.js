@@ -22,6 +22,8 @@ import {
 import { quantizeQty, isFractional } from '../../utils/quantity'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
 import { resolveRequiredProductPrice } from '../offline/productPricing'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -29,7 +31,10 @@ function requireBaseUrl() {
   if (!baseUrl) throw new Error('VITE_POCKETBASE_URL is required for desktop admin access.')
 }
 
-export const pb = new PocketBase(baseUrl || 'http://127.0.0.1:8090', new LocalAuthStore('nexa_admin_pb_auth'))
+export const pb = createPacedPocketBase(
+  new PocketBase(baseUrl || 'http://127.0.0.1:8090', new LocalAuthStore('nexa_admin_pb_auth')),
+  sharedGovernor,
+)
 pb.autoCancellation(false)
 
 // Mirror src/admin-page/auth.js's sessionStorage keys without importing that
@@ -2721,7 +2726,7 @@ export const desktopAdminApi = {
       return local
     }
 
-    const authClient = new PocketBase(baseUrl)
+    const authClient = createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
     authClient.autoCancellation(false)
     const auth = await authClient.collection('users').authWithPassword(managerEmail, managerPassword).catch((error) => {
       throw new Error(pocketBaseErrorMessage(error, 'Unable to verify admin credentials.'))
@@ -2791,7 +2796,7 @@ export const desktopAdminApi = {
     if (password.length < 8) throw new Error('New password must be at least 8 characters.')
     if (!(await isCloudReachable())) throw new Error('Connect to the internet to perform a developer password reset.')
 
-    const authClient = new PocketBase(baseUrl)
+    const authClient = createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
     authClient.autoCancellation(false)
     await authClient.collection('_superusers').authWithPassword(email, suPassword).catch((error) => {
       throw new Error(pocketBaseErrorMessage(error, 'Invalid developer (superuser) credentials.'))

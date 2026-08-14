@@ -24,6 +24,8 @@ import {
 } from '../../utils/pocketbaseRateLimit'
 import { getTerminalId } from '../../utils/terminalIdentity'
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 let runtimePromise
 
@@ -636,7 +638,7 @@ async function authorizeManagerApproval(authorization = {}) {
     if (globalThis.navigator && !globalThis.navigator.onLine) {
       throw new Error('Offline manager approval currently supports cached barcodes. Use a manager or authorization barcode.')
     }
-    const adminClient = new PocketBase(import.meta.env.VITE_POCKETBASE_URL)
+    const adminClient = createPacedPocketBase(new PocketBase(import.meta.env.VITE_POCKETBASE_URL), sharedGovernor)
     adminClient.autoCancellation(false)
     const auth = await adminClient.collection('users').authWithPassword(email, password).catch(async (error) => {
       const cachedManager = await cachedManagerApprovalByPassword(email, password)

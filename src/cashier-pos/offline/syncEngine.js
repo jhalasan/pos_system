@@ -12,6 +12,8 @@ import {
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
 import { activityLogPayloadForSync, minimalActivityLogPayload } from './activityLogSync'
 import { quantizeQty } from '../../utils/quantity'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60_000
@@ -229,7 +231,7 @@ export class CashierSyncEngine extends EventTarget {
       throw new Error('VITE_POCKETBASE_URL or an authenticated PocketBase client is required.')
     }
 
-    this.pb = pb || new PocketBase(baseUrl)
+    this.pb = pb || createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
     this.pb.autoCancellation(false)
     this.intervalMs = intervalMs
     this.timer = null
