@@ -6,6 +6,8 @@ import {
   isPocketBaseRateLimited,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 let runtimePromise
 
@@ -48,7 +50,7 @@ export function startCashierRuntime({
 
     const authStore = new LocalAuthStore('nexa_cashier_pb_auth')
     await restoreCashierAuthStore(authStore)
-    const pb = new PocketBase(baseUrl, authStore)
+    const pb = createPacedPocketBase(new PocketBase(baseUrl, authStore), sharedGovernor)
     pb.autoCancellation(false)
 
     const syncEngine = new CashierSyncEngine({ pb })

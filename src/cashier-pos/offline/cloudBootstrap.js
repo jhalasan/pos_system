@@ -1,6 +1,8 @@
 import PocketBase from 'pocketbase'
 import { replaceProductsFromCloud } from './productRepository'
 import { rememberPocketBaseRateLimit, withPocketBaseRateLimitLock } from '../../utils/pocketbaseRateLimit'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 // Scanning a cached item triggers a "keep it fresh" background catalog pull.
 // Without a floor between pulls, ringing up a multi-item sale fires one full
@@ -15,7 +17,7 @@ export async function refreshLocalProductCatalog({
   // no `baseUrl` still evaluates this default — under a plain Node runtime
   // (tests) `import.meta.env` itself is undefined, not just the var.
   baseUrl = import.meta.env?.VITE_POCKETBASE_URL,
-  pb = baseUrl ? new PocketBase(baseUrl) : null,
+  pb = baseUrl ? createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor) : null,
   background = false,
 } = {}) {
   if (!pb) throw new Error('VITE_POCKETBASE_URL is required to refresh the product catalog.')

@@ -12,6 +12,8 @@ import {
 import { findStockMovement, reconcileProductStock } from '../../utils/stockMovementReconciler'
 import { resolveRequiredProductPrice } from './productPricing'
 import { quantizeQty } from '../../utils/quantity'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
@@ -263,7 +265,7 @@ export class AdminSyncEngine extends EventTarget {
       throw new Error('VITE_POCKETBASE_URL or an authenticated PocketBase client is required.')
     }
 
-    this.pb = pb || new PocketBase(baseUrl)
+    this.pb = pb || createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
     this.pb.autoCancellation(false)
     this.intervalMs = intervalMs
     this.timer = null

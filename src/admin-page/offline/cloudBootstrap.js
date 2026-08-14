@@ -1,10 +1,12 @@
 import PocketBase from 'pocketbase'
 import { replaceCategoriesFromCloud, replaceProductsFromCloud } from './productRepository'
 import { rememberPocketBaseRateLimit, withPocketBaseRateLimitLock } from '../../utils/pocketbaseRateLimit'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 export async function refreshAdminLocalCache({
   baseUrl = import.meta.env.VITE_POCKETBASE_URL,
-  pb = baseUrl ? new PocketBase(baseUrl) : null,
+  pb = baseUrl ? createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor) : null,
   requireCatalog = false,
 } = {}) {
   if (!pb) throw new Error('VITE_POCKETBASE_URL is required to refresh the admin cache.')

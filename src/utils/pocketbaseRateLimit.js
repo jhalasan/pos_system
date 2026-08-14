@@ -1,8 +1,10 @@
-const DEFAULT_RETRY_MS = 5 * 60 * 1000
-const MIN_COOLDOWN_MS = 15_000
-
-let rateLimitedUntil = 0
-let refreshLock = null
+// Thin facade over the shared pocketbaseGovernor instance. This module used
+// to own its own reactive-only cooldown state (a flat 5-minute guess after a
+// 429, plus an unkeyed single-flight slot) — it now delegates everything to
+// the governor (token-bucket pacing, AIMD, escalating cooldown, keyed
+// single-flight, cross-window persistence), while keeping the exact same
+// exported surface so no existing caller needs to change.
+import { sharedGovernor } from './pocketbaseGovernorInstance'
 
 function textFromError(error) {
   return [
@@ -13,51 +15,38 @@ function textFromError(error) {
   ].filter(Boolean).join(' ')
 }
 
-function retryMsFromError(error) {
-  const retryAfter = Number(error?.response?.headers?.['retry-after'] || error?.headers?.['retry-after'])
-  if (Number.isFinite(retryAfter) && retryAfter > 0) return retryAfter * 1000
-
-  const text = textFromError(error)
-  const seconds = Number(text.match(/retry after\s+(\d+)\s+seconds/i)?.[1])
-  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000
-
-  return DEFAULT_RETRY_MS
-}
-
+/** Pure detection heuristic — kept independent of the governor, which only
+ * ever receives errors already known to be 429s via `recordRateLimit`. */
 export function isPocketBaseRateLimit(error) {
   return Number(error?.status) === 429 || /too many requests|rate.?limit|retry after/i.test(textFromError(error))
 }
 
 export function rememberPocketBaseRateLimit(error) {
   if (!isPocketBaseRateLimit(error)) return false
-  const retryMs = Math.max(MIN_COOLDOWN_MS, retryMsFromError(error))
-  rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + retryMs)
+  sharedGovernor.recordRateLimit(error)
   return true
 }
 
+/** Deprecated alias for the governor's keyed single-flight, kept for
+ * existing callers (cloudBootstrap.js in both apps) — a later task migrates
+ * those to a proper keyed `singleFlight` call. */
 export function withPocketBaseRateLimitLock(task) {
-  if (refreshLock) return refreshLock
-  refreshLock = Promise.resolve(task()).finally(() => {
-    refreshLock = null
-  })
-  return refreshLock
+  return sharedGovernor.singleFlight('legacy', task)
 }
 
 export function pocketBaseRateLimitRemainingMs() {
-  return Math.max(0, rateLimitedUntil - Date.now())
+  return sharedGovernor.remainingMs()
 }
 
 export function isPocketBaseRateLimited() {
-  return pocketBaseRateLimitRemainingMs() > 0
+  return sharedGovernor.isRateLimited()
 }
 
 export function pocketBaseRateLimitMessage() {
-  const remainingMs = pocketBaseRateLimitRemainingMs()
-  const minutes = Math.max(1, Math.ceil(remainingMs / 60_000))
-  return `PocketHost rate limit reached. Try again in about ${minutes} minute(s).`
+  return sharedGovernor.message()
 }
 
-/** Test-only: clears the module-level cooldown so suites don't leak state into each other. */
+/** Test-only: clears the shared governor's state so suites don't leak into each other. */
 export function resetPocketBaseRateLimit() {
-  rateLimitedUntil = 0
+  sharedGovernor.reset()
 }

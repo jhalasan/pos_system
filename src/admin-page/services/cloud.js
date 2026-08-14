@@ -1,10 +1,12 @@
 import PocketBase from 'pocketbase'
 import { quantizeQty } from '../../utils/quantity'
+import { createPacedPocketBase } from '../../utils/pacedPocketBase'
+import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 if (!baseUrl) throw new Error('VITE_POCKETBASE_URL is required for the admin dashboard.')
 
-export const pb = new PocketBase(baseUrl)
+export const pb = createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
 pb.autoCancellation(false)
 
 export async function loginAdmin(email, password) {
