@@ -347,6 +347,29 @@ async function cloudSaleItems(pb, saleId) {
   }).then((items) => items.map(cloudSaleItemToLocal))
 }
 
+// PocketBase GETs are paced as 'interactive' priority, which only waits out
+// an already-active rate-limit cooldown rather than queueing on the token
+// bucket (see pacedPocketBase.js) - so firing one sale_items request per
+// sale in a single Promise.all can itself burst past PocketHost's limit on
+// a busy day. A handful of those requests then get silently swallowed by
+// the .catch(() => []) below, producing sales with a wrongly-empty items
+// list. Bounding concurrency keeps a full day's history fetch from ever
+// firing that burst in the first place.
+const SALE_ITEMS_FETCH_CONCURRENCY = 3
+
+async function mapWithConcurrency(list, limit, mapper) {
+  const results = new Array(list.length)
+  let nextIndex = 0
+  async function worker() {
+    while (nextIndex < list.length) {
+      const current = nextIndex++
+      results[current] = await mapper(list[current], current)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker))
+  return results
+}
+
 async function cloudSalesHistory({ cashierId } = {}) {
   if (globalThis.navigator && !globalThis.navigator.onLine) return []
 
@@ -361,11 +384,10 @@ async function cloudSalesHistory({ cashierId } = {}) {
     requestKey: null,
   }).catch(() => [])
 
-  const withItems = await Promise.all(sales.map(async (sale) => (
-    toCashierCloudSale(sale, await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => []))
-  )))
-
-  return withItems
+  return mapWithConcurrency(sales, SALE_ITEMS_FETCH_CONCURRENCY, async (sale) => {
+    const items = await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => null)
+    return { sale: toCashierCloudSale(sale, items || []), itemsFetchFailed: items === null }
+  })
 }
 
 async function cloudSaleLookup(transactionNo) {
@@ -378,7 +400,8 @@ async function cloudSaleLookup(transactionNo) {
   ).catch(() => null)
 
   if (!sale) return null
-  return toCashierCloudSale(sale, await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => []))
+  const items = await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => null)
+  return { sale: toCashierCloudSale(sale, items || []), itemsFetchFailed: items === null }
 }
 
 async function ensureProducts() {
@@ -1004,8 +1027,12 @@ export const desktopCashierApi = {
     const cachedCloudSales = await cashierDb.receiptCache
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .toArray()
-    const cloudSales = await cloudSalesHistory({ cashierId })
-    if (cloudSales.length) await cashierDb.receiptCache.bulkPut(cloudSales.map((sale) => ({ ...sale, id: sale.id || sale.saleId || sale.transactionNo })))
+    const cloudResults = await cloudSalesHistory({ cashierId })
+    const cloudSales = cloudResults.map((result) => result.sale)
+    // Never persist a sale whose item fetch failed - caching a wrongly-empty
+    // items list would make that failure permanent (see cloudSalesHistory).
+    const fetchedCloudSales = cloudResults.filter((result) => !result.itemsFetchFailed).map((result) => result.sale)
+    if (fetchedCloudSales.length) await cashierDb.receiptCache.bulkPut(fetchedCloudSales.map((sale) => ({ ...sale, id: sale.id || sale.saleId || sale.transactionNo })))
     const merged = new Map()
 
     for (const sale of [...cachedCloudSales, ...cloudSales, ...localSales]) {
@@ -1019,9 +1046,15 @@ export const desktopCashierApi = {
   async saleLookup({ transactionNo }) {
     const sale = await findLocalSaleByTransactionNo(transactionNo)
     if (!sale) {
-      const cloudSale = await cloudSaleLookup(transactionNo)
-      if (cloudSale) {
-        await cashierDb.receiptCache.put({ ...cloudSale, id: cloudSale.id || cloudSale.saleId || cloudSale.transactionNo })
+      const cloudResult = await cloudSaleLookup(transactionNo)
+      if (cloudResult) {
+        const { sale: cloudSale, itemsFetchFailed } = cloudResult
+        // Same guard as salesHistory(): don't cache a lookup whose item
+        // fetch failed, or a transient failure becomes a permanent
+        // wrongly-empty receipt.
+        if (!itemsFetchFailed) {
+          await cashierDb.receiptCache.put({ ...cloudSale, id: cloudSale.id || cloudSale.saleId || cloudSale.transactionNo })
+        }
         return cloudSale
       }
       const cachedCloudSale = await cashierDb.receiptCache.filter((record) => record.transactionNo === transactionNo).first()
