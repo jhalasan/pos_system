@@ -23,6 +23,10 @@ const MAX_ATTEMPTS = 10
 // no benefit — a positive check 15s ago is still true 15s later.
 const REACHABILITY_SUCCESS_TTL_MS = 15_000
 const REACHABILITY_FAILURE_TTL_MS = 8_000
+// Spreads each terminal's steady-state 60s tick across up to 15s so a store
+// running several terminals doesn't have them all call PocketHost in the
+// same second. Fixed once per engine instance, not re-rolled per tick.
+const SCHEDULE_JITTER_MS = 15_000
 
 function numberFieldValue(value) {
   const number = Number(value)
@@ -233,6 +237,7 @@ export class CashierSyncEngine extends EventTarget {
     this.stopped = true
     this.lastProductRefreshAt = 0
     this.reachabilityCache = { value: false, expiresAt: 0 }
+    this.jitterMs = Math.floor(Math.random() * SCHEDULE_JITTER_MS)
   }
 
   start() {
@@ -254,7 +259,7 @@ export class CashierSyncEngine extends EventTarget {
     this.schedule(0)
   }
 
-  schedule(delay = this.intervalMs) {
+  schedule(delay = this.intervalMs + this.jitterMs) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
     const rateLimitDelay = pocketBaseRateLimitRemainingMs()
