@@ -14,7 +14,7 @@ import { activityLogPayloadForSync, minimalActivityLogPayload } from './activity
 import { quantizeQty } from '../../utils/quantity'
 
 const DEFAULT_INTERVAL_MS = 60_000
-const PRODUCT_REFRESH_INTERVAL_MS = 2 * 60_000
+const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
 // Mirrors admin-page/services/desktopApi.js's reachabilityCache: a plain

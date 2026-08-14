@@ -6,7 +6,7 @@ import { rememberPocketBaseRateLimit, withPocketBaseRateLimitLock } from '../../
 // Without a floor between pulls, ringing up a multi-item sale fires one full
 // products.getFullList() per scan, which is what was blowing through
 // PocketHost's request-rate limit and locking cashiers out of scanning/login.
-const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 60_000
+const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 3 * 60_000
 let lastRefreshCompletedAt = 0
 
 export async function refreshLocalProductCatalog({
