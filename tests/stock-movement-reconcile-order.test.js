@@ -35,17 +35,22 @@ test('an intact chain of many small fractional movements does not drift', () => 
   assert.equal(stockQuantityFromMovements(movements), 9);
 });
 
-// --- stockQuantityFromMovements: broken chain / edge cases ---------------
+// --- stockQuantityFromMovements: chain mismatch (non-blocking) / edge cases
 
-test('a broken chain (previous_quantity mismatch) returns null and does not throw', () => {
+test('a chain mismatch still returns the delta-summed quantity (does not decline, does not throw)', () => {
+  // This same previous_quantity/new_quantity mismatch signature can mean a
+  // genuine gap OR two terminals writing legitimate concurrent movements off
+  // the same shared baseline (the "busy day, two terminals" scenario) — the
+  // function cannot tell these apart, so it must not decline to reconcile;
+  // it always sums deltas (which is correct in both cases as long as no
+  // movement is truly missing) and only logs the mismatch as a diagnostic.
   const movements = [
     { id: 'm1', product_id: 'p1', movement_type: 'sale', previous_quantity: 50, new_quantity: 48 },
-    // Gap: this movement's previous_quantity (45) does not match the prior
-    // movement's new_quantity (48) — e.g. a missing movement in between.
     { id: 'm2', product_id: 'p1', movement_type: 'sale', previous_quantity: 45, new_quantity: 44 },
   ];
+  // baseline (movements[0].previous_quantity = 50) + delta(m1: 48-50=-2) + delta(m2: 44-45=-1) = 47
   assert.doesNotThrow(() => {
-    assert.equal(stockQuantityFromMovements(movements), null);
+    assert.equal(stockQuantityFromMovements(movements), 47);
   });
 });
 
@@ -91,7 +96,7 @@ test('findStockMovement re-throws on any other non-404 error', async () => {
   await assert.rejects(() => findStockMovement(pb, 'product1', 'ref1'), (error) => error.status === 500);
 });
 
-// --- reconcileProductStock: bounded window + broken-chain safety ----------
+// --- reconcileProductStock: bounded window + non-blocking mismatch --------
 
 test('reconcileProductStock calls getList (not getFullList) with a bounded perPage', async () => {
   let capturedPage = null;
@@ -134,8 +139,9 @@ test('reconcileProductStock calls getList (not getFullList) with a bounded perPa
   assert.equal(capturedOptions.sort, 'created,created_at');
 });
 
-test('reconcileProductStock does not call products.update when the chain is broken', async () => {
+test('reconcileProductStock still reconciles (calls products.update with the summed quantity) when the chain has a mismatch', async () => {
   let updateCalls = 0;
+  let updatedPayload = null;
   const fakePb = {
     filter: (str) => str,
     collection(name) {
@@ -154,10 +160,13 @@ test('reconcileProductStock does not call products.update when the chain is brok
       if (name === 'products') {
         return {
           async getOne() {
-            throw new Error('getOne should not be called when the chain is broken');
+            // Stale/racy value already on the product record, different
+            // from the correct summed total (47), so update must fire.
+            return { quantity: '50' };
           },
-          async update() {
+          async update(id, payload) {
             updateCalls += 1;
+            updatedPayload = payload;
           },
         };
       }
@@ -166,6 +175,7 @@ test('reconcileProductStock does not call products.update when the chain is brok
   };
 
   const result = await reconcileProductStock(fakePb, 'p1');
-  assert.equal(result, null);
-  assert.equal(updateCalls, 0);
+  assert.equal(result, 47);
+  assert.equal(updateCalls, 1);
+  assert.equal(updatedPayload.quantity, '47');
 });
