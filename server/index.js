@@ -1023,10 +1023,15 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
   const fromDate = String(req.query?.fromDate || '').trim()
   const toDate = String(req.query?.toDate || '').trim()
 
+  const dateFilterParts = []
+  if (fromDate) dateFilterParts.push(pb.filter('created_at >= {:from}', { from: `${fromDate} 00:00:00` }))
+  if (toDate) dateFilterParts.push(pb.filter('created_at <= {:to}', { to: `${toDate} 23:59:59` }))
+
   const sales = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
     expand: 'cashier_id',
     perPage: 500,
+    ...(dateFilterParts.length ? { filter: dateFilterParts.join(' && ') } : {}),
   })
   const saleItems = await pbCollection('sale_items')
   const records = await Promise.all(sales.map((sale) => receiptRecordFromSale(sale, saleItems)))
