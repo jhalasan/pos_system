@@ -18,6 +18,7 @@ import { getDeveloperModeSettings } from '../../utils/developerMode';
 import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
+import { restoreCashierTransactions } from '../utils/transactionRestore';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import styles from '../styles/Cashier.module.css';
@@ -1722,8 +1723,10 @@ const Cashier = ({ onLogout, user }) => {
       }));
       const savedTransactions = loadCashierTransactions(user.id);
       if (savedTransactions?.transactions?.length) {
-        setTransactions(savedTransactions.transactions);
-        setActiveTransaction(savedTransactions.activeTransaction);
+        const restored = restoreCashierTransactions(savedTransactions, (id) => createTransaction(id));
+        nextTransactionIdRef.current = restored.nextTransactionId;
+        setTransactions(restored.transactions);
+        setActiveTransaction(restored.activeTransaction);
       }
       // A found session always means this cashier is resuming after a break
       // (pausing requires logging out, which is what re-runs this effect).
