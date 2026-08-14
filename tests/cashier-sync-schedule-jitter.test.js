@@ -39,7 +39,8 @@ test('jitterMs is stable per instance and within the documented range', { concur
 
   assert.ok(Number.isInteger(engine.jitterMs))
   assert.ok(engine.jitterMs >= 0 && engine.jitterMs < 15_000)
-  assert.equal(engine.jitterMs, engine.jitterMs, 'jitter must not be re-rolled between reads')
+  const first = engine.jitterMs
+  assert.equal(engine.jitterMs, first, 'jitter must not be re-rolled between reads')
 
   await cashierDb.delete()
 })

@@ -256,6 +256,7 @@ export class CashierSyncEngine extends EventTarget {
   }
 
   handleOnline = () => {
+    this.reachabilityCache = { value: false, expiresAt: 0 }
     this.schedule(0)
   }
 
