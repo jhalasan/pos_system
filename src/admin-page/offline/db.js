@@ -79,7 +79,22 @@ adminDb.on('blocked', () => {
   console.warn('Admin offline database upgrade is blocked by another open window.')
 })
 
+// If another window/instance is holding an older connection open, close it
+// proactively on versionchange so an upgrade in this window is not left
+// hanging indefinitely — otherwise `initializeAdminDb()` never resolves.
+adminDb.on('versionchange', () => {
+  adminDb.close()
+})
+
+const DB_OPEN_TIMEOUT_MS = 10_000
+
 export async function initializeAdminDb() {
-  await adminDb.open()
+  await Promise.race([
+    adminDb.open(),
+    new Promise((_, reject) => globalThis.setTimeout(
+      () => reject(new Error('Admin database is blocked by another open POS window. Close the other window and try again.')),
+      DB_OPEN_TIMEOUT_MS,
+    )),
+  ])
   return adminDb
 }

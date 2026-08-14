@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import { IconBell, IconMenu } from './Icons'
 import SyncStatusIndicator from '../../components/SyncStatusIndicator'
 import { api } from '../services/api'
+import { logout } from '../auth'
 import SupportContactModal from '../../components/SupportContactModal'
 import ConnectionStatusBar from '../../components/ConnectionStatusBar'
 
@@ -38,6 +39,7 @@ function readDismissedNotifications() {
 
 export default function AdminLayout() {
   const { pathname } = useLocation()
+  const navigate = useNavigate()
   const section = pathname.split('/')[2] || 'dashboard'
   const [now, setNow] = useState(new Date())
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -56,6 +58,19 @@ export default function AdminLayout() {
     document.body.classList.toggle('admin-menu-open', sidebarOpen)
     return () => document.body.classList.remove('admin-menu-open')
   }, [sidebarOpen])
+
+  useEffect(() => {
+    // A data call failed because the admin session couldn't be restored
+    // (see useApi.js) — the sessionStorage flag that rendered this shell
+    // was stale. Sign out cleanly and send the user back to login instead
+    // of leaving every card on the page reading "Unable to load".
+    function handleAuthRequired() {
+      logout()
+      navigate('/', { replace: true })
+    }
+    window.addEventListener('nexa-admin-auth-required', handleAuthRequired)
+    return () => window.removeEventListener('nexa-admin-auth-required', handleAuthRequired)
+  }, [navigate])
 
   useEffect(() => {
     const updateBackToTop = () => setShowBackToTop(window.scrollY > 420)

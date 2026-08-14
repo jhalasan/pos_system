@@ -17,7 +17,7 @@ const emptyDashboard = {
 
 export default function Dashboard() {
   const navigate = useNavigate()
-  const { data: readiness, setData: setReadiness } = useApi(api.offlineReadiness, {})
+  const { data: readiness, setData: setReadiness, reload: reloadReadiness } = useApi(api.offlineReadiness, {})
   const [data, setData] = useState(emptyDashboard)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -25,6 +25,25 @@ export default function Dashboard() {
   const [range, setRange] = useState('30')
   const [refreshingReadiness, setRefreshingReadiness] = useState(false)
   const [readinessMessage, setReadinessMessage] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [syncingNow, setSyncingNow] = useState(false)
+
+  async function handleSyncNow() {
+    setSyncingNow(true)
+    try {
+      await api.syncNow()
+      // Re-run the dashboard fetch and the readiness check in place instead
+      // of a full page reload — a reload was what wiped out adminSession
+      // (see desktopApi.js's assertAdmin) and surfaced "Admin login is
+      // required." on an otherwise perfectly good session.
+      setRefreshKey((key) => key + 1)
+      await reloadReadiness()
+    } catch (syncError) {
+      setError(syncError.message || 'Unable to sync.')
+    } finally {
+      setSyncingNow(false)
+    }
+  }
 
   async function refreshOfflineReadiness() {
     setRefreshingReadiness(true)
@@ -63,7 +82,7 @@ export default function Dashboard() {
       })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [range, source])
+  }, [range, source, refreshKey])
 
   if (loading) return <PageLoader title="Dashboard" message="Loading dashboard data…" />
   if (error) return <><PageHeader title="Dashboard" subtitle="Operational overview." /><div className="card"><div className="empty"><h4>Unable to load dashboard</h4><p>{error}</p></div></div></>
@@ -87,7 +106,7 @@ export default function Dashboard() {
         <span className="count">{data.analyticsMeta?.salesCount || 0} matching transactions</span>
         <button className="btn btn-outline" onClick={() => navigate('/admin/products')}><IconPlus size={15} /> New Product</button>
         <button className="btn btn-outline" onClick={() => navigate('/admin/inventory')}><IconScan size={15} /> Stock In / Out</button>
-        <button className="btn btn-primary" onClick={() => api.syncNow().then(() => window.location.reload())}><IconCloud size={15} /> Sync Now</button>
+        <button className="btn btn-primary" onClick={handleSyncNow} disabled={syncingNow}><IconCloud size={15} /> {syncingNow ? 'Syncing…' : 'Sync Now'}</button>
       </div>
 
       <div className="dashboard-kpi-grid">

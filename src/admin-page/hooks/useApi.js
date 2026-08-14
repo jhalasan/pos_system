@@ -11,6 +11,14 @@ export function useApi(loader, initialValue) {
     try {
       setData(await loader())
     } catch (err) {
+      if (err.code === 'ADMIN_AUTH_REQUIRED') {
+        // The admin shell was rendered (sessionStorage said "authed") but
+        // the actual pb session could not be restored — rather than every
+        // page independently showing "Unable to load", send the app back to
+        // login once, centrally. AdminLayout owns the redirect since this
+        // hook isn't router-aware.
+        globalThis.dispatchEvent?.(new CustomEvent('nexa-admin-auth-required'))
+      }
       setError(err.message || 'Unable to load data.')
     } finally {
       setLoading(false)

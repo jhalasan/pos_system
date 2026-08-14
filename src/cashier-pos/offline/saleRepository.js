@@ -1,7 +1,7 @@
 import { cashierDb, initializeCashierDb } from './db.js'
 import { adminDb, initializeAdminDb } from '../../admin-page/offline/db.js'
 import { barcodesMatch } from '../utils/barcodeUtils.js'
-import { normalizeProduct } from './productRepository.js'
+import { normalizeProduct, safeBulkPutProducts } from './productRepository.js'
 import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
 import { discountedUnitPrice, quantizeQty } from '../../utils/quantity.js'
@@ -116,7 +116,11 @@ export async function finalizeSaleLocally(sale) {
     ...transactionTables,
     async () => {
       if (recoveredProducts.length) {
-        await cashierDb.products.bulkPut(recoveredProducts)
+        // A recovered product's row must never be able to abort the sale
+        // transaction — worst case, skip the write for that row and let the
+        // "not available locally" check below surface a clear error instead
+        // of losing the whole sale to an unrelated constraint.
+        await safeBulkPutProducts(cashierDb.products, recoveredProducts)
       }
 
       for (const item of pendingSale.items) {

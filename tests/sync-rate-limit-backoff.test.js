@@ -126,6 +126,13 @@ test('cashier ops loop halts on 429 and does not dead-letter remaining ops', { c
           },
         }
       }
+      // The catalog refresh now runs regardless of unrelated queued ops
+      // (see syncEngine's shouldRefreshProducts), so a realistic fake pb
+      // must serve it too — this test is about the ops-queue 429 handling,
+      // not the catalog.
+      if (name === 'products') {
+        return { async getFullList() { return [] } }
+      }
       throw new Error(`Unexpected collection: ${name}`)
     },
   }

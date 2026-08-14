@@ -311,10 +311,14 @@ export class CashierSyncEngine extends EventTarget {
       operation.type === 'voidCompletedSale' || operation.type === 'adjustCompletedSale'
     ))
     const hasQueuedWrites = queuedSales.length > 0 || queuedOps.length > 0
+    // A queued write unrelated to the catalog (e.g. a due-for-retry
+    // recordCashMovement or activityLog op) must not starve the periodic
+    // catalog refresh — that left a stale/partial catalog in place
+    // indefinitely on any terminal with an unrelated op stuck in the queue.
     const shouldRefreshProducts = forceProductRefresh
       || queuedSales.length > 0
       || operationNeedsCatalog
-      || (!hasQueuedWrites && now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS)
+      || now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS
 
     if (!hasQueuedWrites && !shouldRefreshProducts) {
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
@@ -347,6 +351,7 @@ export class CashierSyncEngine extends EventTarget {
     let failed = 0
     let products = 0
     let rateLimited = false
+    let catalogRefreshFailed = false
     const warnings = []
 
     if (shouldRefreshProducts && !isPocketBaseRateLimited()) {
@@ -356,6 +361,12 @@ export class CashierSyncEngine extends EventTarget {
       } catch (error) {
         rememberPocketBaseRateLimit(error)
         if (Number(error?.status) === 429) rateLimited = true
+        catalogRefreshFailed = true
+        // Don't wait out the full 5-minute interval after a failure — retry
+        // on the very next tick so a transient error (or a bad row that a
+        // later fix resolves) self-heals quickly instead of silently
+        // leaving a stale/incomplete catalog in place until the next window.
+        this.lastProductRefreshAt = 0
         warnings.push(errorMessage(error))
         this.dispatchEvent(new CustomEvent('catalogrefresherror', {
           detail: { error },
@@ -431,14 +442,16 @@ export class CashierSyncEngine extends EventTarget {
       detail: { uploaded, failed, warnings },
     }))
     emitSyncStatus(
-      failed > 0 ? 'failed' : (rateLimited || pending > 0) ? 'waiting' : 'succeeded',
+      failed > 0 ? 'failed' : (rateLimited || pending > 0 || catalogRefreshFailed) ? 'waiting' : 'succeeded',
       failed > 0
         ? `Auto-Sync Finished with ${failed} Failed`
         : rateLimited
           ? `${pocketBaseRateLimitMessage()} ${pending} pending.`
-          : pending > 0
-            ? `Auto-Sync Waiting — ${pending} pending`
-            : 'Auto-Sync Succeeded — 0 pending',
+          : catalogRefreshFailed
+            ? `Product catalog could not refresh: ${warnings[warnings.length - 1]}`
+            : pending > 0
+              ? `Auto-Sync Waiting — ${pending} pending`
+              : 'Auto-Sync Succeeded — 0 pending',
     )
     return { uploaded, failed, products, warnings, pending }
   }

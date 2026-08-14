@@ -4,7 +4,7 @@ import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { copyAdminProductCatalogToCashier } from '../offline/catalogCache'
-import { getAllProducts, getProductByBarcode, normalizeProduct } from '../offline/productRepository'
+import { getAllProducts, getProductByBarcode, normalizeProduct, safeBulkPutProducts, isCatalogIncomplete } from '../offline/productRepository'
 import { barcodesMatch } from '../utils/barcodeUtils'
 import {
   adjustLocalSale,
@@ -387,8 +387,13 @@ async function ensureProducts() {
     products = await copyAdminProductCatalogToCashier().catch(() => [])
   }
 
+  // An incomplete catalog (short row count vs. the last successful refresh,
+  // or a refresh that skipped rows) never repairs itself otherwise — a
+  // non-empty cache previously short-circuited this whole block forever.
+  const incomplete = products.length === 0 || await isCatalogIncomplete().catch(() => false)
+
   if (
-    products.length === 0
+    incomplete
     && (!globalThis.navigator || globalThis.navigator.onLine)
     && !isPocketBaseRateLimited()
   ) {
@@ -889,7 +894,7 @@ export const desktopCashierApi = {
     if (adminProducts.length > 0) {
       const cached = adminProducts.map((product) => toCashierProduct(normalizeProduct(product)))
       await cashierDb.transaction('rw', cashierDb.products, async () => {
-        await cashierDb.products.bulkPut(cached)
+        await safeBulkPutProducts(cashierDb.products, cached)
       })
       return cached
     }

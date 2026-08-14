@@ -1,3 +1,4 @@
+import Dexie from 'dexie'
 import { cashierDb } from './db.js'
 import { barcodesMatch, normalizeBarcode } from '../utils/barcodeUtils.js'
 import { toMillis, fromMillis, quantizeQty } from '../../utils/quantity.js'
@@ -42,12 +43,40 @@ export function normalizeProduct(record, pb) {
   }
 }
 
+// Wraps a Dexie bulkPut so that individual row failures (e.g. a stray unique
+// constraint from an older schema, or a future one) don't abort the whole
+// write. Dexie's bulk methods call preventDefault() on each failed request
+// and aggregate them into a BulkError thrown after the batch — the write
+// only rolls back if that rejection is allowed to escape the transaction.
+export async function safeBulkPutProducts(table, rows) {
+  const skipped = []
+  await table.bulkPut(rows).catch(Dexie.BulkError, (error) => {
+    skipped.push(...(error.failures ? Object.values(error.failures) : []))
+  })
+  return { skipped }
+}
+
 export async function replaceProductsFromCloud(records, pb) {
-  const products = records
+  if (!Array.isArray(records) || records.length === 0) {
+    const existingCount = await cashierDb.products.count()
+    if (existingCount > 0) {
+      throw new Error('The cloud returned zero products — refusing to replace a non-empty local catalog.')
+    }
+    return []
+  }
+
+  const normalized = records
     .map((record) => normalizeProduct(record, pb))
     .filter((product) => product.lifecycleStatus === 'active')
 
-  await cashierDb.transaction('rw', cashierDb.products, cashierDb.pendingSales, async () => {
+  // Last-write-wins de-duplication by id so a duplicated cloud record can't
+  // produce two bulkPut entries for the same primary key.
+  const byId = new Map()
+  for (const product of normalized) byId.set(product.id, product)
+  const products = [...byId.values()]
+
+  let skippedCount = 0
+  await cashierDb.transaction('rw', cashierDb.products, cashierDb.pendingSales, cashierDb.settings, async () => {
     const pendingSales = await cashierDb.pendingSales.toArray()
     // Summed in integer thousandths (millis) so fractional quantities never
     // drift — see stockMovementReconciler.js for the same pattern.
@@ -65,10 +94,45 @@ export async function replaceProductsFromCloud(records, pb) {
       quantity: Math.max(0, quantizeQty(product.quantity - fromMillis(pendingDeductionsMillis.get(product.id) || 0))),
     }))
     await cashierDb.products.clear()
-    await cashierDb.products.bulkPut(mergedProducts)
+    const { skipped } = await safeBulkPutProducts(cashierDb.products, mergedProducts)
+    skippedCount = skipped.length
+
+    const storedCount = await cashierDb.products.count()
+    await cashierDb.settings.put({
+      key: 'productCatalogSync',
+      value: {
+        completedAt: new Date().toISOString(),
+        cloudCount: records.length,
+        storedCount,
+        skippedCount,
+      },
+    })
   })
 
+  if (skippedCount > 0) {
+    throw new Error(`${skippedCount} product(s) failed to save to the local catalog during refresh.`)
+  }
+
   return products
+}
+
+export async function getCatalogSyncState() {
+  const setting = await cashierDb.settings.get('productCatalogSync')
+  return setting?.value || null
+}
+
+export async function isCatalogIncomplete({ maxAgeMs = 30 * 60_000 } = {}) {
+  const stamp = await getCatalogSyncState()
+  if (!stamp) return true
+  if ((stamp.skippedCount || 0) > 0) return true
+
+  const storedCount = await cashierDb.products.count()
+  if (storedCount !== stamp.storedCount) return true
+
+  const completedAt = Date.parse(stamp.completedAt || '')
+  if (!Number.isFinite(completedAt) || Date.now() - completedAt > maxAgeMs) return true
+
+  return false
 }
 
 export function getAllProducts() {

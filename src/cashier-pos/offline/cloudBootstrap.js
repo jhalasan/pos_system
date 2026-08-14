@@ -10,7 +10,11 @@ const BACKGROUND_REFRESH_MIN_INTERVAL_MS = 3 * 60_000
 let lastRefreshCompletedAt = 0
 
 export async function refreshLocalProductCatalog({
-  baseUrl = import.meta.env.VITE_POCKETBASE_URL,
+  // Optional chaining matters here: under Vite this is always populated by
+  // `define`, but a caller (e.g. the sync engine) that passes only `pb` and
+  // no `baseUrl` still evaluates this default — under a plain Node runtime
+  // (tests) `import.meta.env` itself is undefined, not just the var.
+  baseUrl = import.meta.env?.VITE_POCKETBASE_URL,
   pb = baseUrl ? new PocketBase(baseUrl) : null,
   background = false,
 } = {}) {

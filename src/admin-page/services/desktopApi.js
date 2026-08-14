@@ -1,5 +1,6 @@
 import PocketBase, { LocalAuthStore } from 'pocketbase'
 import { initializeAdminDb, adminDb } from '../offline/db'
+import { restoreAdminAuthStore, createRetryableRuntime } from '../offline/runtime'
 import { cashierDb, initializeCashierDb } from '../../cashier-pos/offline/db'
 import { refreshAdminLocalCache } from '../offline/cloudBootstrap'
 import { AdminSyncEngine } from '../offline/syncEngine'
@@ -31,8 +32,23 @@ function requireBaseUrl() {
 export const pb = new PocketBase(baseUrl || 'http://127.0.0.1:8090', new LocalAuthStore('nexa_admin_pb_auth'))
 pb.autoCancellation(false)
 
+// Mirror src/admin-page/auth.js's sessionStorage keys without importing that
+// module — auth.js imports services/api.js, which imports this file, and
+// importing auth.js back here would create a cycle.
+const ADMIN_SESSION_TOKEN_KEY = 'nexa_admin_token'
+const ADMIN_SESSION_USER_KEY = 'nexa_admin_user'
+
+function sessionAdminCredentials() {
+  try {
+    const token = globalThis.sessionStorage?.getItem(ADMIN_SESSION_TOKEN_KEY) || ''
+    const user = JSON.parse(globalThis.sessionStorage?.getItem(ADMIN_SESSION_USER_KEY) || 'null')
+    return { token, user }
+  } catch {
+    return { token: '', user: null }
+  }
+}
+
 let adminSession = null
-let runtimePromise = null
 let syncEngine = null
 let inventoryScanQueue = Promise.resolve()
 let reachabilityPromise = null
@@ -53,22 +69,53 @@ async function sha256(text) {
     .join('')
 }
 
-async function startAdminRuntime() {
-  runtimePromise ||= (async () => {
-    requireBaseUrl()
-    await initializeAdminDb()
-    syncEngine = new AdminSyncEngine({ pb })
-    syncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
-    syncEngine.start()
+const adminRuntime = createRetryableRuntime(async () => {
+  requireBaseUrl()
+  await initializeAdminDb()
 
-    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
-      refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
+  restoreAdminAuthStore(pb.authStore, sessionAdminCredentials())
+  if (pb.authStore.record?.role === 'admin') adminSession = pb.authStore.record
+
+  if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+    // Best-effort: revalidate a restored token so a session that was
+    // revoked/expired server-side is caught here instead of surfacing as a
+    // confusing "Admin login is required." on the first data call.
+    await pb.collection('users').authRefresh({ requestKey: null }).catch((error) => {
+      if ([401, 403].includes(Number(error?.status))) {
+        pb.authStore.clear()
+        adminSession = null
+      }
+    })
+  }
+
+  // An admin who logged in offline (offlineLogin, below) never touches
+  // pb.authStore — only adminSession, which is a plain module variable and
+  // does not survive a reload. sessionStorage.nexa_admin_user does survive,
+  // so cross-check it against the cached admin record and restore
+  // adminSession from there when there is no pb token to restore.
+  if (!adminSession) {
+    const { user: sessionUser } = sessionAdminCredentials()
+    if (sessionUser?.role === 'admin') {
+      const cached = await adminDb.users.get(sessionUser.id).catch(() => null)
+      if (cached && cached.role === 'admin' && cached.status !== 'inactive') {
+        adminSession = cached
+      }
     }
+  }
 
-    return { syncEngine }
-  })()
+  syncEngine = new AdminSyncEngine({ pb })
+  syncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
+  syncEngine.start()
 
-  return runtimePromise
+  if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
+    refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
+  }
+
+  return { syncEngine }
+})
+
+async function startAdminRuntime() {
+  return adminRuntime.start()
 }
 
 async function isCloudReachable() {
@@ -1185,7 +1232,9 @@ function classifyFsnProduct(product, metric, now = new Date()) {
 function assertAdmin() {
   const user = pb.authStore.record || adminSession
   if ((!pb.authStore.isValid && !adminSession) || user?.role !== 'admin') {
-    throw new Error('Admin login is required.')
+    const error = new Error('Admin login is required.')
+    error.code = 'ADMIN_AUTH_REQUIRED'
+    throw error
   }
 }
 
