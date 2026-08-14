@@ -12,6 +12,7 @@ import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/servic
 import GCashPayments from './GCashPayments'
 import { sortTransactionRecords } from '../utils/transactionLogUtils'
 import { localDateKey } from '../utils/localDate'
+import { resolveReceiptCategories, summarizeSalesByProduct, summarizeByCategory } from '../utils/receiptSalesUtils'
 
 const PAGE_SIZE = 10
 const PRESETS_KEY = 'nexa_transaction_log_presets'
@@ -184,39 +185,10 @@ export default function TransactionLogs() {
     return [...names].sort((a, b) => a.localeCompare(b))
   }, [cashiers, receipts])
 
-  const resolvedReceipts = useMemo(() => {
-    const categoryNames = new Map()
-    for (const category of catalogCategories || []) {
-      const name = String(category?.name || category?.id || '').trim()
-      if (!name) continue
-      categoryNames.set(String(category.id || name), name)
-      categoryNames.set(name, name)
-    }
-    const productsById = new Map()
-    const productsByBarcode = new Map()
-    const productsByName = new Map()
-    for (const product of catalogProducts || []) {
-      if (product.id) productsById.set(String(product.id), product)
-      if (product.barcode) productsByBarcode.set(String(product.barcode), product)
-      if (product.name) productsByName.set(String(product.name).toLowerCase(), product)
-    }
-    const categoryForItem = (item) => {
-      const raw = String(item.category || '').trim()
-      if (categoryNames.has(raw)) return categoryNames.get(raw)
-      const product = productsById.get(String(item.productId || ''))
-        || productsByBarcode.get(String(item.barcode || item.matchingUnitBarcode || ''))
-        || productsByName.get(String(item.name || '').toLowerCase())
-      const productCategory = String(product?.category || product?.categoryId || '').trim()
-      if (categoryNames.has(productCategory)) return categoryNames.get(productCategory)
-      if (productCategory && !/^cat[a-z0-9]+$/i.test(productCategory)) return productCategory
-      if (raw && !/^cat[a-z0-9]+$/i.test(raw)) return raw
-      return 'Uncategorized (Legacy)'
-    }
-    return (receipts || []).map((receipt) => ({
-      ...receipt,
-      items: (receipt.items || []).map((item) => ({ ...item, category: categoryForItem(item) })),
-    }))
-  }, [catalogCategories, catalogProducts, receipts])
+  const resolvedReceipts = useMemo(
+    () => resolveReceiptCategories(receipts, catalogCategories, catalogProducts),
+    [catalogCategories, catalogProducts, receipts],
+  )
 
   const { productOptions, categoryOptions } = useMemo(() => {
     const products = new Set()
@@ -280,17 +252,8 @@ export default function TransactionLogs() {
   const visibleReceipts = sortedReceipts.slice(0, visibleCount)
   const activeFilterCount = [query, customerNameFilter, customFrom, customTo, minAmount, maxAmount].filter((value) => String(value).trim()).length
     + [dateRange, cashierName, action, status, productFilter, categoryFilter, paymentFilter].filter((value) => value !== 'all').length
-  const productSummary = useMemo(() => {
-    const summary = new Map()
-    for (const receipt of filteredReceipts) for (const item of receipt.items || []) {
-      const key = `${item.category || 'Uncategorized'}|${item.name || 'Item'}`
-      const current = summary.get(key) || { category: item.category || 'Uncategorized', product: item.name || 'Item', quantity: 0, revenue: 0 }
-      current.quantity += Number(item.quantity) || 0
-      current.revenue += (Number(item.quantity) || 0) * (Number(item.price) || 0)
-      summary.set(key, current)
-    }
-    return [...summary.values()].sort((a, b) => b.revenue - a.revenue)
-  }, [filteredReceipts])
+  const productSummary = useMemo(() => summarizeSalesByProduct(filteredReceipts), [filteredReceipts])
+  const categorySummary = useMemo(() => summarizeByCategory(productSummary), [productSummary])
   const filterChips = [
     query && { label: `Search: ${query}`, clear: () => setQuery('') },
     dateRange !== 'all' && { label: `Date: ${dateRange}`, clear: () => setDateRange('all') },
@@ -475,7 +438,7 @@ export default function TransactionLogs() {
         <div className="card">
           <div className="panel-head"><div><h3>{subTab === 'products' ? 'Product' : 'Category'} Sales Summary</h3><span className="sub">Quantity and revenue from the current transaction filters.</span></div></div>
           <div className="table-wrap"><table className="data"><thead><tr>{subTab === 'products' && <th>Product</th>}<th>Category</th><th>Quantity Sold</th><th>Revenue</th></tr></thead><tbody>
-            {(subTab === 'products' ? productSummary : Object.values(productSummary.reduce((groups, row) => { const key = row.category; groups[key] ||= { category: key, quantity: 0, revenue: 0 }; groups[key].quantity += row.quantity; groups[key].revenue += row.revenue; return groups }, {}))).map((row) => <tr key={`${row.category}-${row.product || ''}`}>{subTab === 'products' && <td>{row.product}</td>}<td>{row.category}</td><td>{row.quantity}</td><td>{peso(row.revenue)}</td></tr>)}
+            {(subTab === 'products' ? productSummary : categorySummary).map((row) => <tr key={`${row.category}-${row.product || ''}`}>{subTab === 'products' && <td>{row.product}</td>}<td>{row.category}</td><td>{row.quantity}</td><td>{peso(row.revenue)}</td></tr>)}
           </tbody></table></div>
         </div>
       ) : (
