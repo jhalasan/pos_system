@@ -1,3 +1,10 @@
+export function safeFilenamePart(value) {
+  return String(value || 'transaction')
+    .replace(/[^A-Za-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
 function csvValue(value) {
   const text = String(value ?? '')
   return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text

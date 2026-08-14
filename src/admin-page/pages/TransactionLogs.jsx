@@ -6,7 +6,7 @@ import Modal from '../components/Modal'
 import { IconArrowSwap, IconBarcode, IconDownload, IconPrint, IconReceipt, IconSearch } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
-import { exportCsv } from '../utils/exportCsv'
+import { exportCsv, safeFilenamePart } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printCompletedReceipt, printReceiptPdf } from '../../cashier-pos/services/receiptPrinter'
 import GCashPayments from './GCashPayments'
@@ -78,13 +78,6 @@ function receiptData(record) {
     items: record.items || [],
     payment: receiptPayment(record),
   }
-}
-
-function safeFilenamePart(value) {
-  return String(value || 'transaction')
-    .replace(/[^A-Za-z0-9_-]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
 }
 
 function itemCountDisplay(receipt) {
