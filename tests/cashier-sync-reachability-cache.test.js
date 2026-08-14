@@ -24,66 +24,90 @@ function fakePb(healthCalls) {
 }
 
 test('consecutive isCloudReachable calls within the cache window only hit health.check once', { concurrency: false }, async () => {
-  await cashierDb.delete()
-  await initializeCashierDb()
-  resetPocketBaseRateLimit()
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true })
+  try {
+    await cashierDb.delete()
+    await initializeCashierDb()
+    resetPocketBaseRateLimit()
 
-  const healthCalls = { count: 0 }
-  const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb: fakePb(healthCalls) })
+    const healthCalls = { count: 0 }
+    const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb: fakePb(healthCalls) })
 
-  const first = await engine.isCloudReachable()
-  const second = await engine.isCloudReachable()
-  const third = await engine.isCloudReachable()
+    const first = await engine.isCloudReachable()
+    const second = await engine.isCloudReachable()
+    const third = await engine.isCloudReachable()
 
-  assert.equal(first, true)
-  assert.equal(second, true)
-  assert.equal(third, true)
-  assert.equal(healthCalls.count, 1, 'a burst of reachability checks must only hit the network once')
+    assert.equal(first, true)
+    assert.equal(second, true)
+    assert.equal(third, true)
+    assert.equal(healthCalls.count, 1, 'a burst of reachability checks must only hit the network once')
 
-  await cashierDb.delete()
+    await cashierDb.delete()
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'navigator', originalDescriptor)
+    }
+  }
 })
 
 test('forceNetworkCheck bypasses the reachability cache', { concurrency: false }, async () => {
-  await cashierDb.delete()
-  await initializeCashierDb()
-  resetPocketBaseRateLimit()
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true })
+  try {
+    await cashierDb.delete()
+    await initializeCashierDb()
+    resetPocketBaseRateLimit()
 
-  const healthCalls = { count: 0 }
-  const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb: fakePb(healthCalls) })
+    const healthCalls = { count: 0 }
+    const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb: fakePb(healthCalls) })
 
-  await engine.isCloudReachable()
-  await engine.isCloudReachable({ forceNetworkCheck: true })
+    await engine.isCloudReachable()
+    await engine.isCloudReachable({ forceNetworkCheck: true })
 
-  assert.equal(healthCalls.count, 2, 'an explicit forced check must always hit the network')
+    assert.equal(healthCalls.count, 2, 'an explicit forced check must always hit the network')
 
-  await cashierDb.delete()
+    await cashierDb.delete()
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'navigator', originalDescriptor)
+    }
+  }
 })
 
 test('a cached failure is also reused instead of hammering health.check while down', { concurrency: false }, async () => {
-  await cashierDb.delete()
-  await initializeCashierDb()
-  resetPocketBaseRateLimit()
+  const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { onLine: true }, configurable: true })
+  try {
+    await cashierDb.delete()
+    await initializeCashierDb()
+    resetPocketBaseRateLimit()
 
-  const healthCalls = { count: 0 }
-  const pb = {
-    autoCancellation() {},
-    health: {
-      async check() {
-        healthCalls.count += 1
-        const err = new Error('fetch failed')
-        throw err
+    const healthCalls = { count: 0 }
+    const pb = {
+      autoCancellation() {},
+      health: {
+        async check() {
+          healthCalls.count += 1
+          const err = new Error('fetch failed')
+          throw err
+        },
       },
-    },
+    }
+    const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+
+    const first = await engine.isCloudReachable()
+    const second = await engine.isCloudReachable()
+
+    assert.equal(first, false)
+    assert.equal(second, false)
+    assert.equal(healthCalls.count, 1, 'a burst of checks while offline must only probe the network once')
+
+    resetPocketBaseRateLimit()
+    await cashierDb.delete()
+  } finally {
+    if (originalDescriptor) {
+      Object.defineProperty(globalThis, 'navigator', originalDescriptor)
+    }
   }
-  const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
-
-  const first = await engine.isCloudReachable()
-  const second = await engine.isCloudReachable()
-
-  assert.equal(first, false)
-  assert.equal(second, false)
-  assert.equal(healthCalls.count, 1, 'a burst of checks while offline must only probe the network once')
-
-  resetPocketBaseRateLimit()
-  await cashierDb.delete()
 })
