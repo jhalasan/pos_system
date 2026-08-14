@@ -17,6 +17,12 @@ const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 2 * 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
+// Mirrors admin-page/services/desktopApi.js's reachabilityCache: a plain
+// health.check() on every sync cycle (every 60s, and again immediately
+// after each completed sale) roughly doubled PocketHost request volume for
+// no benefit — a positive check 15s ago is still true 15s later.
+const REACHABILITY_SUCCESS_TTL_MS = 15_000
+const REACHABILITY_FAILURE_TTL_MS = 8_000
 
 function numberFieldValue(value) {
   const number = Number(value)
@@ -226,6 +232,7 @@ export class CashierSyncEngine extends EventTarget {
     this.syncPromise = null
     this.stopped = true
     this.lastProductRefreshAt = 0
+    this.reachabilityCache = { value: false, expiresAt: 0 }
   }
 
   start() {
@@ -257,12 +264,15 @@ export class CashierSyncEngine extends EventTarget {
   async isCloudReachable({ forceNetworkCheck = false } = {}) {
     if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
     if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
+    if (!forceNetworkCheck && Date.now() < this.reachabilityCache.expiresAt) return this.reachabilityCache.value
 
     try {
       await this.pb.health.check({ requestKey: null })
+      this.reachabilityCache = { value: true, expiresAt: Date.now() + REACHABILITY_SUCCESS_TTL_MS }
       return true
     } catch (error) {
       rememberPocketBaseRateLimit(error)
+      this.reachabilityCache = { value: false, expiresAt: Date.now() + REACHABILITY_FAILURE_TTL_MS }
       return false
     }
   }
