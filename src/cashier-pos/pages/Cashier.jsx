@@ -506,6 +506,8 @@ const Cashier = ({ onLogout, user }) => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  const [historyReprintingId, setHistoryReprintingId] = useState('');
+  const [historyReprintError, setHistoryReprintError] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [showCloudAuth, setShowCloudAuth] = useState(false);
@@ -1936,6 +1938,48 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
+  const handleHistoryReprint = async (sale) => {
+    if (!sale) return;
+    if (!can('receipt_reprint')) {
+      setHistoryReprintError('Your account does not have permission to reprint receipts.');
+      return;
+    }
+    setHistoryReprintError('');
+    setHistoryReprintingId(sale.id || sale.transactionNo);
+    try {
+      const result = await printCompletedReceipt({
+        transactionNo: sale.transactionNo,
+        cashierName: sale.cashierName || user?.name || user?.email || 'Cashier',
+        completedAt: sale.createdAt,
+        items: sale.items || [],
+        payment: {
+          paymentMethod: sale.paymentMethod,
+          totalAmount: sale.totalAmount,
+          subtotalAmount: sale.subtotalAmount || sale.totalAmount,
+          discountPercent: sale.discountPercent,
+          discountAmount: sale.discountAmount,
+          cashAmount: sale.cashAmount,
+          gcashAmount: sale.gcashAmount,
+          splitPayments: sale.splitPayments,
+          change: sale.change,
+          gcashRef: sale.refNumber,
+        },
+      });
+      showNotification(result?.pdfPath
+        ? `Receipt PDF saved to ${result.pdfPath}.`
+        : `Receipt sent to ${result?.printerName || 'the configured printer'}.`);
+      cashierApi.logActivity({
+        cashierId: user?.id,
+        action: 'Receipt Reprint',
+        detail: `Reprinted receipt for transaction ${sale.transactionNo} from Recent Transactions.`,
+      }).catch(() => {});
+    } catch (err) {
+      setHistoryReprintError((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.');
+    } finally {
+      setHistoryReprintingId('');
+    }
+  };
+
   const handleLookupPrintPdf = async () => {
     if (!lookupSale) return;
     try {
@@ -2218,6 +2262,7 @@ const Cashier = ({ onLogout, user }) => {
   const handleOpenHistory = () => {
     setShowHistory(true);
     setHistorySearch('');
+    setHistoryReprintError('');
     loadTransactionHistory();
   };
 
@@ -4604,10 +4649,23 @@ const Cashier = ({ onLogout, user }) => {
                     </div>
                   ))}
                 </div>
+                {sale.status !== 'Voided' && (
+                  <div className={styles['history-actions']}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleHistoryReprint(sale)}
+                      disabled={Boolean(historyReprintingId)}
+                    >
+                      {historyReprintingId === (sale.id || sale.transactionNo) ? 'Printing...' : 'Reprint Receipt'}
+                    </Button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
+        {historyReprintError && <div className={styles['history-empty']}>{historyReprintError}</div>}
       </Modal>
 
       <Modal

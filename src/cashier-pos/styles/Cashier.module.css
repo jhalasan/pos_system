@@ -2494,6 +2494,14 @@
   border-top: 1px solid #edf2f7;
 }
 
+.history-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f7;
+}
+
 .history-lines div {
   display: flex;
   align-items: baseline;
@@ -2697,8 +2705,10 @@
 
 :global(:root.theme-dark) .lookup-item-row,
 :global(:root.theme-dark) .history-lines,
+:global(:root.theme-dark) .history-actions,
 :global(:root[data-theme="dark"]) .lookup-item-row,
-:global(:root[data-theme="dark"]) .history-lines {
+:global(:root[data-theme="dark"]) .history-lines,
+:global(:root[data-theme="dark"]) .history-actions {
   border-color: var(--border);
 }
 
