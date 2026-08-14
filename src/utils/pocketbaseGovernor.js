@@ -14,7 +14,7 @@ const RATE_CEILING = 8
 const BURST = 5 // max tokens in the bucket (bounds concurrency, not just sustained rate)
 
 const ADDITIVE_INCREASE_STEP = 0.25
-const ADDITIVE_INCREASE_WINDOW_MS = 10_000 // clean-period window for AIMD increase & 429-streak reset
+const ADDITIVE_INCREASE_WINDOW_MS = 10_000 // clean-period (no active cooldown) window for AIMD rate increase
 const MULTIPLICATIVE_DECREASE_FACTOR = 0.5
 
 const BASE_COOLDOWN_MS = 20_000 // first 429 after a clean period
@@ -145,12 +145,12 @@ export function createGovernor({ now = Date.now, storage = globalThis.localStora
       state.lastRefillAt = nowMs
     }
 
-    // AIMD additive increase & 429-streak reset both key off the same
-    // "clean period" signal, per the brief's suggestion to keep this simple.
+    // AIMD additive increase: after 10s with no active cooldown, nudge the
+    // rate up. This is purely time-based (per the brief), and deliberately
+    // does NOT reset consecutive429 — see recordSuccess() for why.
     if (nowMs - state.lastCleanCheckAt >= ADDITIVE_INCREASE_WINDOW_MS) {
       if (state.rateLimitedUntil <= nowMs) {
         state.rate = Math.min(RATE_CEILING, state.rate + ADDITIVE_INCREASE_STEP)
-        state.consecutive429 = 0
       }
       state.lastCleanCheckAt = nowMs
     }
@@ -180,6 +180,14 @@ export function createGovernor({ now = Date.now, storage = globalThis.localStora
   function recordSuccess() {
     syncFromStorage()
     refill()
+    // The 429 streak must only reset once a request has actually
+    // succeeded — never merely because a cooldown elapsed and pacing
+    // resumed (refill() runs on every schedule() call, including the very
+    // first retry attempt after a cooldown clears, before its outcome is
+    // known). Resetting there would make consecutive429 re-arm at the 20s
+    // floor on every retry against a real, persistent lockout, instead of
+    // escalating — defeating the point of the escalating cooldown.
+    state.consecutive429 = 0
     touch()
   }
 
@@ -245,8 +253,15 @@ export function createGovernor({ now = Date.now, storage = globalThis.localStora
       await waitForToken()
     } else {
       // interactive: never blocked by pacing — only wait out an active
-      // cooldown, then draw from the bucket below without waiting for a
-      // token (going negative is fine; refill() clamps back up to BURST).
+      // cooldown. It still draws from the bucket below like every other
+      // priority (the shared tail past this if/else), it just never calls
+      // waitForToken() to wait for one. Math.max(0, tokens - 1) floors at
+      // 0 rather than going negative, so a burst of interactive calls past
+      // BURST still fully depletes the bucket (visible to, and correctly
+      // paced by, any write/background call that follows) — it just can't
+      // track exactly how far over-burst the caller went, which is fine
+      // since the bucket being at its floor already produces the longest
+      // wait write/background pacing computes.
       await waitForCooldown()
     }
 

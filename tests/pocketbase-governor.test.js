@@ -62,6 +62,47 @@ test('token bucket: interactive tasks run immediately even with an empty bucket 
   assert.deepEqual(calls, [0, 1, 2, 3, 4, 5, 6], 'all 7 interactive tasks ran, well past the 5-token burst cap')
 })
 
+test('token bucket: a burst of interactive calls still depletes the bucket, which a following write call must then pace against', { concurrency: false }, async () => {
+  // interactive never BLOCKS on an empty bucket, but it must still COUNT
+  // against it — otherwise a burst of interactive traffic would be
+  // invisible to the bucket entirely, defeating BURST's purpose of
+  // bounding instantaneous concurrency (the exact PocketHost failure mode
+  // this governor exists to prevent). This proves the depletion from an
+  // interactive burst is visible to, and correctly paced by, a
+  // subsequent write call.
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const clock = makeClock()
+    const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-interactive-burst-depletes' })
+
+    // 8 concurrent interactive calls against a 5-token burst: all 8 must
+    // still run immediately (never blocked)...
+    const calls = []
+    await Promise.all(Array.from({ length: 8 }, (_, i) => (
+      governor.schedule(async () => { calls.push(i) }, { priority: 'interactive' })
+    )))
+    assert.equal(calls.length, 8, 'every interactive call must have run, none blocked by the empty bucket')
+
+    // ...but the bucket must now be fully depleted (floored at 0, not just
+    // "however much the last call happened to leave"), so a write call
+    // right after must wait the full single-token refill time (500ms at
+    // the starting 2/s rate) rather than running immediately.
+    let ran = false
+    const pending = governor.schedule(async () => { ran = true }, { priority: 'write' })
+    await flushMicrotasks()
+
+    advanceTogether(clock, 499)
+    await Promise.resolve()
+    assert.equal(ran, false, 'the interactive burst must have visibly depleted the bucket for the write call that followed')
+
+    advanceTogether(clock, 1)
+    await pending
+    assert.equal(ran, true)
+  } finally {
+    mock.timers.reset()
+  }
+})
+
 test('token bucket: a write task is paced and waits for a token to refill', { concurrency: false }, async () => {
   mock.timers.enable({ apis: ['setTimeout'] })
   try {
@@ -188,6 +229,50 @@ test('escalating cooldown: doubles per consecutive 429 starting at 20s, capped a
   governor.recordRateLimit(rateLimitError())
   governor.recordRateLimit(rateLimitError())
   assert.equal(governor.remainingMs(), 300_000, 'escalation is capped at the 5-minute ceiling')
+})
+
+test('escalating cooldown: a retry against a persistent lockout keeps escalating, not resetting to 20s once the cooldown merely elapses', { concurrency: false }, async () => {
+  // Realistic flow: 429, wait out the cooldown, retry, 429 again — with NO
+  // recordSuccess() in between (the retry failed too). The consecutive-429
+  // streak must survive the cooldown elapsing on its own; only an actual
+  // successful request may reset it. Regression test for a bug where
+  // refill() (called from every schedule()/isRateLimited()/etc. as soon as
+  // pacing resumed) reset the streak the instant the cooldown cleared,
+  // before the retry's outcome was even known — collapsing the escalating
+  // backoff back to the 20s floor on every retry against a real,
+  // persistent lockout.
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-escalation-persists' })
+
+  governor.recordRateLimit(rateLimitError())
+  assert.equal(governor.remainingMs(), 20_000)
+
+  // Advance well past the cooldown and past the 10s clean-period window,
+  // exactly as would happen while a caller is paced by schedule() waiting
+  // to retry. No recordSuccess() is called — the retry hasn't happened yet.
+  clock.advance(25_000)
+  assert.equal(governor.isRateLimited(), false, 'the first cooldown must have cleared')
+
+  governor.recordRateLimit(rateLimitError())
+  assert.equal(governor.remainingMs(), 40_000, 'the streak must have survived the elapsed cooldown and escalated to 40s, not reset to 20s')
+})
+
+test('escalating cooldown: an actual successful request resets the streak back to the 20s floor', { concurrency: false }, async () => {
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-escalation-success-reset' })
+
+  governor.recordRateLimit(rateLimitError())
+  assert.equal(governor.remainingMs(), 20_000)
+
+  clock.advance(20_000)
+  assert.equal(governor.isRateLimited(), false)
+
+  // This time the retry actually succeeds.
+  governor.recordSuccess()
+  clock.advance(10_000)
+
+  governor.recordRateLimit(rateLimitError())
+  assert.equal(governor.remainingMs(), 20_000, 'a real success in between must reset the streak, so this 429 starts fresh at 20s')
 })
 
 test('an explicit retry-after header overrides the escalating cooldown guess', { concurrency: false }, async () => {
