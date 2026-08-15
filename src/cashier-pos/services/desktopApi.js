@@ -748,6 +748,13 @@ export const desktopCashierApi = {
       }
     }
 
+    // Captures the server's verified record (including the impersonated
+    // session token it mints, see server/index.js's /cashier/auth/barcode)
+    // when the online path below runs, so it can be applied to this
+    // terminal's own PocketBase session afterward -- see the comment further
+    // down for why that matters.
+    let onlineVerifiedRecord = null
+
     if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       let cloudChecked = false
@@ -772,6 +779,7 @@ export const desktopCashierApi = {
         return null
       })
       if (record) {
+        onlineVerifiedRecord = record
         if (record.status === 'inactive') {
           if (account?.id) await cashierDb.quickLoginAccounts.delete(account.id)
           throw new Error('This cashier account is inactive. Ask an administrator to reactivate it before logging in.')
@@ -802,7 +810,29 @@ export const desktopCashierApi = {
     }
 
     const activeRuntime = await runtime()
-    await restoreCashierSyncAuth(activeRuntime, user.id)
+    if (onlineVerifiedRecord?.token) {
+      // The server mints a real PocketBase session (impersonation)
+      // specifically so a barcode-logged-in terminal can authenticate its
+      // own /api/cashier/* calls and background sync -- but this used to be
+      // thrown away, falling through to restoreCashierSyncAuth below, which
+      // only reuses whatever was cached from a *previous* login. For a
+      // cashier who mostly logs in by barcode, that cached token can go
+      // stale enough that PocketBase's own listRule silently filters every
+      // row out of a background sync's product refresh (a 200 with zero
+      // results, not an auth error, since a listRule acts as a per-record
+      // filter) -- surfacing as "the cloud returned zero products" right
+      // after an unrelated action like a void, which forces an immediate
+      // catalog refresh. Apply and persist the fresh token now instead.
+      activeRuntime.pb.authStore.save(onlineVerifiedRecord.token, onlineVerifiedRecord)
+      if (activeRuntime.pb.authStore.isValid) {
+        await cacheCashierSyncAuth(activeRuntime, onlineVerifiedRecord)
+      } else {
+        activeRuntime.pb.authStore.clear()
+        await restoreCashierSyncAuth(activeRuntime, user.id)
+      }
+    } else {
+      await restoreCashierSyncAuth(activeRuntime, user.id)
+    }
     if (activeRuntime.pb.authStore.isValid) void retryPendingCashierSync(activeRuntime)
 
     await createCloudActivityLog({

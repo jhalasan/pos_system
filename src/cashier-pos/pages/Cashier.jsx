@@ -2018,6 +2018,33 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
+  // A voided/refunded completed sale is tracked in two places: the live
+  // `transactions` tabs array (cleared once too many tabs pile up, or once
+  // the shift ends) and `retainedCompletedSales`, a separately persisted
+  // list that keeps the sale counting toward the running Cash Sales figure
+  // even after its tab is gone. Voiding/refunding a sale used to only
+  // update `transactions` -- `retainedCompletedSales` kept the stale
+  // "completed" status forever, so Cash Sales never dropped after a void
+  // (the retained, still-"completed" copy wins getCashSalesAmountFromSources'
+  // de-dup over the correctly updated transactions copy, since retained
+  // sales are checked first). Every void/refund/exchange path must call
+  // this alongside its `setTransactions` update to keep both in sync.
+  const syncRetainedSaleStatus = (saleId, updates) => {
+    if (!saleId) return;
+    setRetainedCompletedSales((current) => {
+      let changed = false;
+      const next = current.map((sale) => {
+        const matches = String(sale?.saleId || sale?.id || '') === String(saleId);
+        if (!matches) return sale;
+        changed = true;
+        return { ...sale, ...updates };
+      });
+      if (!changed) return current;
+      saveRetainedCompletedSales(next, user?.id);
+      return next;
+    });
+  };
+
   const handleLookupApprovalAction = async (override = {}) => {
     if (!lookupSale) return;
     const requiredCapability = lookupMode === 'void' ? 'voids' : lookupMode === 'exchange' ? 'exchanges' : 'refunds';
@@ -2102,6 +2129,20 @@ const Cashier = ({ onLogout, user }) => {
           },
         };
       }));
+
+      syncRetainedSaleStatus(lookupSale.saleId || lookupSale.id, lookupMode === 'void'
+        ? {
+          status: 'voided',
+          rawStatus: 'voided',
+          approvedBy: result.approvedBy,
+          voidedAt: result.voidedAt,
+          voidReason: lookupReason.trim(),
+        }
+        : {
+          status: 'adjusted',
+          rawStatus: 'adjusted',
+          adjustments: result.adjustments || [],
+        });
 
       setLookupSale(lookupMode === 'void'
         ? { ...lookupSale, status: 'Voided', rawStatus: 'voided', voidedAt: result.voidedAt, approvedBy: result.approvedBy }
@@ -2363,6 +2404,14 @@ const Cashier = ({ onLogout, user }) => {
           },
         };
       }));
+
+      syncRetainedSaleStatus(completedVoidTarget.saleId, {
+        status: 'voided',
+        rawStatus: 'voided',
+        approvedBy: result.approvedBy,
+        voidedAt: result.voidedAt,
+        voidReason: completedVoidReason.trim(),
+      });
 
       await loadProducts();
       if (showHistory) await loadTransactionHistory();

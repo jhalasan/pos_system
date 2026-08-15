@@ -154,6 +154,40 @@ the full suite, consistent with how this codebase already handles this class of 
 `npm run test:offline` (222/222) and `npm run test:vercel` (7/7) pass; `npm run build`,
 `npm run build:vercel`, and `npm run build:cashier` all clean.
 
+**Second regression found and fixed (follow-up session): barcode login never actually applied
+the server-issued session token, causing an intermittent "the cloud returned zero products"
+failure.** Reported by the client immediately after voiding a completed sale. Traced the
+connection: voiding a synced sale queues a cloud undo operation and immediately fires a sync tick
+(`CashierSyncEngine.syncNow`, `src/cashier-pos/offline/syncEngine.js`), which specifically forces a
+full product catalog refresh whenever a void/adjustment is queued (`operationNeedsCatalog`) — that
+refresh is what was failing. The sync engine's own pre-check (`this.pb.authStore.isValid`) reported
+the session as valid, ruling out an outright missing token — so PocketBase was very likely silently
+filtering out every row via its `listRule` (a per-record filter, not a hard reject: an
+insufficiently-authenticated request gets a 200 with zero results, not an error) rather than
+genuinely returning no products.
+Root cause: `loginWithBarcode` (`src/cashier-pos/services/desktopApi.js`) calls the S1/S3
+server-mediated verify (`POST /api/cashier/auth/barcode`), which mints and returns a real 12-hour
+PocketBase session token (`usersCollection.impersonate(...)`, `server/index.js`) *specifically so
+the terminal can authenticate its own calls* — but the client discarded it. It only called
+`restoreCashierSyncAuth`, which reuses whatever token was cached from a **previous** login. For a
+cashier who logs in mostly (or only) by barcode, that cached credential can go stale enough that
+`authStore.isValid`'s local expiry check still passes while PocketBase itself no longer honors it
+for `listRule`-gated collections — a client/server disagreement about session validity, not a
+missing token. Confirmed by the client's own report: barcode login, retry/re-login "fixes" it
+(consistent with a stale-credential theory — a retry happens to establish a workable token by
+chance, not because anything was actually corrected), which matches this exactly.
+Fix: `loginWithBarcode` now applies the server's returned token directly to the terminal's
+PocketBase session (`activeRuntime.pb.authStore.save(...)`) and persists it via the same
+`cacheCashierSyncAuth` password login already uses, falling back to `restoreCashierSyncAuth` only
+when no server token was available (e.g., an offline barcode login served from the local cache).
+**Not independently unit-tested** — same `import.meta.env` limitation as the manager-approval-hash
+wiring above (this codebase's established, documented gap for this class of file); verified via
+`esbuild` bundle-check and the full regression suite (no change in pass count, confirming no
+existing behavior broke). `npm run test:offline` (224/224 — 2 more than above, from the unrelated
+cash-sales fix landing alongside this one) and `npm run build:cashier` clean.
+**Ask the client to confirm** after rebuilding the Tauri app: log in by barcode, then void a synced
+sale, and check whether the catalog-refresh warning still appears.
+
 **S2. CRITICAL — Live superuser credentials committed. ⚠️ FILE FIXED (this session); PASSWORD
 ROTATION STILL REQUIRED — action for the client, not something this session could do.**
 Was: `.env.example:3-8` held `POCKETBASE_URL=https://nexasystems.pockethost.io`,
@@ -486,6 +520,24 @@ New `tests/cart-reservation.test.js` (9 cases): multi-tab summation, unit-conver
 voided exclusion, `excludedTransactionId`/`excludedCartItemId` behavior, cross-product isolation,
 tab-name capture for messaging, malformed-input handling. `npm run test:offline` (198/198) and
 `npm run test:vercel` (3/3) pass; `npm run build` clean.
+
+**M8. HIGH — Voiding or refunding a completed sale never updates the running Cash Sales figure.
+✅ FIXED (follow-up session).** Reported by the client: voided a ₱368 sale, Cash Sales kept showing
+₱368.
+Was: a completed sale is tracked in two places in `Cashier.jsx` — the live `transactions` tabs
+array, and a separately persisted `retainedCompletedSales` list that keeps a sale counting toward
+Cash Sales even after its tab closes (`getCashSalesAmountFromSources`,
+`src/cashier-pos/utils/cashSales.js`). Both `handleConfirmCompletedVoid` and
+`handleLookupApprovalAction` (the Receipt Lookup void/refund/exchange flow) only updated
+`transactions` when a sale was voided/adjusted — `retainedCompletedSales` kept the stale
+`status: 'completed'` entry forever. `getCashSalesAmountFromSources`'s de-dup checks
+`retainedSales` before `currentSales`, so the stale "completed" copy there always won over the
+correctly updated "voided" copy, and Cash Sales never dropped.
+Fix: new `syncRetainedSaleStatus(saleId, updates)` helper (`Cashier.jsx`) keeps
+`retainedCompletedSales` in sync with whatever change was just made to `transactions`; wired into
+both void/refund/exchange call sites. New `tests/cash-sales.test.js` cases reproduce the exact
+stale-vs-fresh de-dup conflict and confirm the total correctly drops to zero once both sources
+agree. `npm run test:offline` (224/224) and `npm run build:cashier` clean.
 
 **M6. HIGH — Cash in/out double-taps double-count the drawer. ✅ FIXED (this session).** New
 finding, not in the prior tracker.

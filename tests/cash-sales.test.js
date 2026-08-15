@@ -85,6 +85,36 @@ test('only includes completed sales from the logged-in cashier', () => {
   }), 200);
 });
 
+test('a stale "completed" retained entry masks a correctly-voided current entry for the same sale', () => {
+  // Reported bug: voiding a completed sale in Cashier.jsx used to only
+  // update the live `transactions` tab, never the separately persisted
+  // `retainedCompletedSales` list. Retained sales are checked first in this
+  // function's de-dup, so the stale "completed" copy there won over the
+  // correctly voided copy from `transactions` -- Cash Sales never dropped
+  // after a void. This documents the exact mechanism; the fix (Cashier.jsx's
+  // syncRetainedSaleStatus) keeps both sources in agreement so this stale
+  // vs. fresh conflict can no longer arise in practice.
+  const saleId = 'sale-stale';
+  const staleRetained = { saleId, paymentMethod: 'cash', totalAmount: 368, rawStatus: 'completed' };
+  const freshCurrent = { saleId, paymentMethod: 'cash', totalAmount: 368, rawStatus: 'voided' };
+
+  assert.equal(getCashSalesAmountFromSources({
+    retainedSales: [staleRetained],
+    currentSales: [freshCurrent],
+  }), 368);
+});
+
+test('once the retained entry is also updated to voided, cash sales correctly drops to zero', () => {
+  const saleId = 'sale-fixed';
+  const voidedRetained = { saleId, paymentMethod: 'cash', totalAmount: 368, rawStatus: 'voided' };
+  const voidedCurrent = { saleId, paymentMethod: 'cash', totalAmount: 368, rawStatus: 'voided' };
+
+  assert.equal(getCashSalesAmountFromSources({
+    retainedSales: [voidedRetained],
+    currentSales: [voidedCurrent],
+  }), 0);
+});
+
 test('persists retained completed sales to local storage and restores them for the same cashier', () => {
   const store = new Map();
   const localStorageStub = {
