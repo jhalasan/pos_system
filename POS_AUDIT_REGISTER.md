@@ -73,6 +73,36 @@ and `npm run test:vercel` (3/3) still pass. **Not yet done:** S3 still applies t
 endpoints — `authorize-void` has no rate limit yet, so this fix closes the bulk-read leak but not
 the brute-force vector; that lands with S3.
 
+**Regression discovered and fixed (follow-up session): the server-mediated fix above broke
+desktop barcode login in this client's actual production topology.** The fix assumed a reachable,
+non-Vercel-gated Express server for `POST /api/cashier/auth/barcode` and
+`POST /api/cashier/authorize-void`. This client's desktop (Tauri) app has no such server — per
+`VERCEL_DEPLOYMENT.md`, the Vercel deployment is documented and coded as admin-only
+(`server/index.js`'s `/api/cashier` gate 404s every cashier route whenever `process.env.VERCEL` is
+set, which Vercel sets unconditionally on every deployment), and the desktop app otherwise talks
+directly to PocketBase (PocketHost) for everything else. Email/password login kept working because
+it authenticates against PocketBase directly and never touches the Express API at all; barcode
+login broke because it now depends on a server that this deployment doesn't have running anywhere
+reachable, surfacing as `"Cashier services are not available in the remote admin portal."`
+Reverting the server-mediated verify was not an option — the underlying PocketBase collection
+rules are already tightened to admin-only, so a cashier's own token can no longer read
+`authorization_barcodes`/`users` directly regardless of client code; some server-side verifier is
+required.
+Fix: `server/index.js`'s blanket `/api/cashier` 404 gate now allows exactly three paths through
+even in admin-only mode — `/auth/barcode`, `/authorize-void`, `/quick-login-accounts` — confirmed
+via `grep` to be the *only* `/cashier/*` endpoints the desktop client calls through the Express
+API (`cashierApiRequest` call sites in `src/cashier-pos/services/desktopApi.js`). Every other
+cashier route (ring sales, void, sync, history) remains blocked on Vercel, unchanged — those
+correctly stay desktop-only/offline-first per the documented architecture. This reuses
+infrastructure that's already deployed and always-on (the existing Vercel project); no new
+service, no client rebuild needed beyond redeploying the updated `server/index.js`.
+New assertions added to `tests/admin-vercel-boundary.test.js`: the three allowlisted paths are
+reachable (non-404) on a simulated Vercel deployment, while a non-allowlisted cashier path
+(`/cashier/sales`) still correctly 404s. `npm run test:offline` (203/203) and
+`npm run test:vercel` (6/6) pass; both `npm run build` and `npm run build:vercel` clean.
+**Action required from the client: redeploy the Vercel project** with this change for barcode
+login to work again — the fix is in the code, not yet live until the Vercel deployment is rebuilt.
+
 **S2. CRITICAL — Live superuser credentials committed. ⚠️ FILE FIXED (this session); PASSWORD
 ROTATION STILL REQUIRED — action for the client, not something this session could do.**
 Was: `.env.example:3-8` held `POCKETBASE_URL=https://nexasystems.pockethost.io`,

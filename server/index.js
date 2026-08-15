@@ -868,8 +868,22 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
   res.json({ ok: true, user: safeUser, token })
 }))
 
+// The remote admin portal (Vercel) is documented as admin-only --
+// ring-sale/sync/history/offline cashier operations were never meant to run
+// against it (VERCEL_DEPLOYMENT.md), and stay blocked here. But barcode
+// login and manager-approval verification (S1) must be answered by a server
+// holding its own PocketBase superuser credentials, since a cashier's own
+// PocketBase token can no longer read the authorization_barcodes/users
+// collections directly -- that direct read was exactly the leak S1 closed.
+// In this deployment's actual topology, the desktop cashier app has no
+// other reachable server: it talks to PocketBase directly for everything
+// else, and there is no separately hosted Express instance. So these three
+// specific, already rate-limited (S3), already minimal-response endpoints
+// stay reachable here even in admin-only mode -- everything else under
+// /cashier/* remains blocked, unchanged.
+const cashierVercelAllowlist = new Set(['/auth/barcode', '/authorize-void', '/quick-login-accounts'])
 app.use('/api/cashier', (req, res, next) => {
-  if (!isVercelAdminPortal) {
+  if (!isVercelAdminPortal || cashierVercelAllowlist.has(req.path)) {
     next()
     return
   }
