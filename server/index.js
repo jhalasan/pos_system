@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleTotals.js'
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
+import { accountDeletionError } from '../src/utils/accountDeletionGuard.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -1857,8 +1858,38 @@ app.get('/api/cashier/quick-login-accounts', asyncRoute(async (_req, res) => {
 }))
 
 app.delete('/api/cashiers/:id', asyncRoute(async (req, res) => {
-  await (await pbCollection('users')).delete(req.params.id)
-  await createLog({ action: 'Cashier', detail: `Removed cashier ${req.params.id}` })
+  const targetId = req.params.id
+  // S7: this endpoint had no guard at all -- it would happily delete the
+  // caller's own account, or the last remaining admin, locking everyone out
+  // of the admin area with no recovery path short of direct PocketBase
+  // access. accountDeletionError is shared with the Tauri app's own local
+  // deleteCashier so both enforce the identical rule.
+  const selfDeleteError = accountDeletionError({ targetId, callerId: req.adminUser?.id })
+  if (selfDeleteError) return res.status(400).json({ error: selfDeleteError })
+
+  const users = await pbCollection('users')
+  const target = await users.getOne(targetId).catch((error) => {
+    if (error?.status === 404) return null
+    throw error
+  })
+  if (!target) return res.status(404).json({ error: 'Account not found.' })
+
+  const otherAdmins = target.role === 'admin'
+    ? await users.getList(1, 1, {
+      filter: pb.filter('role = "admin" && id != {:id}', { id: targetId }),
+      fields: 'id',
+    })
+    : null
+  const deletionError = accountDeletionError({
+    targetId,
+    callerId: req.adminUser?.id,
+    targetRole: target.role,
+    otherAdminCount: otherAdmins?.totalItems,
+  })
+  if (deletionError) return res.status(400).json({ error: deletionError })
+
+  await users.delete(targetId)
+  await createLog({ action: 'Cashier', detail: `Removed ${target.role === 'admin' ? 'admin' : 'cashier'} "${target.email || targetId}"` })
   res.status(204).end()
 }))
 

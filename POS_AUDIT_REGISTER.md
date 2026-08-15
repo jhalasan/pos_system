@@ -349,8 +349,27 @@ supplied never falls back to the literal string or the env var (tested by tempor
 `DEFAULT_CASHIER_PASSWORD` and confirming it's still ignored), and a real supplied password still
 passes through correctly. `npm run test:offline` (239/239) and `npm run test:vercel` (7/7) pass.
 
-**S7. MEDIUM** — `DELETE /api/cashiers/:id` (`server/index.js:1660`) has no target-role,
-self-delete, or last-admin guard.
+**S7. MEDIUM — No self-delete or last-admin guard on account deletion. ✅ FIXED (follow-up
+session).**
+Was: `DELETE /api/cashiers/:id` (`server/index.js`) went straight to
+`pbCollection('users').delete(id)` with no checks at all — it would delete the caller's own
+account, or the last remaining admin account, with nothing to stop it and no recovery path short
+of direct PocketBase access. The Tauri app's own local `deleteCashier`
+(`src/admin-page/services/desktopApi.js:2629`) is a completely separate code path that talks to
+PocketBase directly and had the identical gap.
+Fix: extracted the decision logic into a new pure, shared helper,
+`src/utils/accountDeletionGuard.js`'s `accountDeletionError({ targetId, callerId, targetRole,
+otherAdminCount })`, so both call sites enforce the identical rule instead of two hand-written
+copies that could drift apart. Wired into both: the Express route now checks self-delete before
+ever touching PocketBase, then fetches the target's role and (only if it's an admin) the count of
+other admins, before allowing the delete. The Tauri app does the same against the live cloud when
+reachable; when offline, deleting a regular cashier is unaffected (unchanged from before), but
+deleting an admin account specifically is blocked with a clear message asking to reconnect first —
+the last-admin count can't be verified reliably from a single terminal's local cache. New
+`tests/account-deletion-guard.test.js` (6 cases): self-delete blocked, last-admin blocked, deleting
+an admin allowed when others remain, deleting a regular cashier always allowed, self-delete takes
+priority even over the last-admin case, and a missing caller id doesn't crash or false-block. `npm
+run test:offline` (245/245) and `npm run test:vercel` (7/7) pass.
 
 **S8. MEDIUM** — CORS accepts any `*.ngrok-free.dev` origin with `credentials: true` whenever
 `NODE_ENV !== 'production'`, which the `npm run host` deploy path never sets

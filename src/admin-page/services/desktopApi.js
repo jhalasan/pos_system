@@ -29,6 +29,7 @@ import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTotals'
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
+import { accountDeletionError } from '../../utils/accountDeletionGuard'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -2628,8 +2629,25 @@ export const desktopAdminApi = {
   },
   async deleteCashier(id) {
     await startAdminRuntime()
+    // S7: this had no guard at all -- it would happily delete the caller's
+    // own account, or the last remaining admin, locking everyone out of the
+    // admin area with no recovery path short of direct PocketBase access.
+    // accountDeletionError is shared with the Express route's identical
+    // check so the two don't drift apart over time.
+    const currentUserId = pb.authStore.record?.id || adminSession?.id
+    const selfDeleteError = accountDeletionError({ targetId: id, callerId: currentUserId })
+    if (selfDeleteError) throw new Error(selfDeleteError)
+
     if (!(await isCloudReachable())) {
       const existing = await adminDb.users.get(id)
+      if (existing?.role === 'admin') {
+        // The last-admin count can only be verified authoritatively against
+        // the cloud -- this terminal's local cache could be stale or
+        // incomplete. Deleting a regular cashier offline is unaffected;
+        // only the rare, high-consequence "delete an admin" case requires
+        // connectivity.
+        throw new Error('Deleting an admin account requires an internet connection to verify it is not the last one.')
+      }
       await adminDb.transaction('rw', adminDb.users, adminDb.pendingOps, async () => {
         if (existing) await adminDb.users.put({ ...existing, deleted: true, pendingSync: true })
         await queueOperation('deleteStaff', id, {})
@@ -2637,6 +2655,26 @@ export const desktopAdminApi = {
       await recordActivity('Cashier', 'Deleted cashier account offline.')
       return null
     }
+
+    const target = await pb.collection('users').getOne(id, { requestKey: null }).catch((error) => {
+      if (Number(error?.status || error?.response?.status) === 404) return null
+      throw error
+    })
+    const otherAdmins = target?.role === 'admin'
+      ? await pb.collection('users').getList(1, 1, {
+        filter: pb.filter('role = "admin" && id != {:id}', { id }),
+        fields: 'id',
+        requestKey: null,
+      })
+      : null
+    const deletionError = accountDeletionError({
+      targetId: id,
+      callerId: currentUserId,
+      targetRole: target?.role,
+      otherAdminCount: otherAdmins?.totalItems,
+    })
+    if (deletionError) throw new Error(deletionError)
+
     await pb.collection('users').delete(id, { requestKey: null }).catch((error) => {
       // Another terminal may have removed this account after this screen loaded.
       // A missing cloud record means the requested end state is already reached.
