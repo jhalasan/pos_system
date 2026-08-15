@@ -1435,15 +1435,31 @@ app.patch('/api/products/:id', upload.single('product_img'), asyncRoute(async (r
 }))
 
 app.delete('/api/products/:id', asyncRoute(async (req, res) => {
+  let archivedInstead = false
   try {
     await (await pbCollection('products')).delete(req.params.id)
   } catch (error) {
     const message = error?.message || ''
     const isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
     if (!isRelationConstraint && error?.status !== 404) throw error
+    // A product with sale/stock history can't be hard-deleted -- PocketBase
+    // rejects it to protect referential integrity. Falling through here
+    // used to leave the cloud record fully intact while only pretending to
+    // the caller that it was gone, so it would silently reappear on the
+    // next full catalog pull. Archive it instead: same "gone from active
+    // views" outcome the caller wants, but durable on the record itself.
+    if (isRelationConstraint) {
+      await (await pbCollection('products')).update(req.params.id, { lifecycle_status: 'archived' }).catch(() => {})
+      archivedInstead = true
+    }
   }
 
-  await createLog({ action: 'Product', detail: `Deleted product ${req.params.id}` })
+  await createLog({
+    action: 'Product',
+    detail: archivedInstead
+      ? `Archived product ${req.params.id} (has sale/stock history, could not be permanently deleted)`
+      : `Deleted product ${req.params.id}`,
+  })
   res.status(204).end()
 }))
 

@@ -579,6 +579,33 @@ proceeding to log a success. No component test harness exists in this repo for `
 (verified by bundle-check + full offline/vercel suites, which don't regress). `npm run
 test:offline` (126/126) and `npm run test:vercel` (3/3) pass.
 
+**M9. HIGH — Deleting a product with sale/stock history silently fails cloud-side and the product
+reappears. ✅ FIXED (this session).** New finding, not in the prior tracker or register — surfaced
+by the client noticing products they'd deleted coming back after "sometime, or the next day."
+Was: any product that has ever been sold or had a stock movement is referenced by PocketBase
+relation fields (`sale_items.product_id`, `stock_movements.product_id`), so a hard
+`products.delete()` against it is rejected with a relation-constraint error — true for essentially
+every real, in-use product. Both delete paths (`src/admin-page/offline/syncEngine.js`'s
+`deleteProduct` op handler for the Tauri app, and `server/index.js`'s `DELETE /api/products/:id`
+for the Vercel web admin) caught that specific error and treated it as success: the product was
+marked deleted only in the *local* terminal's own cache (`adminDb.products`), while the cloud
+record was left fully live and untouched. The very next full catalog pull that didn't carry that
+local tombstone — a different terminal, a reinstall, a cleared cache, or simply the passage of
+time — re-fetched the still-live cloud record and the product reappeared, exactly as reported.
+Fix: on a relation-constraint failure, both paths now fall back to setting the cloud record's
+`lifecycle_status: 'archived'` instead of silently no-opping. This reuses the existing Archive
+feature already wired everywhere in the app (cashier catalog filters, product listings, low-stock
+reports all already respect `lifecycleStatus !== 'active'`) rather than inventing a new mechanism
+— the outcome the admin wants ("this product is gone from active use") is now durable on the
+record itself, not a fragile per-device local flag. A genuine hard delete (a product with no
+sale/stock history at all) is unaffected and still removes the record outright. New
+`tests/product-delete-relation-constraint.test.js` (2 cases): a relation-constraint failure
+archives the cloud record and clears the pending op rather than leaving it queued forever; a
+product with nothing referencing it still gets a real hard delete. `npm run test:offline`
+(235/235) and `npm run test:vercel` (7/7) pass. Verified against a genuinely clean `npm ci`
+checkout as well as the local sandbox, since this session's CI run separately surfaced that the
+local sandbox's `node_modules` had drifted enough to mask real lint failures.
+
 ---
 
 ## T — Sync / request-volume

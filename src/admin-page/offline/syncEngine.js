@@ -680,24 +680,46 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     if (op.type === 'deleteProduct') {
+      let isRelationConstraint = false
       try {
         await this.pb.collection('products').delete(op.productId, { requestKey: op.id })
       } catch (error) {
         const message = error?.message || ''
-        const isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
+        isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
         if (error?.status !== 404 && !isRelationConstraint) throw error
       }
 
-      const existing = await adminDb.products.get(op.productId).catch(() => null)
-      if (existing) {
-        await adminDb.products.put({
-          ...existing,
-          deleted: true,
-          pendingSync: false,
-          updated: new Date().toISOString(),
-        })
+      if (isRelationConstraint) {
+        // A product with sale/stock history can't be hard-deleted --
+        // PocketBase rejects it to protect referential integrity. Marking
+        // it deleted only in this terminal's local cache used to leave the
+        // cloud record fully live, so it would silently reappear the next
+        // time any device (or this one, after a cache reset) pulled a
+        // fresh catalog. Archive it on the cloud record instead -- durable,
+        // and already respected everywhere (cashier catalog filters,
+        // product listings) via lifecycle_status.
+        const archived = await this.pb.collection('products').update(
+          op.productId,
+          { lifecycle_status: 'archived' },
+          { expand: 'category', requestKey: op.id },
+        ).catch(() => null)
+        if (archived) {
+          await replaceLocalProductWithCloud(op.productId, archived, this.pb)
+        } else {
+          const existing = await adminDb.products.get(op.productId).catch(() => null)
+          if (existing) {
+            await adminDb.products.put({ ...existing, deleted: true, pendingSync: false, updated: new Date().toISOString() })
+          } else {
+            await adminDb.products.delete(op.productId).catch(() => {})
+          }
+        }
       } else {
-        await adminDb.products.delete(op.productId).catch(() => {})
+        const existing = await adminDb.products.get(op.productId).catch(() => null)
+        if (existing) {
+          await adminDb.products.put({ ...existing, deleted: true, pendingSync: false, updated: new Date().toISOString() })
+        } else {
+          await adminDb.products.delete(op.productId).catch(() => {})
+        }
       }
       await adminDb.pendingOps.delete(op.id)
       return
