@@ -73,12 +73,25 @@ and `npm run test:vercel` (3/3) still pass. **Not yet done:** S3 still applies t
 endpoints — `authorize-void` has no rate limit yet, so this fix closes the bulk-read leak but not
 the brute-force vector; that lands with S3.
 
-**S2. CRITICAL — Live superuser credentials committed.**
-`.env.example:3-8` holds `POCKETBASE_URL=https://nexasystems.pockethost.io`,
+**S2. CRITICAL — Live superuser credentials committed. ⚠️ FILE FIXED (this session); PASSWORD
+ROTATION STILL REQUIRED — action for the client, not something this session could do.**
+Was: `.env.example:3-8` held `POCKETBASE_URL=https://nexasystems.pockethost.io`,
 `POCKETBASE_SUPERUSER_EMAIL=admin@email.com`, `POCKETBASE_SUPERUSER_PASSWORD=admin123`,
-`DEFAULT_CASHIER_PASSWORD=cashier123` — byte-identical to the working `.env`, so these are real
+`DEFAULT_CASHIER_PASSWORD=cashier123` — byte-identical to the working `.env`, so these were real
 values, not placeholders. `.env` itself is correctly gitignored and was never committed;
-`.env.example` is tracked and these values are in git history.
+`.env.example` was tracked and these values are in git history already.
+Fix: `.env.example` now holds placeholders only (`replace-with-a-secret` / a generic
+`your-pocketbase-host.pockethost.io`). **This does not remove the real values from git
+history** — anyone with a clone still has `admin@email.com` / `admin123` from an old commit.
+**Required, not yet done (needs the client's own PocketHost dashboard access):**
+1. Rotate the PocketBase superuser password immediately (PocketHost dashboard → the
+   `nexasystems` project → superuser account) and update the real `.env` (untracked, safe) with
+   the new value.
+2. Rotate `DEFAULT_CASHIER_PASSWORD` similarly — any staff account created without an explicit
+   password used this value.
+3. Decide whether to rewrite git history to purge the old commit(s) (`git filter-repo` or BFG) —
+   optional once rotated, since the exposed password will no longer work, but the URL + old
+   credential pattern stays visible in history either way unless rewritten.
 
 **S3. HIGH — All `/api/cashier/*` routes are unauthenticated.**
 `server/index.js:837-841` short-circuits the auth middleware for any path starting `/cashier/`.
