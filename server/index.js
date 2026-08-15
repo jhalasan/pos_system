@@ -7,6 +7,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
+import { netSaleAmount } from '../src/utils/saleTotals.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -256,7 +257,7 @@ async function getSalesByCashier() {
   for (const sale of sales) {
     const cashierId = Array.isArray(sale.cashier_id) ? sale.cashier_id[0] : sale.cashier_id
     if (!cashierId) continue
-    totals.set(cashierId, (totals.get(cashierId) || 0) + (Number(sale.total_amount) || 0))
+    totals.set(cashierId, (totals.get(cashierId) || 0) + netSaleAmount(sale))
   }
 
   return totals
@@ -663,13 +664,68 @@ function resolveSaleItemProduct(item, lookup) {
     || null
 }
 
-function buildSalesMetrics(products, sales, saleItems, now = new Date()) {
+// M1: sale_adjustments.items carries the same {productId, quantity, ...}
+// shape queued locally by the cashier terminal (quantity is selling units,
+// the same unit as sale_items.quantity_sold). Refunds/exchanges net out of
+// both revenue (sales.refunded_amount, read via netSaleAmount) and
+// units-sold/FSN analytics (this) -- a locked-in decision, see
+// POS_AUDIT_REGISTER.md M1. Netting happens at the (sale, product) level,
+// not per cart line: FSN/topProducts metrics are already aggregated per
+// product, so there is nothing to gain from attributing a refund to one
+// specific line over another of the same product in the same sale.
+function refundedUnitsBySaleAndProduct(adjustments = []) {
+  const map = new Map()
+  for (const adjustment of adjustments) {
+    const saleId = productRelationId(adjustment.sale_id)
+    if (!saleId) continue
+    const items = Array.isArray(adjustment.items) ? adjustment.items : []
+    for (const item of items) {
+      const productId = String(item.productId || item.id || '')
+      if (!productId) continue
+      const key = `${saleId}:${productId}`
+      map.set(key, (map.get(key) || 0) + (Number(item.quantity) || 0))
+    }
+  }
+  return map
+}
+
+// Groups raw (unnetted) sale_items by (saleId, productId), carrying enough
+// metadata (display name/category, most recent sale date) for downstream
+// consumers (dashboard's per-product breakdown, FSN's per-product metrics)
+// without duplicating the grouping loop in both places.
+function saleItemsBySaleAndProduct(saleItems, completedSaleIds, salesById, productLookup) {
+  const grouped = new Map()
+  for (const item of saleItems) {
+    const saleId = productRelationId(item.sale_id)
+    if (!completedSaleIds.has(saleId)) continue
+    const sale = salesById.get(saleId)
+    if (!sale) continue
+    const product = resolveSaleItemProduct(item, productLookup)
+    const productId = product?.id || productRelationId(item.product_id)
+    if (!productId) continue
+
+    const key = `${saleId}:${productId}`
+    const existing = grouped.get(key) || {
+      productId,
+      product,
+      soldAt: saleDate(sale),
+      quantity: 0,
+    }
+    existing.quantity += Number(item.quantity_sold) || 0
+    grouped.set(key, existing)
+  }
+  return grouped
+}
+
+function buildSalesMetrics(products, sales, saleItems, adjustments = [], now = new Date()) {
   const salesById = new Map(sales.map((sale) => [sale.id, sale]))
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
   const ninetyDaysAgo = new Date(now)
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
   const productLookup = buildProductLookup(products)
+  const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
+  const grouped = saleItemsBySaleAndProduct(saleItems, completedSaleIds, salesById, productLookup)
 
   const metricsByProduct = new Map(products.map((product) => [product.id, {
     units90: 0,
@@ -677,22 +733,12 @@ function buildSalesMetrics(products, sales, saleItems, now = new Date()) {
     lastSoldAt: null,
   }]))
 
-  for (const item of saleItems) {
-    const saleId = productRelationId(item.sale_id)
-    if (!completedSaleIds.has(saleId)) continue
-    const sale = salesById.get(saleId)
-    if (!sale) continue
-
-    const soldAt = saleDate(sale)
-    const product = resolveSaleItemProduct(item, productLookup)
-    const productId = product?.id || productRelationId(item.product_id)
-    if (!productId) continue
-
+  for (const [key, { productId, soldAt, quantity }] of grouped) {
+    const netQuantity = Math.max(0, quantity - (refundedUnits.get(key) || 0))
     const metric = metricsByProduct.get(productId) || { units90: 0, totalUnits: 0, lastSoldAt: null }
-    const quantity = Number(item.quantity_sold) || 0
-    metric.totalUnits += quantity
-    if (soldAt >= ninetyDaysAgo) metric.units90 += quantity
-    if (!metric.lastSoldAt || soldAt > metric.lastSoldAt) metric.lastSoldAt = soldAt
+    metric.totalUnits += netQuantity
+    if (soldAt >= ninetyDaysAgo) metric.units90 += netQuantity
+    if (netQuantity > 0 && (!metric.lastSoldAt || soldAt > metric.lastSoldAt)) metric.lastSoldAt = soldAt
     metricsByProduct.set(productId, metric)
   }
 
@@ -1430,7 +1476,11 @@ app.get('/api/inventory/fsn', asyncRoute(async (_req, res) => {
   const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
   const sales = await listRecords('sales', '?filter=status!="voided"&perPage=500')
   const saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
-  const metrics = buildSalesMetrics(products, sales, saleItems, now)
+  // sale_adjustments may not exist on an un-migrated PocketBase instance
+  // (M1's schema migration is additive and applied separately) -- fall back
+  // to no netting rather than failing the whole report.
+  const adjustments = await listRecords('sale_adjustments', '?perPage=500').catch(() => [])
+  const metrics = buildSalesMetrics(products, sales, saleItems, adjustments, now)
   const classified = products.map((product) => classifyFsnProduct(product, metrics.get(product.id), now))
   res.json(classified)
 }))
@@ -1776,6 +1826,10 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
   let sales = await listRecords('sales', '?perPage=500')
   let saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
+  // sale_adjustments may not exist on an un-migrated PocketBase instance
+  // (M1's schema migration is additive and applied separately) -- fall back
+  // to no netting rather than failing the whole dashboard.
+  let adjustments = await listRecords('sale_adjustments', '?perPage=500').catch(() => [])
   const source = String(req.query.source || 'all')
   const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : null
   const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999`) : null
@@ -1783,6 +1837,8 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     && (!from || saleDate(sale) >= from) && (!to || saleDate(sale) <= to))
   const filteredSaleIds = new Set(sales.map((sale) => sale.id))
   saleItems = saleItems.filter((item) => filteredSaleIds.has(Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id))
+  adjustments = adjustments.filter((adjustment) => filteredSaleIds.has(productRelationId(adjustment.sale_id)))
+  const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
   const now = new Date()
   const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
@@ -1794,25 +1850,24 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const dailySales = completedSales
     .filter((sale) => new Date(sale.created_at || sale.created) >= todayStart)
-    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const yesterdaySales = completedSales
     .filter((sale) => {
       const created = saleDate(sale)
       return created >= yesterdayStart && created < todayStart
     })
-    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const monthlySales = completedSales
     .filter((sale) => new Date(sale.created_at || sale.created) >= monthStart)
-    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const lastMonthSales = completedSales
     .filter((sale) => {
       const created = saleDate(sale)
       return created >= lastMonthStart && created < monthStart
     })
-    .reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
-  const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
+  const totalRevenue = completedSales.reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
-  const selectedUnitsSold = saleItems.reduce((sum, item) => sum + (Number(item.quantity_sold) || 0), 0)
 
   const criticalStockProducts = products
     .filter(isCriticalStock)
@@ -1821,21 +1876,37 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     .slice(0, 5)
     .map((product) => ({ name: product.name, left: product.qty }))
 
+  // Net units per (sale, product) before rolling up into the per-product
+  // breakdown, rather than summing raw quantity_sold -- see M1 in
+  // POS_AUDIT_REGISTER.md: refunds net out of units-sold/FSN analytics, not
+  // just revenue.
   const productsById = new Map(products.map((product) => [product.id, product]))
-  const productSales = new Map()
+  const rawUnitsBySaleProduct = new Map()
   for (const item of saleItems) {
+    const saleId = Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id
     const productId = Array.isArray(item.product_id) ? item.product_id[0] : item.product_id
     if (!productId) continue
     const expandedProduct = Array.isArray(item.expand?.product_id)
       ? item.expand.product_id[0]
       : item.expand?.product_id
-    const current = productSales.get(productId) || {
-      id: productId,
+    const key = `${saleId}:${productId}`
+    const existing = rawUnitsBySaleProduct.get(key) || {
+      productId,
       name: expandedProduct?.name || productsById.get(productId)?.name || productId,
       category: productsById.get(productId)?.category || expandedProduct?.category || '',
-      units: 0,
+      quantity: 0,
     }
-    current.units += Number(item.quantity_sold) || 0
+    existing.quantity += Number(item.quantity_sold) || 0
+    rawUnitsBySaleProduct.set(key, existing)
+  }
+
+  const productSales = new Map()
+  let selectedUnitsSold = 0
+  for (const [key, { productId, name, category, quantity }] of rawUnitsBySaleProduct) {
+    const netQuantity = Math.max(0, quantity - (refundedUnits.get(key) || 0))
+    selectedUnitsSold += netQuantity
+    const current = productSales.get(productId) || { id: productId, name, category, units: 0 }
+    current.units += netQuantity
     productSales.set(productId, current)
   }
 
@@ -1844,7 +1915,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     .sort((a, b) => b.units - a.units)
     .slice(0, 5)
   const paymentTotals = completedSales.reduce((totals, sale) => {
-    const amount = Number(sale.total_amount) || 0
+    const amount = netSaleAmount(sale)
     if (String(sale.payment_method || 'cash').toLowerCase() === 'gcash') totals.gcash += amount
     else totals.cash += amount
     return totals
@@ -1864,7 +1935,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   for (const sale of completedSales) {
     const created = saleDate(sale)
     if (created < todayStart) continue
-    hourlySales[created.getHours()].value += Number(sale.total_amount) || 0
+    hourlySales[created.getHours()].value += netSaleAmount(sale)
   }
   const monthlyTrend = lastMonths(8, now)
   const dailyTrend = lastDays(7, now)
@@ -1876,7 +1947,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const yearlyTrendByKey = new Map(yearlyTrend.map((item) => [item.key, item]))
   for (const sale of completedSales) {
     const created = saleDate(sale)
-    const amount = Number(sale.total_amount) || 0
+    const amount = netSaleAmount(sale)
     const day = dailyTrendByKey.get(dateKey(created))
     if (day) day.value += amount
     const week = weeklyTrendByKey.get(weekKey(created))
@@ -1922,7 +1993,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     analyticsMeta: { source, from: req.query.from || '', to: req.query.to || '', salesCount: completedSales.length },
     inventoryHealth,
     paymentBreakdown: [{ label: 'Cash', value: paymentTotals.cash, color: '#16a34a' }, { label: 'GCash', value: paymentTotals.gcash, color: '#2563eb' }],
-    recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({ id: sale.id, transactionNo: sale.transaction_no || sale.id, amount: Number(sale.total_amount) || 0, paymentMethod: sale.payment_method || 'cash', createdAt: saleDate(sale).toISOString() })),
+    recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({ id: sale.id, transactionNo: sale.transaction_no || sale.id, amount: netSaleAmount(sale), paymentMethod: sale.payment_method || 'cash', createdAt: saleDate(sale).toISOString() })),
     topCategories: [...topCategoryMap].map(([name, units]) => ({ name, units })).sort((a, b) => b.units - a.units).slice(0, 5),
     dataQuality: {
       generatedBarcodes: products.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
@@ -2087,7 +2158,7 @@ app.use((error, _req, res, next) => {
   })
 })
 
-export { app }
+export { app, buildSalesMetrics, refundedUnitsBySaleAndProduct }
 
 if (!process.env.VERCEL) {
   const listeningServer = app.listen(PORT, () => {

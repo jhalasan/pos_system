@@ -190,19 +190,32 @@ Done:
   vs camelCase, missing items array) and `tests/sale-adjustment-cloud-sync.test.js` (3 cases — new
   refund creates the record and increments additively; a retry of the same `adjustment_id` does
   not double-count; a second different refund adds to, not replaces, the running total).
-**Not done — the actual gap remaining:** wiring `netSaleAmount`/`netSaleUnits` into the admin
-dashboard and FSN report builders so they actually read the new fields. Investigated and
-deliberately deferred rather than rushed: `server/index.js`'s dashboard stats endpoint
-(`buildDashboardMetrics`-equivalent, roughly lines 1794-1920) sums `sale.total_amount` directly
-across ~10 separate call sites (daily/monthly/hourly/hourly-trend/payment-method breakdowns), and
-`buildSalesMetrics` (~666-700, powers `/api/inventory/fsn`) sums `sale_items.quantity_sold`
-per-product with no per-item refund awareness at all — correct units netting there needs to join
-`sale_adjustments.items` by `(sale_id, product_id)`, not just subtract a sale-level total. Doing
-only part of that ~15-site sweep would leave the dashboard's own KPI cards on inconsistent
-accounting bases (some netted, some not), which is worse than leaving all of them consistently
-un-netted for now. This is real, scoped, follow-up work — not something to retrofit at the tail of
-an already large session against a live business's revenue numbers without dedicated review.
-`npm run test:offline` (143/143) and `npm run test:vercel` (3/3) pass.
+**✅ Now fully FIXED (follow-up session).** `netSaleAmount` is wired into every aggregate revenue
+site in `server/index.js`: `/api/dashboard`'s daily/yesterday/monthly/last-month/total revenue,
+payment-method breakdown, hourly series, the daily/weekly/monthly/yearly trend series, and
+`recentTransactions`; plus `getSalesByCashier` (the per-cashier sales KPI shown on staff
+management). Two call sites were deliberately left reading raw `sale.total_amount` — `
+receiptRecordFromSale` and `gcashPaymentFromSale` — because those represent a specific historical
+transaction record (a receipt reprint, a payment-ledger line), not an aggregate report; showing a
+netted figure there would misrepresent what was actually charged at time of sale. The refund/void
+status is already visible on those records separately (`status: 'Adjusted'`).
+Units-sold/FSN netting required more than swapping in `netSaleUnits` (which nets at the whole-sale
+level): `buildSalesMetrics` (`server/index.js`) and the dashboard's per-product breakdown both
+aggregate `sale_items.quantity_sold` per **product**, so a sale-level refunded-units figure can't
+be attributed to the right product when a sale has multiple line items. Fixed by joining
+`sale_adjustments.items` (which carries the same `{productId, quantity}` shape queued locally at
+refund time) against `sale_items` at the `(sale_id, product_id)` grouping level — new
+`refundedUnitsBySaleAndProduct()` and `saleItemsBySaleAndProduct()` helpers (`server/index.js`),
+used by both `buildSalesMetrics` (now takes an `adjustments` parameter) and `/api/dashboard`'s
+per-product unit breakdown (`topProducts`, `selectedUnitsSold`, `topCategories`). A sale fully
+refunded no longer counts toward a product's `lastSoldAt` for FSN classification. Both routes
+fetch `sale_adjustments` with `.catch(() => [])` so an un-migrated PocketBase instance degrades to
+un-netted figures instead of failing the whole dashboard/FSN report. New
+`tests/dashboard-refund-netting.test.js` (8 cases): sum-by-key correctness, malformed-entry
+handling, legacy row unchanged, partial refund nets correctly, over-refund clamps at zero (never
+negative), a fully refunded sale drops out of `lastSoldAt`, refunds don't cross-contaminate other
+products or other sales of the same product, voided sales stay excluded regardless of refund data.
+`npm run test:offline` (189/189) and `npm run test:vercel` (3/3) pass; `npm run build` clean.
 
 **M2. HIGH — Refund restock under-restocks every multi-unit product. ✅ FIXED (this session,
 together with M3).**
@@ -470,18 +483,19 @@ remaining piece spelled out inline, not silently dropped), or explicitly called 
 exact boundary of what landed.
 
 **Still open, real work:**
-- **S2/M1/T3**: two PocketBase schema migrations are written and reviewed but **not yet run
-  against production** — `scripts/add-refund-reporting-schema.mjs` and
-  `scripts/add-sale-item-line-id.mjs` (`npm run pb:migrate:refund-schema` and `npm run
-  pb:migrate:sale-item-line-id`). Also S2: the exposed PocketBase superuser password and
-  `DEFAULT_CASHIER_PASSWORD` still need rotating via the PocketHost dashboard — this requires the
-  client's own account access.
+- **S2/M1/T3 — ✅ DONE (client, post-session).** Both schema migrations
+  (`scripts/add-refund-reporting-schema.mjs`, `scripts/add-sale-item-line-id.mjs`) have been run
+  against production and verified present (`sales.refunded_amount/refunded_units/refunded_at`,
+  `sale_adjustments` collection, `sale_items.line_id` all confirmed via a idempotent re-run showing
+  "already exists" for every field/collection). The PocketBase superuser password and
+  `DEFAULT_CASHIER_PASSWORD` have also been rotated via the PocketHost dashboard. S2's remaining
+  open piece is only the optional git-history rewrite (item 3 in S2 above), which was always framed
+  as optional.
 - **S4, S6, S7, S8** (support-relay hardening, default-password policy, delete guard, CORS
   tightening) — real findings, never in scope for this pass (which targeted the
   approval-barcode/credential/auth-bypass/privilege-escalation cluster specifically).
-- **M1**: schema and cloud write are done; wiring `netSaleAmount`/`netSaleUnits` into the actual
-  admin dashboard/FSN report builders is not (see M1 above for exactly what's left and why it was
-  deliberately not rushed).
+- **M1 — ✅ DONE (follow-up session).** Schema, cloud write, and dashboard/FSN report wiring are
+  all complete; see M1 above.
 - **T3**: the correctness bug (same-SKU-two-lines under-deduction) is fixed; the `pb.createBatch()`
   request-volume optimization is a separate, larger redesign, not done.
 - **H4**: `scripts/debug-pb-login.mjs` left in place, a judgment call for the client.
