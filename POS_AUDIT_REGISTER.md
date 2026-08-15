@@ -317,22 +317,38 @@ test:offline` (126/126) and `npm run test:vercel` (3/3) pass.
 
 ## T — Sync / request-volume
 
-**T1. Admin sync engine parity.** Cashier has reachability TTL caching (15s success / 8s
-failure, `syncEngine.js:26-27,272-286`) and schedule jitter (0–15s one-sided — **correction to
-prior tracker text, which said ±15s** — `:31,242,265`); admin has neither
-(`admin/offline/syncEngine.js:302-313,295`). The admin "Sync" click builds
-`new CashierSyncEngine({ pb })` per click (`admin/services/desktopApi.js:1960`), which also
-resets `lastProductRefreshAt` to 0, forcing a full `products.getFullList()` on every click.
-Manual-sync backoff wipe confirmed in both apps
-(`admin/desktopApi.js:1951-1959`, `cashier/desktopApi.js:1107-1111`). Cashier catalog-refresh
-`lastProductRefreshAt = 0` on failure confirmed (`cashier/offline/syncEngine.js:371`), causing
-full-catalog retry every tick with no backoff after any failure.
-**New in this pass:** admin's activity-log upload queue
-(`admin/offline/syncEngine.js:334-336,399-417`) has no `attempts`/`nextAttemptAt` filter at all —
-a single permanently-invalid log row means one wasted `create` every tick, forever, with no
-backoff. **Also new:** admin's own `pendingOps` failed-reset does not clear `attempts`
-(`admin/desktopApi.js:1951`), so an already-exhausted op is re-marked pending and immediately
-re-fails on attempt 11 (asymmetric with cashier's queues, which do reset `attempts`).
+**T1. Admin sync engine parity. ✅ FIXED (this session).**
+Was: cashier had reachability TTL caching (15s success / 8s failure) and schedule jitter
+(0–15s one-sided — correction to the prior tracker text, which said ±15s); admin had neither. The
+admin "Sync" click built `new CashierSyncEngine({ pb })` per click, which also reset
+`lastProductRefreshAt` to 0, forcing a full `products.getFullList()` on every click. Manual-sync
+backoff wipe (resetting `attempts` to 0) confirmed in both apps, plus a third site: cashier's
+post-*login* auto-retry (`retryPendingCashierSync`) did the same thing on every single login, not
+just an explicit sync click. Cashier catalog-refresh `lastProductRefreshAt = 0` on failure caused
+full-catalog retry every tick with no backoff. Admin's activity-log upload queue had no
+`attempts`/`nextAttemptAt` filter at all — a permanently-invalid log row meant one wasted `create`
+every tick, forever.
+Fix:
+- `AdminSyncEngine` (`src/admin-page/offline/syncEngine.js`) now has the same reachability cache
+  and schedule jitter as the cashier engine (same constants, same reset-on-`online` behavior).
+- The admin Sync click and the admin runtime's own startup now share one `CashierSyncEngine`
+  singleton (`cashierQueueSyncEngine`, started once in `adminRuntime`, alongside the existing
+  `syncEngine` singleton) instead of constructing and discarding one per click.
+- New shared `src/utils/pendingQueueRetry.js` (`forceRetryNow`) replaces every manual-retry call
+  site in both apps (admin's `syncNow`, cashier's `syncNow`, and cashier's
+  `retryPendingCashierSync`): it makes eligible rows retry now by resetting `status` and clearing
+  `nextAttemptAt` **only** when a row's next attempt is genuinely more than 60s out — `attempts`
+  is never touched, anywhere.
+- Cashier catalog refresh now applies capped exponential backoff (`retryDelay`, same helper
+  already used for op retries, capped at the same 5-minute ceiling as the normal refresh interval)
+  after a failure instead of resetting to an immediate-retry-forever state.
+- Admin's activity-log queue now filters on `nextAttemptAt` the same way `pendingOps` does, and
+  applies the same capped backoff on failure — but is deliberately never dead-lettered (unlike
+  `pendingOps`'s `MAX_ATTEMPTS` cutoff): a silently-dropped audit-trail entry is worse than one
+  that keeps retrying forever on a capped backoff.
+New tests: `tests/pending-queue-retry.test.js` (3 cases) and
+`tests/admin-sync-reachability-cache.test.js` (3 cases, mirroring the existing cashier coverage).
+`npm run test:offline` (149/149) and `npm run test:vercel` (3/3) pass.
 
 **T2. Cashier sales-history N+1 + quick-login fan-out.** `groupSaleItemsBySaleId` needs
 extracting into `src/utils/saleItemGrouping.js` (mirrors a fix already shipped on the admin

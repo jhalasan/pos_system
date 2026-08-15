@@ -23,6 +23,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
+import { forceRetryNow } from '../../utils/pendingQueueRetry'
 
 let runtimePromise
 
@@ -447,10 +448,12 @@ async function restoreCashierSyncAuth(activeRuntime, cashierId) {
 }
 
 async function retryPendingCashierSync(activeRuntime) {
-  await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0 })
-  await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0 })
-  await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-  await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
+  // Never wipe attempts -- see forceRetryNow's own comment. This runs on
+  // every login, not just an explicit user action, so resetting a
+  // persistently-failing op's counter here was even worse than doing it on
+  // a manual sync click: it happened silently, every single login.
+  await forceRetryNow(cashierDb.pendingSales)
+  await forceRetryNow(cashierDb.pendingOps)
   return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
 }
 
@@ -964,10 +967,8 @@ export const desktopCashierApi = {
         pending: (await cashierDb.pendingSales.count()) + (await cashierDb.pendingOps.count()),
       }
     }
-    await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
-    await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
-    await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-    await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
+    await forceRetryNow(cashierDb.pendingSales)
+    await forceRetryNow(cashierDb.pendingOps)
     return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
   },
 

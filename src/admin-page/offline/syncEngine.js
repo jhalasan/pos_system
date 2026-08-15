@@ -19,6 +19,17 @@ const DEFAULT_INTERVAL_MS = 60_000
 const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
 const MAX_BACKOFF_MS = 5 * 60_000
 const MAX_ATTEMPTS = 10
+// Mirrors the cashier engine's reachability cache (see
+// cashier-pos/offline/syncEngine.js) — a plain health.check() on every sync
+// cycle roughly doubled PocketHost request volume for no benefit; a
+// positive check 15s ago is still true 15s later. The admin engine never
+// had this, unlike the cashier one.
+const REACHABILITY_SUCCESS_TTL_MS = 15_000
+const REACHABILITY_FAILURE_TTL_MS = 8_000
+// Same rationale as the cashier engine: spreads each terminal's steady-state
+// tick across up to 15s so several admin sessions don't all call PocketHost
+// in the same second.
+const SCHEDULE_JITTER_MS = 15_000
 
 function numberFieldValue(value) {
   const number = Number(value)
@@ -272,6 +283,8 @@ export class AdminSyncEngine extends EventTarget {
     this.syncPromise = null
     this.stopped = true
     this.lastCloudPullAt = 0
+    this.reachabilityCache = { value: false, expiresAt: 0 }
+    this.jitterMs = Math.floor(Math.random() * SCHEDULE_JITTER_MS)
   }
 
   start() {
@@ -289,10 +302,11 @@ export class AdminSyncEngine extends EventTarget {
   }
 
   handleOnline = () => {
+    this.reachabilityCache = { value: false, expiresAt: 0 }
     this.schedule(0)
   }
 
-  schedule(delay = this.intervalMs) {
+  schedule(delay = this.intervalMs + this.jitterMs) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
     const rateLimitDelay = pocketBaseRateLimitRemainingMs()
@@ -302,12 +316,15 @@ export class AdminSyncEngine extends EventTarget {
   async isCloudReachable({ forceNetworkCheck = false } = {}) {
     if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
     if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
+    if (!forceNetworkCheck && Date.now() < this.reachabilityCache.expiresAt) return this.reachabilityCache.value
 
     try {
       await this.pb.health.check({ requestKey: null })
+      this.reachabilityCache = { value: true, expiresAt: Date.now() + REACHABILITY_SUCCESS_TTL_MS }
       return true
     } catch (error) {
       rememberPocketBaseRateLimit(error)
+      this.reachabilityCache = { value: false, expiresAt: Date.now() + REACHABILITY_FAILURE_TTL_MS }
       return false
     }
   }
@@ -332,7 +349,7 @@ export class AdminSyncEngine extends EventTarget {
       .filter((op) => (Number(op.nextAttemptAt) || 0) <= now)
       .sortBy('createdAt')
     const queuedLogs = await adminDb.activityLogs
-      .filter((log) => !log.cloudId)
+      .filter((log) => !log.cloudId && (Number(log.nextAttemptAt) || 0) <= now)
       .toArray()
     const shouldPullCloud = now - this.lastCloudPullAt >= CLOUD_PULL_INTERVAL_MS
 
@@ -407,11 +424,25 @@ export class AdminSyncEngine extends EventTarget {
         if (Number(error?.status) === 429) {
           rememberPocketBaseRateLimit(error)
           rateLimited = true
+          await adminDb.activityLogs.update(log.id, {
+            nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
+          })
           break
         }
         rememberPocketBaseRateLimit(error)
         failed += 1
         errors.push(errorMessage(error))
+        // Unlike pendingOps, a permanently-invalid log is never dead-lettered
+        // -- an audit trail entry silently dropped is worse than one that
+        // keeps retrying on a capped backoff forever. This used to have no
+        // backoff at all: one wasted create() every single tick, forever,
+        // for any log row that could never succeed.
+        const attempts = (Number(log.attempts) || 0) + 1
+        await adminDb.activityLogs.update(log.id, {
+          attempts,
+          lastError: errorMessage(error),
+          nextAttemptAt: Date.now() + retryDelay(attempts),
+        })
         this.dispatchEvent(new CustomEvent('syncerror', { detail: { log, error } }))
       }
     }

@@ -24,6 +24,7 @@ import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity'
 import { resolveRequiredProductPrice } from '../offline/productPricing'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
+import { forceRetryNow } from '../../utils/pendingQueueRetry'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -55,6 +56,12 @@ function sessionAdminCredentials() {
 
 let adminSession = null
 let syncEngine = null
+// A singleton, matching syncEngine above — a fresh CashierSyncEngine used to
+// be constructed on every single admin "Sync" click, which reset its
+// per-instance reachability cache and lastProductRefreshAt, forcing a full
+// products.getFullList() catalog refresh on every click regardless of
+// whether the catalog had actually changed.
+let cashierQueueSyncEngine = null
 let inventoryScanQueue = Promise.resolve()
 let reachabilityPromise = null
 let reachabilityCache = { value: false, expiresAt: 0 }
@@ -111,6 +118,11 @@ const adminRuntime = createRetryableRuntime(async () => {
   syncEngine = new AdminSyncEngine({ pb })
   syncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
   syncEngine.start()
+
+  await initializeCashierDb()
+  cashierQueueSyncEngine = new CashierSyncEngine({ pb })
+  cashierQueueSyncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
+  cashierQueueSyncEngine.start()
 
   if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
     refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
@@ -1948,37 +1960,31 @@ export const desktopAdminApi = {
         pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
       }
     }
-    await adminDb.pendingOps.where('status').equals('failed').modify({
-      status: 'pending',
-      nextAttemptAt: 0,
-    })
-    await adminDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-    await cashierDb.pendingSales.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
-    await cashierDb.pendingSales.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-    await cashierDb.pendingOps.where('status').equals('failed').modify({ status: 'pending', attempts: 0, nextAttemptAt: 0 })
-    await cashierDb.pendingOps.where('status').equals('pending').modify({ nextAttemptAt: 0 })
-    const cashierQueueSync = new CashierSyncEngine({ pb })
-    // A newly constructed cashier engine is stopped by default. Start the
-    // one-shot engine so its sale and operation upload loops actually run.
-    cashierQueueSync.start()
-    try {
-      const [adminResult, cashierResult] = await Promise.all([
-        syncEngine?.syncNow({ forceNetworkCheck: true }) || { uploaded: 0, failed: 0, errors: [], pending: 0 },
-        cashierQueueSync.syncNow({ forceNetworkCheck: true }),
-      ])
-      // The admin engine may have pulled products just before the cashier
-      // engine uploaded an offline sale. Pull once more after both finish so
-      // the shared admin cache contains the post-sale stock quantity.
-      await refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
-      return {
-        uploaded: (adminResult.uploaded || 0) + (cashierResult.uploaded || 0),
-        failed: (adminResult.failed || 0) + (cashierResult.failed || 0),
-        errors: [...(adminResult.errors || []), ...(cashierResult.errors || [])],
-        warnings: [...(adminResult.warnings || []), ...(cashierResult.warnings || [])],
-        pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
-      }
-    } finally {
-      cashierQueueSync.stop()
+    // Make eligible rows retry now -- never wipe their attempts counter (see
+    // forceRetryNow's own comment for why that used to defeat the
+    // dead-letter mechanism).
+    await forceRetryNow(adminDb.pendingOps)
+    await forceRetryNow(cashierDb.pendingSales)
+    await forceRetryNow(cashierDb.pendingOps)
+    // Reuse the singleton started in adminRuntime rather than constructing a
+    // fresh engine per click — that used to reset its reachability cache and
+    // lastProductRefreshAt on every click, forcing a full catalog refresh
+    // every time regardless of whether anything had changed.
+    const cashierQueueSync = cashierQueueSyncEngine
+    const [adminResult, cashierResult] = await Promise.all([
+      syncEngine?.syncNow({ forceNetworkCheck: true }) || { uploaded: 0, failed: 0, errors: [], pending: 0 },
+      cashierQueueSync?.syncNow({ forceNetworkCheck: true }) || { uploaded: 0, failed: 0, errors: [], pending: 0 },
+    ])
+    // The admin engine may have pulled products just before the cashier
+    // engine uploaded an offline sale. Pull once more after both finish so
+    // the shared admin cache contains the post-sale stock quantity.
+    await refreshAdminLocalCache({ pb }).catch(rememberPocketBaseRateLimit)
+    return {
+      uploaded: (adminResult.uploaded || 0) + (cashierResult.uploaded || 0),
+      failed: (adminResult.failed || 0) + (cashierResult.failed || 0),
+      errors: [...(adminResult.errors || []), ...(cashierResult.errors || [])],
+      warnings: [...(adminResult.warnings || []), ...(cashierResult.warnings || [])],
+      pending: await adminDb.pendingOps.count() + await cashierDb.pendingOps.count() + await cashierDb.pendingSales.count(),
     }
   },
   async syncQueueDetails() {

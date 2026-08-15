@@ -261,6 +261,7 @@ export class CashierSyncEngine extends EventTarget {
     this.syncPromise = null
     this.stopped = true
     this.lastProductRefreshAt = 0
+    this.catalogRefreshFailures = 0
     this.reachabilityCache = { value: false, expiresAt: 0 }
     this.jitterMs = Math.floor(Math.random() * SCHEDULE_JITTER_MS)
   }
@@ -383,15 +384,22 @@ export class CashierSyncEngine extends EventTarget {
       try {
         products = await refreshLocalProductCatalog({ pb: this.pb })
         this.lastProductRefreshAt = Date.now()
+        this.catalogRefreshFailures = 0
       } catch (error) {
         rememberPocketBaseRateLimit(error)
         if (Number(error?.status) === 429) rateLimited = true
         catalogRefreshFailed = true
-        // Don't wait out the full 5-minute interval after a failure — retry
-        // on the very next tick so a transient error (or a bad row that a
-        // later fix resolves) self-heals quickly instead of silently
-        // leaving a stale/incomplete catalog in place until the next window.
-        this.lastProductRefreshAt = 0
+        // A transient error should self-heal quickly rather than waiting out
+        // the full 5-minute interval — but retrying on every single tick
+        // forever (this used to just set lastProductRefreshAt = 0, making
+        // the "due for refresh" check true again immediately) means a
+        // catalog that's persistently failing to refresh burns a full
+        // products.getFullList() every ~60s tick, indefinitely, with no
+        // backoff. Capped exponential backoff instead: the first retry is
+        // fast, later ones back off up to the same 5-minute ceiling as the
+        // normal interval.
+        this.catalogRefreshFailures += 1
+        this.lastProductRefreshAt = Date.now() - PRODUCT_REFRESH_INTERVAL_MS + retryDelay(this.catalogRefreshFailures)
         warnings.push(errorMessage(error))
         this.dispatchEvent(new CustomEvent('catalogrefresherror', {
           detail: { error },
