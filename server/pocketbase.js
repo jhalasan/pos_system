@@ -118,6 +118,45 @@ export async function authenticateAdminToken(token) {
   }
 }
 
+export async function authenticateCashierToken(token) {
+  const value = String(token || '').trim()
+  if (!value) {
+    const error = new Error('Authentication is required.')
+    error.status = 401
+    throw error
+  }
+
+  const authClient = new PocketBase(PB_URL)
+  authClient.autoCancellation(false)
+  authClient.authStore.save(value)
+
+  const authData = await authClient.collection('users').authRefresh().catch(() => {
+    const error = new Error('Your session is invalid or has expired. Please log in again.')
+    error.status = 401
+    throw error
+  })
+  const record = authData.record
+
+  if (!['cashier', 'manager', 'admin'].includes(record?.role)) {
+    const error = new Error('Only staff accounts can access cashier services.')
+    error.status = 403
+    throw error
+  }
+  if (record?.status === 'inactive') {
+    const error = new Error('This account is inactive.')
+    error.status = 403
+    throw error
+  }
+
+  return {
+    id: record.id,
+    email: record.email,
+    name: record.name || record.email,
+    role: record.role,
+    status: record.status || 'active',
+  }
+}
+
 export async function authenticateRoleUser(email, password, requiredRole) {
   const authClient = new PocketBase(PB_URL)
   authClient.autoCancellation(false)

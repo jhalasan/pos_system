@@ -546,9 +546,12 @@ async function authorizeManagerApproval(authorization = {}) {
 
   const requestBody = usePassword ? { email, password } : { code }
   try {
+    const activeRuntime = await runtime()
+    const staffToken = activeRuntime.pb.authStore.token
     const result = await cashierApiRequest('/cashier/authorize-void', {
       method: 'POST',
       body: JSON.stringify(requestBody),
+      headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : {},
     })
     return result?.approver
   } catch (error) {

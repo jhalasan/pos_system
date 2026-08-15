@@ -2,6 +2,7 @@ import { desktopCashierApi } from './desktopApi'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 const isDesktopCashier = import.meta.env.VITE_APP_TARGET === 'cashier-desktop'
+const CASHIER_TOKEN_KEY = 'nexa_cashier_token'
 
 function parseJson(text) {
   try {
@@ -11,11 +12,19 @@ function parseJson(text) {
   }
 }
 
+function storeCashierToken(result) {
+  const token = result?.user?.token
+  if (token) sessionStorage.setItem(CASHIER_TOKEN_KEY, token)
+  return result
+}
+
 async function request(path, options = {}) {
+  const token = sessionStorage.getItem(CASHIER_TOKEN_KEY)
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
   })
@@ -24,6 +33,7 @@ async function request(path, options = {}) {
   const payload = parseJson(text)
 
   if (!res.ok) {
+    if (res.status === 401) sessionStorage.removeItem(CASHIER_TOKEN_KEY)
     throw new Error(payload?.error || text || 'Request failed.')
   }
 
@@ -43,11 +53,11 @@ const webCashierApi = {
   login: (email, password) => request('/cashier/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
-  }),
+  }).then(storeCashierToken),
   loginWithBarcode: (barcode) => request('/cashier/auth/barcode', {
     method: 'POST',
     body: JSON.stringify({ barcode }),
-  }),
+  }).then(storeCashierToken),
   quickLoginAccounts: () => request('/cashier/quick-login-accounts'),
   products: () => request('/cashier/products'),
   productByBarcode: (barcode) => request(`/cashier/products/barcode/${encodeURIComponent(barcode)}`),
@@ -81,7 +91,7 @@ const webCashierApi = {
   reauthenticate: ({ email, password }) => request('/cashier/auth/login', {
     method: 'POST',
     body: JSON.stringify({ email, password }),
-  }),
+  }).then(storeCashierToken),
   voidCompletedSale: ({ saleId, cashierId, authorization, reason }) => request(`/cashier/sales/${encodeURIComponent(saleId)}/void`, {
     method: 'POST',
     body: JSON.stringify({
@@ -98,5 +108,7 @@ const webCashierApi = {
 export const cashierApi = isDesktopCashier ? desktopCashierApi : {
   ...webCashierApi,
   currentUser: async () => null,
-  logout: async () => {},
+  logout: async () => {
+    sessionStorage.removeItem(CASHIER_TOKEN_KEY)
+  },
 }

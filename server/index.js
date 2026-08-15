@@ -10,6 +10,7 @@ import 'dotenv/config'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
+  authenticateCashierToken,
   authenticateRoleUser,
   pb,
   pbCollection,
@@ -64,6 +65,35 @@ function requestHost(req) {
 
 function isSameRequestOrigin(req, parsedOrigin) {
   return Boolean(parsedOrigin && requestHost(req).toLowerCase() === parsedOrigin.host.toLowerCase())
+}
+
+// Minimal in-memory sliding-window limiter for auth-adjacent endpoints
+// (cashier login, barcode login, manager approval). Approval barcodes and
+// staff passwords are short/guessable enough that an unthrottled endpoint is
+// a brute-force target even once it requires plausible-looking input -- this
+// is deliberately simple (single-process, resets on restart) rather than
+// pulling in a dependency, since this server runs as one process.
+const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000
+const RATE_LIMIT_MAX_ATTEMPTS = 8
+const rateLimitAttempts = new Map()
+const CASHIER_TOKEN_DURATION_SECONDS = 12 * 60 * 60
+
+function rateLimitKey(req, bucket) {
+  const ip = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket?.remoteAddress || 'unknown'
+  return `${bucket}:${ip}`
+}
+
+function checkRateLimit(req, res, bucket) {
+  const key = rateLimitKey(req, bucket)
+  const now = Date.now()
+  const attempts = (rateLimitAttempts.get(key) || []).filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS)
+  if (attempts.length >= RATE_LIMIT_MAX_ATTEMPTS) {
+    res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' })
+    return false
+  }
+  attempts.push(now)
+  rateLimitAttempts.set(key, attempts)
+  return true
 }
 
 const upload = multer({
@@ -798,6 +828,8 @@ app.use('/api/cashier', (req, res, next) => {
 })
 
 app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
+  if (!checkRateLimit(req, res, 'cashier-login')) return
+
   const email = String(req.body?.email || '').trim()
   const password = String(req.body?.password || '')
 
@@ -811,12 +843,15 @@ app.post('/api/cashier/auth/login', asyncRoute(async (req, res) => {
 }))
 
 app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
+  if (!checkRateLimit(req, res, 'cashier-login')) return
+
   const barcode = String(req.body?.barcode || '').trim()
 
   if (!barcode) {
     return res.status(400).json({ error: 'Cashier barcode is required.' })
   }
-  const user = await (await pbCollection('users')).getFirstListItem(
+  const usersCollection = await pbCollection('users')
+  const user = await usersCollection.getFirstListItem(
     pb.filter('void_barcode = {:barcode} && role = "cashier" && status != "inactive"', { barcode }),
     { requestKey: null },
   ).catch(() => null)
@@ -825,17 +860,30 @@ app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
     return res.status(401).json({ error: 'Invalid cashier barcode.' })
   }
 
+  // Mint a real session token for this account (superuser-authenticated
+  // impersonation) so the barcode-logged-in terminal can authenticate its
+  // subsequent /api/cashier/* calls -- without this, barcode login left the
+  // client with no token at all.
+  const impersonated = await usersCollection.impersonate(user.id, CASHIER_TOKEN_DURATION_SECONDS)
   await createLog({ userId: user.id, action: 'Login', detail: 'Signed in to cashier POS using barcode' })
-  res.json({ ok: true, user })
+  res.json({ ok: true, user: { ...user, token: impersonated.authStore.token } })
 }))
 
 const publicAdminPaths = new Set([
   '/health',
   '/auth/login',
 ])
+// The cashier terminal shows an account-switcher screen before anyone is
+// logged in, which needs this list; every other /cashier/* route requires a
+// staff bearer token (see authenticateCashierToken below). Login itself
+// (/cashier/auth/login, /cashier/auth/barcode) is registered earlier in this
+// file, so it never reaches this middleware at all.
+const publicCashierPaths = new Set([
+  '/cashier/quick-login-accounts',
+])
 
 app.use('/api', asyncRoute(async (req, res, next) => {
-  if (req.path.startsWith('/cashier/') || publicAdminPaths.has(req.path)) {
+  if (publicAdminPaths.has(req.path) || publicCashierPaths.has(req.path)) {
     next()
     return
   }
@@ -844,6 +892,14 @@ app.use('/api', asyncRoute(async (req, res, next) => {
   const token = authorization.toLowerCase().startsWith('bearer ')
     ? authorization.slice(7).trim()
     : ''
+
+  if (req.path.startsWith('/cashier/')) {
+    req.cashierUser = await authenticateCashierToken(token)
+    res.setHeader('Cache-Control', 'private, no-store')
+    next()
+    return
+  }
+
   req.adminUser = await authenticateAdminToken(token)
   res.setHeader('Cache-Control', 'private, no-store')
   next()
@@ -913,6 +969,8 @@ app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) =>
 }))
 
 app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
+  if (!checkRateLimit(req, res, 'authorize-void')) return
+
   const approver = await authorizeManagerApproval({
     code: req.body?.code,
     email: req.body?.email,
@@ -2035,7 +2093,7 @@ app.use((error, _req, res, next) => {
 export { app }
 
 if (!process.env.VERCEL) {
-  app.listen(PORT, () => {
+  const listeningServer = app.listen(PORT, () => {
     console.log(`Admin API listening on http://localhost:${PORT}`)
     console.log(`For LAN testing, open http://<this-computer-ip>:${PORT}`)
     if (AUTO_BACKUP_ENABLED) {
@@ -2045,6 +2103,10 @@ if (!process.env.VERCEL) {
       backupTimer.unref?.()
     }
   })
+  // Anything that imports this module without VERCEL set (a script, a test)
+  // otherwise gets an orphan listener on PORT that keeps the process alive
+  // forever, since nothing ever closes it.
+  listeningServer.unref?.()
 }
 
 export default app

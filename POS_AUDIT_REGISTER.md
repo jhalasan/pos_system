@@ -93,12 +93,31 @@ history** — anyone with a clone still has `admin@email.com` / `admin123` from 
    optional once rotated, since the exposed password will no longer work, but the URL + old
    credential pattern stays visible in history either way unless rewritten.
 
-**S3. HIGH — All `/api/cashier/*` routes are unauthenticated.**
-`server/index.js:837-841` short-circuits the auth middleware for any path starting `/cashier/`.
-Reachable with no token: `POST /cashier/sales` (ring sales, mutate stock, `:1066`),
-`POST /cashier/sales/:id/void` (`:1164`), `GET /cashier/quick-login-accounts` (`:1652`),
-`POST /cashier/auth/barcode` (`:813`), and `POST /cashier/authorize-void` (`:915`) with no rate
-limit — barcodes are `90` + timestamp + 2 digits, brute-forceable.
+**S3. HIGH — All `/api/cashier/*` routes are unauthenticated. ✅ FIXED (this session).**
+Was: `server/index.js:837-841` short-circuited the auth middleware for any path starting
+`/cashier/`. Reachable with no token: `POST /cashier/sales` (ring sales, mutate stock),
+`POST /cashier/sales/:id/void`, `GET /cashier/quick-login-accounts`,
+`POST /cashier/auth/barcode`, and `POST /cashier/authorize-void` with no rate limit — barcodes
+are `90` + timestamp + 2 digits, brute-forceable.
+Fix: added `authenticateCashierToken` (`server/pocketbase.js`, mirrors the existing
+`authenticateAdminToken`) and applied it in the `/api` middleware for every `/cashier/*` path
+except the genuinely pre-login ones (`/cashier/auth/login`, `/cashier/auth/barcode` — registered
+earlier in the file so they never reach this middleware at all; `/cashier/quick-login-accounts`
+— explicit allowlist entry, needed for the account-switcher screen before anyone is
+authenticated). Barcode login (`/cashier/auth/barcode`) previously returned no session token at
+all since it looked the user up with the server's own superuser client rather than authenticating
+as them — fixed by minting a real 12-hour session via PocketBase `impersonate()`, so a
+barcode-logged-in terminal can now actually authenticate its subsequent calls. Both web
+(`src/cashier-pos/services/api.js`) and desktop (`src/cashier-pos/services/desktopApi.js`) clients
+now attach the resulting bearer token. Added a simple in-memory sliding-window rate limiter (8
+attempts / 5 min / IP, single-process, no new dependency) on `/cashier/auth/login`,
+`/cashier/auth/barcode`, and `/cashier/authorize-void`. Also fixed an unrelated latent bug this
+work exposed: `server/index.js`'s module-level `app.listen(PORT)` wasn't `unref()`'d, so any
+script or test importing the module outside Vercel mode got an orphan listener that kept the
+process alive forever. New regression test `tests/cashier-api-auth.test.js` (added to
+`test:offline`) asserts `/cashier/sales` and `/cashier/authorize-void` 401 with no token and that
+`/cashier/auth/login` remains reachable. `npm run test:offline` (117/117) and `npm run
+test:vercel` (3/3) pass.
 
 **S4. HIGH — `/api/support/tickets` is an open mail relay.** Mounted at `server/index.js:144`,
 before the auth middleware. `api/support/tickets.js:15-21` sets
