@@ -371,21 +371,43 @@ an admin allowed when others remain, deleting a regular cashier always allowed, 
 priority even over the last-admin case, and a missing caller id doesn't crash or false-block. `npm
 run test:offline` (245/245) and `npm run test:vercel` (7/7) pass.
 
-**S8. MEDIUM** — CORS accepts any `*.ngrok-free.dev` origin with `credentials: true` whenever
-`NODE_ENV !== 'production'`, which the `npm run host` deploy path never sets
-(`server/index.js:45-49,97-108`); `isSameRequestOrigin` also trusts unvalidated
-`X-Forwarded-Host` (`:60-67`).
+**S8. MEDIUM — ✅ FIXED.** CORS accepted any `*.ngrok-free.dev` origin with `credentials: true`
+whenever `NODE_ENV !== 'production'`, which none of this project's own npm scripts (`api`,
+`start`, `host`, `deploy`) ever set — so the permissive ngrok/local-network rule, meant only for
+Local Coding Mode, LAN Team Testing Mode, and Remote Demo Mode (see README.md), was live by
+default in any real deployment that used this server directly. Separately, `isSameRequestOrigin`
+(`server/index.js:65-72` pre-fix) trusted the client-supplied `X-Forwarded-Host` header as proof a
+request's Origin matched the host it arrived at — that header is not something only a trusted
+proxy can set, so any direct caller could forge it to bypass the allowlist entirely.
+Fix: flipped the permissive rule from opt-out to fail-closed. It's now gated by a new, explicit
+`ALLOW_DEV_CORS_ORIGINS=true` env var (default unset/false) instead of `NODE_ENV`, documented in
+`.env.example` and in the three README modes that need it. `isSameRequestOrigin` no longer reads
+`X-Forwarded-Host` at all — it now compares only against Express's own `req.get('host')`, extracted
+into a small pure helper, `src/utils/corsOrigin.js`'s `isSameHost(requestHost, originHost)`, so the
+comparison logic is unit-tested directly. The Vercel-hosted admin portal was never affected either
+way (`isVercelAdminPortal` already forced this off regardless of `NODE_ENV`), so nothing changed
+for the live production surface. New `tests/cors-origin.test.js` (4 cases): identical hosts match,
+case-insensitive match, different hosts rejected, either host missing is rejected. `npm run
+test:offline` (249/249), `npm run test:vercel` (7/7), and a fresh-clone `npm run lint` (0 errors)
+all pass.
 
-**S9. LOW** — `src/cashier-pos/utils/cashierLoginPolicy.js:1-5`
-`allowsCashierBarcodeLogin` only rejects the empty string; its name implies a gate that does not
-exist, and its test (`tests/cashier-login-barcode.test.js`) passes vacuously.
+**S9. LOW — ✅ FIXED.** `src/cashier-pos/utils/cashierLoginPolicy.js:1-5`
+`allowsCashierBarcodeLogin` only rejected the empty string; its name implied a gate that did not
+exist, and its test (`tests/cashier-login-barcode.test.js`) passed vacuously.
+Fix: renamed to `isBarcodeProvided`, with a header comment stating plainly that this is only a
+client-side "don't bother the network with an empty field" pre-check -- the real authority is the
+server (`POST /api/cashier/auth/barcode`), which looks the scanned value up against real accounts.
+The test was renamed and reworded to match: `any non-empty barcode value passes the pre-check` /
+`an empty or whitespace-only value does not`, dropping the old test's misleading name ("allows
+cashier barcode login for barcodes that start with 92") which asserted nothing "92"-specific at
+all. `npm run test:offline` passes with this file's 2 cases included.
 
 ---
 
 ## M — Money correctness
 
-**M1. CRITICAL — Refunds never reach the cloud at all. 🔶 PARTIALLY FIXED (this session) — the
-data now reaches the cloud; reports do not read it yet.**
+**M1. CRITICAL — Refunds never reach the cloud at all. ✅ FIXED (follow-up session) — schema,
+cloud write, and report wiring are all complete; see "Done" and the follow-up note below.**
 Was: no `sale_adjustments` collection and no `refunded_amount`/`refunded_at` field anywhere in
 `pocketbase/pb_schema.json`. Sync only flipped `sales.status` to `'adjusted'`. Amount, items,
 reason, approver, timestamp existed only in local Dexie. Wipe a terminal and every refund ever
@@ -396,10 +418,9 @@ Done:
   `sales.refunded_units`, `sales.refunded_at`, and a new `sale_adjustments` collection
   (`sale_id`, `adjustment_id`, `type`, `amount`, `items`, `reason`, `note`, `approver_id`,
   `cashier_id`, `restock`, `created_at`). `total_amount` is never mutated by any of this — see the
-  file's header comment for the reasoning. **Not yet run against production** — per the client's
-  choice this session, schema migrations are applied by them directly (`npm run
-  pb:migrate:refund-schema` once ready); this script was written and code-reviewed but not
-  executed against a live PocketBase from here.
+  file's header comment for the reasoning. **Now run against production** (confirmed live: `sales`
+  has `refunded_amount`/`refunded_units`/`refunded_at`, and `sale_adjustments` exists) — the client
+  ran `npm run pb:migrate:refund-schema` directly, as planned this session.
 - `src/cashier-pos/offline/syncEngine.js`'s `adjustCompletedSale` op handler now creates a
   `sale_adjustments` record (idempotency-anchored on `adjustment_id`, the same UUID the terminal
   already generates locally at refund time) and additively increments
@@ -722,6 +743,73 @@ restorable back to `'active'`. Updated `tests/product-delete-relation-constraint
 `npm run test:vercel` (7/7) pass; verified against a clean `npm ci` checkout and all three
 production builds.
 
+**M10. MEDIUM — "Total Products" and stock-composition stats counted archived/deleted products.
+✅ FIXED (follow-up session).** Flagged during a client Q&A about M9 (deleted products), never
+separately confirmed until now.
+Was: once M9 gave a deleted or archived product its own `lifecycle_status` instead of vanishing,
+Inventory's "Total Products" stat (`Inventory.jsx:202`, `products.length`) and Dashboard/Analytics'
+stock-composition stats (`criticalStock`, `criticalAlerts`, `productInOut`'s Current Stock,
+`inventoryHealth`'s in-stock/low/critical/out-of-stock breakdown, `dataQuality`) all summed over
+every product Dexie/PocketBase had a row for, with no lifecycle filter at all — both in
+`src/admin-page/services/desktopApi.js`'s `buildDashboardFromRecords` (Tauri app) and
+`server/index.js`'s duplicate of the same logic (Vercel admin portal). An archived or deleted
+product isn't part of the sellable catalog, so it inflated "how many products do I stock," could
+trigger a restock alert for stock that will never sell again, and counted toward Current Stock
+units that no longer exist as active inventory.
+Fix: new shared pure helper, `src/utils/productLifecycle.js`'s `isCatalogActive(product)` —
+excludes only `'archived'` and `'deleted'`; `'inactive'` still counts, since that status means
+temporarily disabled, not removed. Applied to the stock-composition aggregates only, in both
+`buildDashboardFromRecords` (desktopApi.js) and the equivalent block in `server/index.js`, plus
+Inventory.jsx's three stat cards (Total Products, low-stock alert count, stock value). Deliberately
+**not** applied to `productLookup`/`productsById` (used to resolve a past sale item's product name
+and category) or to `buildFsnMetrics` — a product sold before being archived must still resolve
+correctly in historical sales reports, and barcode scanning/search on the Inventory page is
+unaffected. New `tests/product-lifecycle-catalog.test.js` (6 cases): no-status defaults active,
+explicit active, inactive still counts, archived excluded, deleted excluded, snake_case field name
+from raw PocketBase records honored. `npm run test:offline` (255/255), `npm run test:vercel` (7/7),
+a fresh-clone `npm run lint` (0 errors), and `npm run build` all pass.
+
+**M11. HIGH — Reprinting a receipt could physically print multiple copies (raw thermal-print path
+squared its own copy count). ✅ FIXED (follow-up session).** Reported by the client: printing a
+receipt sometimes produced 3 copies from the printer.
+Was two separate bugs stacked on top of each other:
+1. `handleLookupReprint` and `handleHistoryReprint` (`src/cashier-pos/pages/Cashier.jsx`) — the
+   Receipt Lookup screen's Reprint button and the Recent Transactions list's Reprint button — called
+   `printCompletedReceipt(receiptData)` with no `options` argument at all, so the copy count silently
+   fell through to `VITE_RECEIPT_COPIES`/the `1`-copy default inside `receiptTexts`
+   (`src/cashier-pos/services/receiptPrinter.js`). The normal post-checkout print (`printReceiptCopy`
+   in `Cashier.jsx`) and the general "Reprint Receipt" button both already explicitly forced
+   `copies: 1` — the two reprint entry points above were the only ones that didn't, an inconsistency
+   with no reason behind it.
+2. The deeper bug, in `printCompletedReceipt`'s raw ESC/POS branch (`receiptPrinter.js:449-479`):
+   `contents` was built as `receipts.join('\n')` — `copies` identical receipt texts concatenated
+   into *one* string — and that same `copies` value was *also* passed to the Rust side
+   (`src-tauri/src/lib.rs`'s `print_receipt_impl`), which sends whatever `contents` it's given
+   `copies` more times in its own loop (`for _ in 0..copies { ... WritePrinter ... }`, confirmed by
+   reading the implementation directly). Requesting N copies therefore printed N × N copies — the
+   two layers each independently tried to produce the repeat count, multiplying instead of adding.
+   At the `copies: 1` call sites this was invisible (1×1=1), which is why it went unnoticed until a
+   reprint path exercised any value above 1.
+Fix: `receiptPrinter.js`'s raw-print branch now always builds `contents` from a *single* receipt
+(`buildReceiptText(receiptData)`), and `copies` is the only place the repeat count lives — matching
+what the Rust loop already correctly does per iteration (a separate `StartDocPrinterW`/
+`EndDocPrinter` job per copy, which is also the correct behavior for auto-cutting thermal printers).
+The same fix was applied to the fallback retry branch (blank-printer-name retry on a
+"printer was deleted" error), which had also hard-coded `copies: 1` regardless of how many copies
+were actually requested. Separately, `handleLookupReprint` and `handleHistoryReprint` now pass
+`{ copies: 1 }` explicitly, matching the two print paths that already did — plus the two PDF
+"test print" call sites (`handlePrintReceiptPdf`, `handleLookupPrintPdf`) for the same consistency,
+since a PDF test print reprinting N pages for a single receipt had the identical inconsistency
+(harmless there, since PDF pages aren't physically wasted paper, but still the wrong default).
+**Not automatically tested:** `receiptPrinter.js` (like the rest of this file, its only currently
+tested export is the pure `buildReceiptPdf`) references `import.meta.env` at module load, which is
+`undefined` under plain `node --test` and throws on import — the same constraint that already keeps
+this file out of automated coverage elsewhere in the codebase. Verified by direct code trace of both
+the JS join/copies logic and the Rust `print_receipt_impl` loop (quoted above), plus a fresh-clone
+`npm run lint` (0 errors) and `npm run build`/`npm run build:cashier` (both clean) confirming nothing
+else broke. `npm run test:offline` (255/255) and `npm run test:vercel` (7/7) pass (unrelated to this
+fix, confirming no regression elsewhere).
+
 ---
 
 ## T — Sync / request-volume
@@ -778,8 +866,8 @@ indefinitely. New `tests/sale-item-grouping.test.js` (4 cases: grouping, relatio
 camelCase fallback, missing reference). `npm run test:offline` (153/153) and `npm run test:vercel`
 (3/3) pass.
 
-**T3. Sale-upload batch rewrite. 🔶 PARTIALLY FIXED (this session) — the correctness bug (B3) is
-fixed; the request-volume optimization (`pb.createBatch()`) is not.**
+**T3. Sale-upload batch rewrite. ✅ FIXED (correctness bug B3 this session; request-volume
+optimization in a later follow-up session, scoped down from `pb.createBatch()` — see below).**
 Was: `ensureCloudSaleItems` + `ensureCloudStockDeduction` issue ~8–9 PocketBase requests per line
 item, serially, all awaited, with a whole-catalog `getFullList` inside the per-item barcode
 fallback loop. `pb.createBatch()` is used nowhere in the repo. No `lineId` existed anywhere —
@@ -791,8 +879,9 @@ same fix). The `Math.max(baseQuantityToDeduct, syncedQty)` fudge compared two di
 (selling-unit `quantity_sold` vs. base-unit `baseQuantityToDeduct`) and wrote the larger,
 nonsensical result straight into `stock_movements.quantity`. (Was tracker B2/B3.)
 Done — the correctness fix (B3):
-- New `scripts/add-sale-item-line-id.mjs` (additive-only migration): `sale_items.line_id`. **Not
-  yet run against production** — same as M1's migration, per the client's choice this session.
+- New `scripts/add-sale-item-line-id.mjs` (additive-only migration): `sale_items.line_id`. **Now
+  run against production** (confirmed live: `sale_items` has `line_id`) — same as M1's migration,
+  the client ran it directly.
 - `finalizeSaleLocally` (`saleRepository.js`) now mints a stable `lineId` per cart line.
 - `ensureCloudSaleItems`/`ensureCloudStockDeduction` and the void/refund restock path
   (`syncEngine.js`) now key their stock-movement dedup reference on `lineId` (falling back to
@@ -808,15 +897,68 @@ Done — the correctness fix (B3):
   each of those ops already operates on exactly one product per op (`op.id` is already a unique,
   unambiguous reference), so there is no multi-line-per-op collision possible there. The "same fix
   needed" note in the original finding did not hold up under closer reading of that code path.
-**Not done — the request-volume optimization:** the `pb.createBatch()` rewrite itself (~8–9
-requests per line item down to one transactional batch). This is architecturally a bigger change
-than the correctness fix: `findStockMovement`'s per-line idempotency check currently runs
-*before* deciding what to write, interleaved with live lookups — a single atomic batch can't
-interleave conditional lookups between its writes, so this needs a real redesign (bulk-check all
-lines' existing movements first, then submit one batch containing only the writes actually
-needed), not a mechanical swap. Scoped as a distinct follow-up; the correctness bug it was
-originally paired with is now independently fixed. `npm run test:offline` (154/154) and `npm run
-test:vercel` (3/3) pass.
+**Request-volume optimization — ✅ FIXED (follow-up session), deliberately scoped down from a
+literal `pb.createBatch()` rewrite.** Client reported occasionally hitting PocketHost rate limits;
+this was the remaining piece of T3 addressing it.
+Before touching anything, tested `pb.createBatch()`'s actual transaction semantics directly against
+production (a throwaway batch: one valid `categories.create` + one deliberately invalid one) —
+confirmed it is **fully transactional**: the invalid sub-request rolled back the valid one too, and
+`batch.send()` threw rather than returning mixed per-item results. Wrapping a whole sale's
+`sale_items` + stock-deduction writes in one batch would mean a single bad line (a stale product
+reference, an unexpected validation error) silently failed *every other line in that sale* too —
+the current code's per-item independence is deliberate resilience, not an oversight, and today's
+per-line retry-resumability (a retry only redoes the lines that didn't finish) would also be lost.
+Given `pb.createBatch()` support would additionally have required rewriting the fake-`pb` mocks in
+5 existing test files just to keep the suite runnable, the actual chosen fix targets the same
+request-volume problem without introducing that all-or-nothing risk: eliminating the *redundant
+reads* that made up most of the ~8–9-requests-per-line-item figure, while every write stays its own
+independent, retry-safe call exactly as before.
+Was: `ensureCloudSaleItems` called `products.getOne` once per line to verify its `productId` (even
+for two lines of the same product), and re-fetched the **entire product catalog** inside the
+per-item barcode-fallback loop for every line that needed it (3 barcode-only lines meant 3 full
+catalog pulls). `ensureCloudStockDeduction` called `findStockMovement` once per line to check for a
+prior interrupted attempt, `products.getOne` once per line even for a repeated product, and
+`reconcileProductStock` (itself 2-3 requests) once per line instead of once per distinct product.
+Fix:
+- New `resolveSaleItemProductIds` (`syncEngine.js`): one bulk `products` fetch (an OR filter across
+  every line's distinct declared `productId`) replaces the per-line `getOne` verification, and the
+  barcode-fallback catalog fetch now happens **at most once per sale**, shared across every line
+  that needs it, not once per such line.
+- New `findExistingStockMovementsByReference` (`src/utils/stockMovementReconciler.js`): one bulk
+  query (an OR filter across every line's `reference_id`) replaces the per-line `findStockMovement`
+  calls. Deliberately does **not** swallow a request failure into "nothing found" — mirrors
+  `findStockMovement`'s own documented contract, since silently treating an unknown state (a 429,
+  a network blip) as "not yet deducted" is exactly what causes a double deduction on retry.
+- `ensureCloudStockDeduction` now groups lines by `productId`: each distinct product is fetched
+  with `getOne` once (not once per line, even if the cart has several lines of it), its lines'
+  deductions are summed and applied as a single `products.update`, and `reconcileProductStock` runs
+  once per distinct product instead of once per line. Every line still gets its own
+  `stock_movements` audit row, chained in-memory from the one fetched starting quantity so each
+  row's `previous_quantity`/`new_quantity` is still correct and contiguous.
+- **Bonus correctness fix found while writing request-volume tests for this, not something this
+  session set out to fix:** a barcode-fallback-resolved line's stock deduction was being silently
+  skipped entirely, in both the old code and (initially) the new one — `ensureCloudStockDeduction`
+  read `productId` straight from the *raw* sale data (`item.productId`), which stays empty for a
+  barcode-only line; the productId that `ensureCloudSaleItems` actually resolved via barcode only
+  ever reached the persisted cloud `sale_items` row, never fed back to the deduction step. Fixed by
+  having `ensureCloudStockDeduction` prefer the persisted cloud sale-item's `product_id` (matched by
+  `lineId`) over the raw sale data, falling back to the raw value only for legacy rows with no
+  `lineId` to match by.
+- New `tests/sale-upload-request-volume.test.js` (3 cases, asserting request *counts* directly,
+  which the pre-existing correctness-only tests don't cover): two lines of the same product fetch/
+  update that product exactly once; three lines across two products fetch/update each exactly
+  once; barcode-fallback resolution fetches the catalog once for the whole sale (also asserts the
+  bonus correctness fix — both resolved products end up with the correct deducted quantity, not
+  silently unchanged). New tests in `tests/stock-movement-reconcile-order.test.js` (4 cases) for
+  `findExistingStockMovementsByReference`: empty input makes no request, N reference ids still make
+  exactly one request, duplicate reference ids are deduplicated before the request is built, and a
+  request failure propagates rather than degrading to an empty map. `npm run test:offline`
+  (262/262), `npm run test:vercel` (7/7), a fresh-clone `npm run lint` (0 errors), and both
+  `npm run build`/`npm run build:cashier` all pass.
+**Still open:** a literal single-`createBatch()`-per-sale rewrite remains possible but was
+deliberately not pursued, for the transactional-risk reasons above. If PocketHost rate limits are
+still a live problem after this fix ships, that's the next lever — but it would need the client's
+explicit sign-off on the all-or-nothing tradeoff first, not a silent architecture change.
 
 **Gap found and fixed (follow-up session): the same two-lines-same-product ambiguity T3 fixed for
 cloud stock-movement bookkeeping was still live in the refund-quantity-selection UI and logic
@@ -920,13 +1062,22 @@ exact boundary of what landed.
   open piece is only the optional git-history rewrite (item 3 in S2 above), which was always framed
   as optional.
 - **S4 — ✅ DONE (follow-up session).** Support-ticket mail relay hardened; see S4 above.
-- **S6, S7, S8** (default-password policy, delete guard, CORS tightening) — real findings, never
-  in scope for this pass (which targeted the approval-barcode/credential/auth-bypass/
-  privilege-escalation cluster specifically).
+- **S6, S7, S8 — ✅ DONE (follow-up session).** Default-password policy, delete guard, and CORS
+  tightening; see S6, S7, S8 above. None were in scope for this pass's original target (the
+  approval-barcode/credential/auth-bypass/privilege-escalation cluster).
 - **M1 — ✅ DONE (follow-up session).** Schema, cloud write, and dashboard/FSN report wiring are
   all complete; see M1 above.
-- **T3**: the correctness bug (same-SKU-two-lines under-deduction) is fixed; the `pb.createBatch()`
-  request-volume optimization is a separate, larger redesign, not done.
+- **T3 — ✅ DONE (follow-up session).** Both halves complete: the correctness bug (same-SKU-two-
+  lines under-deduction) and the request-volume optimization (deliberately scoped down from a
+  literal `pb.createBatch()` rewrite after confirming its all-or-nothing transaction semantics
+  against production — see T3 above for the full reasoning).
+- **M10 — ✅ DONE (follow-up session).** "Total Products" and stock-composition stats no longer
+  count archived/deleted products; see M10 above.
+- **M11 — ✅ DONE (follow-up session).** Reprint could physically print multiple copies (a real
+  double-multiplication bug in the raw thermal-print path, not just a missing default); see M11
+  above.
+- **S9 — ✅ DONE.** Already fixed by the time this pass reached it — renamed to `isBarcodeProvided`
+  with an honest comment; see S9 above.
 - **H4**: `scripts/debug-pb-login.mjs` left in place, a judgment call for the client.
 
 Full rationale and step-by-step detail for the plan this session executed lives in
