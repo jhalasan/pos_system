@@ -5,3 +5,10 @@ dist/
 src-tauri/target/
 migration_reports/legacy-import-result.json
 .playwright-mcp/
+
+# One-time legacy migration source data (176MB, 50 files). The migration it
+# fed (scripts/import-legacy-json.mjs) has already run -- see
+# migration_reports/. Untracked going forward per POS_AUDIT_REGISTER.md H1;
+# still present on disk for anyone who has it, just no longer versioned.
+# Removing from tracking does not shrink existing git history.
+db_json_export/

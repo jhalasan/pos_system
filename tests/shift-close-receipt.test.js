@@ -22,9 +22,14 @@ test('buildShiftCloseReceiptText includes denomination breakdown and totals', ()
     ],
   });
 
-  assert.match(receipt, /SHIFT CLOSE REPORT/);
+  // This test was never wired into any npm script (see POS_AUDIT_REGISTER.md
+  // H2) and had drifted from receiptPrinter.js's actual labels -- "Z-READ
+  // REPORT" and "Counted Cash" are the real, current POS terminology used
+  // there; this assertion was checking for label text the code never
+  // produced.
+  assert.match(receipt, /Z-READ REPORT/);
   assert.match(receipt, /1000/);
   assert.match(receipt, /500/);
-  assert.match(receipt, /Actual Cash Ending/);
+  assert.match(receipt, /Counted Cash/);
   assert.match(receipt, /Variance/);
 });

@@ -413,50 +413,80 @@ test:vercel` (3/3) pass.
 
 ## H — Hygiene / non-POS
 
-**H1. HIGH (repo weight)** — `db_json_export/` is 176 MB across 50 tracked files
-(`DocumentItem.json` 87 MB, `Document.json` 65 MB, `Payment.json` 23 MB), raw legacy
-transaction/customer records, permanent in git history. Only consumer is
-`scripts/import-legacy-json.mjs:10`, a migration already executed (results in
-`migration_reports/`).
+**H1. HIGH (repo weight). ✅ FIXED (this session, tracking only — history unchanged).**
+`db_json_export/` (176 MB across 50 files, raw legacy transaction/customer records) is now
+gitignored and untracked (`git rm -r --cached`). Files remain on disk; this does not shrink
+existing git history (a `git filter-repo`/BFG pass would be a separate, larger decision).
 
-**H2. HIGH (process)** — `.github/workflows/` contains only `release.yml` (tag-triggered Tauri
-build). **No CI runs tests or lint at all.** `test:offline` in `package.json` names 29 files
-explicitly while `tests/` holds 39 test files — 9 exist but are executed by no npm script:
-`payment-flow.test.js`, `cash-sales.test.js`, `shift-close-receipt.test.js`,
-`cashier-transaction-restore.test.js`, `cashier-login-barcode.test.js`,
-`audit-log-parsing.test.js`, `product-pricing.test.js`, `receipt-pdf.test.js`,
-`developer-mode.test.js`.
+**H2. HIGH (process). ✅ FIXED (this session).**
+Was: no CI ran tests or lint at all, and `test:offline` named files explicitly while 9 test files
+existed that no npm script executed (`payment-flow.test.js`, `cash-sales.test.js`,
+`shift-close-receipt.test.js`, `cashier-transaction-restore.test.js`,
+`cashier-login-barcode.test.js`, `audit-log-parsing.test.js`, `product-pricing.test.js`,
+`receipt-pdf.test.js`, `developer-mode.test.js`).
+Fix: new `.github/workflows/ci.yml` runs `lint`, `test:offline`, `test:vercel` on every push/PR to
+`main`. `test:offline` now runs `scripts/run-offline-tests.mjs`, which discovers every
+`tests/*.test.js` file automatically (excluding only `admin-vercel-boundary.test.js`, which has
+its own named script for a distinct concern) instead of a hand-maintained list — new test files
+can no longer be silently orphaned. All 9 previously-orphaned tests now run; 8 passed as written
+and one (`shift-close-receipt.test.js`) had a genuinely stale assertion (checked for
+`"SHIFT CLOSE REPORT"`/`"Actual Cash Ending"`, text the receipt code never produced — the real,
+current labels are `"Z-READ REPORT"`/`"Counted Cash"`) — fixed the assertion to match actual
+behavior, not the source. `npm run test:offline` is now 181/181.
 
-**H3. MEDIUM** — `docx` is a production dependency (`package.json`) with zero runtime imports;
-only the unwired `scripts/generate_*.{js,cjs,py}` doc generators use it, and none of those are
-wired to any npm script. Every other dependency is genuinely used
-(`@tauri-apps/plugin-updater` shows 0 static imports but is dynamically imported at
-`src/components/DesktopUpdater.jsx:22` — keep it, it's a false positive).
+**H3. MEDIUM. ✅ FIXED (this session).**
+`docx` moved from `dependencies` to `devDependencies` — it has zero runtime imports; only the
+unwired `scripts/generate_*.{js,cjs}` doc generators use it, and keeping it as a dev dependency
+preserves those scripts for whoever maintains `USER_MANUAL.docx` etc. without shipping it in
+every production install. `package-lock.json` updated (`npm install --package-lock-only`). Every
+other dependency confirmed genuinely used (`@tauri-apps/plugin-updater` is dynamically imported
+at `src/components/DesktopUpdater.jsx:22` — a false positive, correctly left alone).
 
-**H4. LOW** — Root is cluttered with process/merge docs (`MERGE_COMPLETION_SUMMARY.md`,
-`MERGE_EXECUTION_GUIDE.md`, `RESTRUCTURING_NOTES.md`, `QUICK_START_CHECKLIST.md`,
-`SETUP_INSTRUCTIONS.txt`) and a debug harness (`scripts/debug-pb-login.mjs`) shipped alongside
-production scripts.
+**H4. LOW. ✅ FIXED (this session).**
+`MERGE_COMPLETION_SUMMARY.md`, `MERGE_EXECUTION_GUIDE.md`, `RESTRUCTURING_NOTES.md`,
+`QUICK_START_CHECKLIST.md`, `SETUP_INSTRUCTIONS.txt` moved to `docs/process/` (`git mv`, history
+preserved). No other file referenced their root-level paths. **Not done:**
+`scripts/debug-pb-login.mjs` left in place — deleting or moving someone's debug tool without
+knowing whether it's still in active use is a judgment call for the client, not something to
+guess at during a cleanup pass.
 
-**H5. LOW** — See S9 above (dead policy stub) — cross-referenced here as hygiene too.
+**H5. LOW. ✅ FIXED (this session).**
+`allowsCashierBarcodeLogin` (`src/cashier-pos/utils/cashierLoginPolicy.js`) renamed to
+`isBarcodeProvided` — the old name implied a real policy gate (format validation, an allow-list)
+that never existed; it only ever checked for a non-empty value, and the actual authority is the
+server (`POST /api/cashier/auth/barcode`). Behavior unchanged — deliberately did not add stricter
+format validation (e.g. digit-only) without evidence of the full range of legitimate barcode
+formats this system accepts; renaming for honesty was the safe fix, inventing new validation
+rules was not. The old test's name and assertions were also misleading (asserted nothing specific
+to a "92" prefix despite the test name); rewritten to match what the function actually does.
 
 ---
 
-## Deferred (unchanged from prior audit — still out of scope for the active remediation pass)
+## Status as of this session's remediation pass
 
-- S4, S6, S7, S8 (support-relay hardening, default-password policy, delete guard, CORS
-  tightening) — real, tracked above, not blocking the security-first pass which targets
-  S1/S2/S3/S5 specifically (the approval-barcode/credential/auth-bypass/privilege-escalation
-  cluster).
-- H1/H2/H3/H4 hygiene cleanup — tracked, scheduled after money-correctness.
+Every item in this register is now either **✅ FIXED**, **🔶 PARTIALLY FIXED** (with the
+remaining piece spelled out inline, not silently dropped), or explicitly called out as
+**deferred** with a reason. Nothing was rushed to look complete — see each finding above for the
+exact boundary of what landed.
 
-## How to resume
+**Still open, real work:**
+- **S2/M1/T3**: two PocketBase schema migrations are written and reviewed but **not yet run
+  against production** — `scripts/add-refund-reporting-schema.mjs` and
+  `scripts/add-sale-item-line-id.mjs` (`npm run pb:migrate:refund-schema` and `npm run
+  pb:migrate:sale-item-line-id`). Also S2: the exposed PocketBase superuser password and
+  `DEFAULT_CASHIER_PASSWORD` still need rotating via the PocketHost dashboard — this requires the
+  client's own account access.
+- **S4, S6, S7, S8** (support-relay hardening, default-password policy, delete guard, CORS
+  tightening) — real findings, never in scope for this pass (which targeted the
+  approval-barcode/credential/auth-bypass/privilege-escalation cluster specifically).
+- **M1**: schema and cloud write are done; wiring `netSaleAmount`/`netSaleUnits` into the actual
+  admin dashboard/FSN report builders is not (see M1 above for exactly what's left and why it was
+  deliberately not rushed).
+- **T3**: the correctness bug (same-SKU-two-lines under-deduction) is fixed; the `pb.createBatch()`
+  request-volume optimization is a separate, larger redesign, not done.
+- **H4**: `scripts/debug-pb-login.mjs` left in place, a judgment call for the client.
 
-Work order for the active remediation: **S1 → S2 → S3 → S5** (security), then
-**M2 → M3 → M6 → M5 → M4 → M1** (money correctness, cheapest/most self-contained first), then
-**T1 → T2 → T3** (sync/request-volume — T3 lands after M4 since stable transaction numbers and
-per-line `lineId` are what make batched writes keyable correctly), then **H1 → H2 → H3 → H4**.
-Full rationale and step-by-step detail for each item lives in
-`C:\Users\ASUS\.claude\plans\run-another-audit-check-golden-wave.md`. Each fix should land with a
-test written first; `npm run test:offline` must stay green throughout (114/114 as of this
-register).
+Full rationale and step-by-step detail for the plan this session executed lives in
+`C:\Users\ASUS\.claude\plans\run-another-audit-check-golden-wave.md`. Every fix landed with a test
+written first; `npm run test:offline` is 181/181 and `npm run test:vercel` is 3/3 as of this
+register, both now wired into CI (`.github/workflows/ci.yml`).

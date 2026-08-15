@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Eye, EyeSlash, Cart, UpcScan } from 'react-bootstrap-icons';
 import { cashierApi } from '../services/api';
 import { normalizeBarcode } from '../utils/barcodeUtils';
-import { allowsCashierBarcodeLogin } from '../utils/cashierLoginPolicy';
+import { isBarcodeProvided } from '../utils/cashierLoginPolicy';
 import styles from '../styles/CashierLogin.module.css';
 
 const QUICK_LOGIN_CACHE_KEY = 'nexa_cashier_quick_accounts';
@@ -99,7 +99,7 @@ const CashierLogin = ({ onLogin }) => {
     setError('');
 
     const normalized = normalizeBarcode(barcode);
-    if (!allowsCashierBarcodeLogin(normalized)) {
+    if (!isBarcodeProvided(normalized)) {
       setError('Cashier barcode is required');
       return;
     }
