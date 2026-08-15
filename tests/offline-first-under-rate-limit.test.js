@@ -78,11 +78,18 @@ test('local sale write, void, and partial refund all succeed purely offline whil
     assert.equal(stored.status, 'pending')
     assert.equal((await cashierDb.products.get('product-rate-limit-test')).quantity, 15)
 
-    // 2. voidLocalSale: voiding must succeed locally and restore stock.
+    // 2. voidLocalSale: voiding must succeed locally and restore stock. The
+    // sale was never uploaded (still purely local, rate-limited), so the
+    // pendingSales row is tombstoned (voidPending: true) rather than
+    // deleted -- it must stay in the queue for uploadSale to observe and
+    // clean up on a later sync tick, otherwise an in-flight upload racing
+    // this exact void would have no way to learn about it (see M5).
     const voided = await voidLocalSale(sale.clientSaleId, { voidedBy: 'tester', reason: 'rate limit guard test' })
     assert.equal(isPocketBaseRateLimited(), true, 'cooldown must remain untouched by a purely local void')
     assert.equal(voided.status, 'voided')
-    assert.equal(await cashierDb.pendingSales.count(), 0)
+    assert.equal(await cashierDb.pendingSales.count(), 1, 'the tombstoned row stays queued for uploadSale to reconcile later')
+    const tombstoned = await cashierDb.pendingSales.get(sale.clientSaleId)
+    assert.equal(tombstoned.voidPending, true)
     assert.equal((await cashierDb.products.get('product-rate-limit-test')).quantity, 20, 'voiding must restore the full quantity')
 
     // 3. adjustLocalSale: a partial refund on a second sale must succeed

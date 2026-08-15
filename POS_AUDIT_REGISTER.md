@@ -207,12 +207,27 @@ so on retry it can adopt a *different* colliding sale as "already uploaded" and 
 writes against the wrong record (`:761-771`, and the void/adjust path at `:705-711`).
 (Was tracker B1.)
 
-**M5. HIGH — Void issued mid-upload is silently lost cloud-side.** `voidLocalSale` deletes the
-queued row (`saleRepository.js:228-242`) while `uploadSale` already holds it in memory and
-unconditionally deletes/marks-synced after uploading (`syncEngine.js:811-814`) with no status
-re-read. The cloud keeps `status: 'completed'`, cloud stock stays deducted, and no void op is
-queued because `desktopApi.js:1255` only queues one when `syncStatus === 'synced'`. Stock is
-double-counted. (Was tracker B9.)
+**M5. HIGH — Void issued mid-upload is silently lost cloud-side. ✅ FIXED (this session).**
+Was: `voidLocalSale` deleted the queued row while `uploadSale` already held it in memory and
+unconditionally deleted/marked-synced after uploading, with no status re-read. The cloud kept
+`status: 'completed'`, cloud stock stayed deducted, and no void op was queued because
+`desktopApi.js` only queued one when `syncStatus === 'synced'`. Stock was double-counted. (Was
+tracker B9.)
+Fix: `voidLocalSale` (`saleRepository.js`) now tombstones the `pendingSales` row (sets
+`voidPending: true` plus reason/approver/timestamp) instead of deleting it outright, whenever the
+sale is still queued for upload — a bare delete gave an in-flight `uploadSale` call (which already
+holds its own in-memory copy, read before the void's transaction started) no way to learn a void
+had just happened. `uploadSale` (`syncEngine.js`) now checks this twice: on entry, a sale that was
+already tombstoned before this tick started skips the cloud entirely (nothing was ever created,
+nothing to undo); and again immediately before its final "mark synced" write, re-reading the
+*current* Dexie row rather than trusting the in-memory copy — if tombstoned by then, it queues a
+`voidCompletedSale` cloud op (the cloud sale this exact call just created still needs undoing)
+instead of marking the sale synced. New `tests/cashier-void-tombstone.test.js` covers both paths
+directly against `CashierSyncEngine.uploadSale`, including simulating the race by mutating the
+Dexie row from inside a fake `sales.create` call. Also updated
+`tests/offline-first-under-rate-limit.test.js`, whose old assertion (`pendingSales.count() === 0`
+after void) predated tombstoning and is now the expected `1` (tombstoned, not deleted) until a
+sync tick reconciles it. `npm run test:offline` (128/128) and `npm run test:vercel` (3/3) pass.
 
 **M6. HIGH — Cash in/out double-taps double-count the drawer. ✅ FIXED (this session).** New
 finding, not in the prior tracker.

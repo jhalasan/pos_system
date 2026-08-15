@@ -227,13 +227,34 @@ export async function voidLocalSale(clientSaleId, metadata = {}) {
 
   await cashierDb.transaction('rw', ...transactionTables, async () => {
     await restoreProductStock(sale.items)
-    await cashierDb.pendingSales.delete(clientSaleId)
+
+    // If this sale is still sitting in the upload queue, an upload attempt
+    // may already be in flight for it right now (uploadSale in
+    // syncEngine.js holds its own in-memory copy, read before this
+    // transaction started). A bare delete here would let that in-flight
+    // upload finish unaware anything happened: it would create the sale in
+    // the cloud as a normal completed sale, with no way to know a void was
+    // just requested -- leaving the cloud copy "completed" and cloud stock
+    // deducted forever, while local stock has already been restored above.
+    // Tombstoning instead of deleting lets uploadSale re-check this flag
+    // right before its final write and react instead of finishing blind.
+    const stillQueued = await cashierDb.pendingSales.get(clientSaleId)
+    if (stillQueued) {
+      await cashierDb.pendingSales.update(clientSaleId, {
+        voidPending: true,
+        voidReason: metadata.reason || '',
+        voidedBy: metadata.voidedBy || '',
+        voidedAt: metadata.voidedAt || new Date().toISOString(),
+      })
+    } else {
+      await cashierDb.pendingSales.delete(clientSaleId)
+    }
 
     if (canStoreCompletedSales) {
       await cashierDb.completedSales.put({
         ...sale,
         status: 'voided',
-        syncStatus: sale.syncStatus === 'synced' ? 'voided' : 'voided',
+        syncStatus: 'voided',
         voidedAt: metadata.voidedAt || new Date().toISOString(),
         voidedBy: metadata.voidedBy || '',
         voidReason: metadata.reason || '',
@@ -244,7 +265,7 @@ export async function voidLocalSale(clientSaleId, metadata = {}) {
   return {
     ...sale,
     status: 'voided',
-    syncStatus: sale.syncStatus === 'synced' ? 'voided' : 'voided',
+    syncStatus: 'voided',
     voidedAt: metadata.voidedAt || new Date().toISOString(),
     voidedBy: metadata.voidedBy || '',
     voidReason: metadata.reason || '',

@@ -747,7 +747,49 @@ export class CashierSyncEngine extends EventTarget {
     await cashierDb.pendingOps.delete(op.id)
   }
 
+  // A void requested while this sale was still queued (or is in the middle
+  // of uploading right now) tombstones the pendingSales row instead of
+  // deleting it -- see the comment in voidLocalSale (saleRepository.js) for
+  // why. `neverReachedCloud` means this tick never even attempted
+  // sales.create for it, so there is nothing cloud-side to undo; otherwise
+  // this exact upload just created the cloud sale (or it already existed
+  // from an earlier attempt) and a void op must be queued to undo it.
+  async finalizeVoidedSaleUpload(sale, { neverReachedCloud }) {
+    if (!neverReachedCloud) {
+      const opId = globalThis.crypto?.randomUUID?.() || `voidCompletedSale_${Date.now()}`
+      await cashierDb.pendingOps.put({
+        id: opId,
+        type: 'voidCompletedSale',
+        entityId: sale.clientSaleId,
+        payload: {
+          transactionNo: sale.transactionNo,
+          cashierId: sale.cashierId,
+          approverId: '',
+          reason: sale.voidReason || '',
+          items: sale.items || [],
+          createdAt: sale.voidedAt || new Date().toISOString(),
+        },
+        status: 'pending',
+        attempts: 0,
+        lastError: '',
+        nextAttemptAt: 0,
+        createdAt: Date.now(),
+      })
+    }
+    await cashierDb.pendingSales.delete(sale.clientSaleId)
+    if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+      await cashierDb.completedSales.update(sale.clientSaleId, { syncStatus: 'voided' })
+    }
+  }
+
   async uploadSale(sale) {
+    if (sale.voidPending) {
+      // Voided before this tick ever attempted to upload it -- nothing
+      // reached the cloud, so there is nothing to undo there.
+      await this.finalizeVoidedSaleUpload(sale, { neverReachedCloud: true })
+      return
+    }
+
     const cashierId = await this.resolveCashierId(sale.cashierId)
     const resolvedSale = cashierId === sale.cashierId ? sale : { ...sale, cashierId }
     let cloudSale
@@ -806,6 +848,23 @@ export class CashierSyncEngine extends EventTarget {
           timestamp: resolvedSale.createdAt || new Date().toISOString(),
         }, { requestKey: `discount:${resolvedSale.clientSaleId}` }).catch(() => null)
       }
+    }
+
+    // Re-read the queue row fresh right before the final write, rather than
+    // trusting the in-memory `sale` captured when this upload started: a
+    // void issued while this exact upload was in flight tombstones the row
+    // (see voidLocalSale) but this call has no other way to learn about it.
+    // Without this check, the sale above just got created in the cloud as
+    // "completed" with stock deducted, and finishing normally here would
+    // mark it synced with no void ever reaching the cloud -- permanently
+    // double-counting stock (restored locally, still deducted in the cloud).
+    const currentPending = await cashierDb.pendingSales.get(sale.clientSaleId)
+    if (currentPending?.voidPending) {
+      await this.finalizeVoidedSaleUpload(
+        { ...sale, voidReason: currentPending.voidReason, voidedAt: currentPending.voidedAt },
+        { neverReachedCloud: false },
+      )
+      return
     }
 
     await cashierDb.pendingSales.delete(sale.clientSaleId)
