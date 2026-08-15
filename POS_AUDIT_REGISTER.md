@@ -162,13 +162,47 @@ exist, and its test (`tests/cashier-login-barcode.test.js`) passes vacuously.
 
 ## M — Money correctness
 
-**M1. CRITICAL — Refunds never reach the cloud at all.** No `sale_adjustments` collection and
-no `refunded_amount`/`refunded_at` field anywhere in `pocketbase/pb_schema.json` (`sales` fields
-end at `updated`, line 824). Sync only flips `sales.status` to `'adjusted'`
-(`src/cashier-pos/offline/syncEngine.js:740-743`). Amount, items, reason, approver, timestamp
-exist **only** in local Dexie (`saleRepository.js:322`). Wipe a terminal and every refund ever
-issued on it is gone; cloud revenue reports have never netted out a single refund.
-(Was tracker task 6 / B6 — true severity is higher than "reporting.")
+**M1. CRITICAL — Refunds never reach the cloud at all. 🔶 PARTIALLY FIXED (this session) — the
+data now reaches the cloud; reports do not read it yet.**
+Was: no `sale_adjustments` collection and no `refunded_amount`/`refunded_at` field anywhere in
+`pocketbase/pb_schema.json`. Sync only flipped `sales.status` to `'adjusted'`. Amount, items,
+reason, approver, timestamp existed only in local Dexie. Wipe a terminal and every refund ever
+issued on it is gone; cloud revenue reports never netted out a single refund. (Was tracker task 6
+/ B6 — true severity is higher than "reporting.")
+Done:
+- New `scripts/add-refund-reporting-schema.mjs` (additive-only migration): `sales.refunded_amount`,
+  `sales.refunded_units`, `sales.refunded_at`, and a new `sale_adjustments` collection
+  (`sale_id`, `adjustment_id`, `type`, `amount`, `items`, `reason`, `note`, `approver_id`,
+  `cashier_id`, `restock`, `created_at`). `total_amount` is never mutated by any of this — see the
+  file's header comment for the reasoning. **Not yet run against production** — per the client's
+  choice this session, schema migrations are applied by them directly (`npm run
+  pb:migrate:refund-schema` once ready); this script was written and code-reviewed but not
+  executed against a live PocketBase from here.
+- `src/cashier-pos/offline/syncEngine.js`'s `adjustCompletedSale` op handler now creates a
+  `sale_adjustments` record (idempotency-anchored on `adjustment_id`, the same UUID the terminal
+  already generates locally at refund time) and additively increments
+  `sales.refunded_amount`/`refunded_units`/`refunded_at` — both writes tolerate a 404/400 from an
+  un-migrated PocketBase without failing the whole op, so this lands safely whether or not the
+  schema migration has run yet.
+- New `src/utils/saleTotals.js` — pure `netSaleAmount`/`netSaleUnits` helpers. A legacy row with no
+  refunded fields returns its full original total/units, completely unchanged.
+- Tests: `tests/sale-totals.test.js` (6 cases — legacy row, full/partial/over refund, snake_case
+  vs camelCase, missing items array) and `tests/sale-adjustment-cloud-sync.test.js` (3 cases — new
+  refund creates the record and increments additively; a retry of the same `adjustment_id` does
+  not double-count; a second different refund adds to, not replaces, the running total).
+**Not done — the actual gap remaining:** wiring `netSaleAmount`/`netSaleUnits` into the admin
+dashboard and FSN report builders so they actually read the new fields. Investigated and
+deliberately deferred rather than rushed: `server/index.js`'s dashboard stats endpoint
+(`buildDashboardMetrics`-equivalent, roughly lines 1794-1920) sums `sale.total_amount` directly
+across ~10 separate call sites (daily/monthly/hourly/hourly-trend/payment-method breakdowns), and
+`buildSalesMetrics` (~666-700, powers `/api/inventory/fsn`) sums `sale_items.quantity_sold`
+per-product with no per-item refund awareness at all — correct units netting there needs to join
+`sale_adjustments.items` by `(sale_id, product_id)`, not just subtract a sale-level total. Doing
+only part of that ~15-site sweep would leave the dashboard's own KPI cards on inconsistent
+accounting bases (some netted, some not), which is worse than leaving all of them consistently
+un-netted for now. This is real, scoped, follow-up work — not something to retrofit at the tail of
+an already large session against a live business's revenue numbers without dedicated review.
+`npm run test:offline` (143/143) and `npm run test:vercel` (3/3) pass.
 
 **M2. HIGH — Refund restock under-restocks every multi-unit product. ✅ FIXED (this session,
 together with M3).**

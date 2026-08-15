@@ -365,6 +365,13 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
       note: entry.note,
       restock: entry.restock,
       createdAt: entry.createdAt,
+      // The idempotency anchor for the durable sale_adjustments cloud
+      // record (M1) — the same id this local adjustment entry already
+      // carries, so a retried upload looks itself up by this value instead
+      // of creating a duplicate refund record or double-counting
+      // refunded_amount.
+      adjustmentId: entry.id,
+      amount: entry.amount,
     },
     status: 'pending',
     attempts: 0,

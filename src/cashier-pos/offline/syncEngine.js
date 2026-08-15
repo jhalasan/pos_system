@@ -35,6 +35,11 @@ function numberFieldValue(value) {
   return String(Number.isFinite(number) ? Math.max(0, quantizeQty(number)) : 0)
 }
 
+function numberOrZero(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
 function emitSyncStatus(state, message) {
   globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
     detail: {
@@ -755,6 +760,57 @@ export class CashierSyncEngine extends EventTarget {
           }, { requestKey: `${op.id}:${productId}:movement` })
           await reconcileProductStock(this.pb, product.id)
       }
+      if (op.type === 'adjustCompletedSale' && payload.adjustmentId) {
+        // Durable cloud record of this refund/exchange (M1) — today, before
+        // this, a refund only ever flipped sales.status; the amount, items,
+        // reason, and approver existed only in this terminal's local Dexie
+        // DB. adjustment_id is the idempotency anchor: a retried upload of
+        // the same op must not create a second sale_adjustments record or
+        // double-increment refunded_amount.
+        const existingAdjustment = await this.pb.collection('sale_adjustments').getFirstListItem(
+          this.pb.filter('adjustment_id = {:adjustmentId}', { adjustmentId: payload.adjustmentId }),
+          { requestKey: null },
+        ).catch(() => null)
+
+        if (!existingAdjustment) {
+          await this.pb.collection('sale_adjustments').create({
+            sale_id: sale.id,
+            adjustment_id: payload.adjustmentId,
+            type: payload.type === 'exchange' ? 'exchange' : 'refund',
+            amount: numberFieldValue(payload.amount),
+            items: payload.items || [],
+            reason: payload.reason || '',
+            note: payload.note || '',
+            approver_id: isPocketBaseRecordId(payload.approverId) ? payload.approverId : undefined,
+            cashier_id: isPocketBaseRecordId(payload.cashierId) ? payload.cashierId : undefined,
+            restock: payload.restock !== false,
+            created_at: payload.createdAt || new Date().toISOString(),
+          }, { requestKey: `${op.id}:adjustment` }).catch((error) => {
+            // sale_adjustments may not exist yet on a PocketBase instance
+            // that hasn't run scripts/add-refund-reporting-schema.mjs. Do
+            // not fail the whole op over the reporting side-effect -- the
+            // sale's own status update below (the part that already worked)
+            // must still land.
+            if (error?.status !== 404 && error?.status !== 400) throw error
+          })
+
+          const nextRefundedAmount = numberFieldValue(numberOrZero(sale.refunded_amount) + numberOrZero(payload.amount))
+          const nextRefundedUnits = numberFieldValue(
+            numberOrZero(sale.refunded_units)
+            + (payload.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+          )
+          await this.pb.collection('sales').update(sale.id, {
+            refunded_amount: nextRefundedAmount,
+            refunded_units: nextRefundedUnits,
+            refunded_at: payload.createdAt || new Date().toISOString(),
+          }, { requestKey: `${op.id}:refund-totals` }).catch((error) => {
+            // Same as above: additive reporting fields may not exist yet on
+            // an un-migrated PocketBase instance.
+            if (error?.status !== 404 && error?.status !== 400) throw error
+          })
+        }
+      }
+
       await this.pb.collection('sales').update(sale.id, {
         status: op.type === 'voidCompletedSale' ? 'voided' : 'adjusted',
         ...(op.type === 'voidCompletedSale' && payload.approverId ? { voided_by: payload.approverId } : {}),
