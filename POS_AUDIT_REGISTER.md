@@ -1,0 +1,254 @@
+# POS System Audit Register
+
+Status as of 2026-08-15 (re-audit pass; supersedes `PENDING_REVENUE_STOCK_FIXES.md`, which
+tracked only the revenue/stock half of the first audit). This is now the single source of truth
+for open findings across the whole system — security, money-correctness, sync/request-volume,
+and hygiene. Renamed because the scope is no longer revenue/stock-only.
+
+## How this document is organized
+
+- **Verified fixed** — merged to `main`, re-confirmed still true in this pass.
+- **S — Security**, **M — Money correctness**, **T — Sync/request-volume**, **H — Hygiene.**
+  Each item has a severity, exact file:line, and what was actually read (not assumed).
+- **Locked-in decisions** — do not re-litigate without the client.
+- **How to resume.**
+
+Full original plan detail (first audit's ground truth) lives at
+`C:\Users\ASUS\.claude\plans\the-client-has-a-golden-lobster.md`. The current remediation plan
+(this re-audit's ground truth) lives at
+`C:\Users\ASUS\.claude\plans\run-another-audit-check-golden-wave.md`.
+
+## Locked-in decisions (do not re-litigate without the client)
+
+- Transaction numbers stay **all-numeric** (BIR/bookkeeping safety).
+- Refunds net out of **both revenue and units-sold/FSN analytics**, not revenue alone.
+- Rate limiter is tuned for **1-2 terminals**, self-tuning from there (already shipped).
+- Remediation order for this pass: **security first, then money-correctness, then the
+  sync/request-volume work, then hygiene.** The security items were previously deferred; they
+  are promoted because the manager-approval control that money-correctness fixes (refund/void)
+  depend on is currently defeatable by any cashier (see S1).
+
+## Verified fixed (merged to `main`)
+
+- **Rate limiting** (`f6eab1b`, 2026-08-15): `src/utils/pocketbaseGovernor.js` (token bucket +
+  AIMD, escalating cooldown, priority lanes, keyed single-flight, cross-window persistence via
+  `localStorage`), `src/utils/pacedPocketBase.js` (wraps every `new PocketBase(...)` site — all
+  10 across both apps), `src/utils/pocketbaseRateLimit.js` rewritten as a zero-behavior-change
+  facade. 103/103 offline tests passing at the time.
+- **Stock reconciler rewrite** (`5d3967e`): `src/utils/stockMovementReconciler.js` sorts by
+  `created` (server autodate) not `created_at` (client timestamp); reads a bounded window (50
+  movements) instead of a product's entire history; `findStockMovement` only treats a genuine
+  404 as "no movement yet" — any other error now fails loudly instead of being swallowed by
+  `.catch(() => null)`, which was the direct cause of stock double-deduction on retry.
+  Chain-mismatch detection is a non-blocking diagnostic log, not a gate (an earlier draft made it
+  a hard gate and was caught in review as a regression). 114/114 offline tests passing.
+
+Both re-confirmed accurate in this pass — no regressions.
+
+---
+
+## S — Security (new to this register; previously deferred, now promoted)
+
+**S1. CRITICAL — Manager approval barcodes are readable by cashiers.**
+`scripts/configure-pocketbase-rules.mjs:15,87-93` sets
+`authorization_barcodes.listRule = '@request.auth.role = "cashier" || ... "admin"'`, overriding
+the admin-only (`null`) rule in `pocketbase/pb_schema.json`. The cashier client bulk-downloads
+them into IndexedDB — `src/cashier-pos/services/desktopApi.js:453-477`. Same script does it
+again for `users` at `:171-177`, and manager identity is just a `92`-prefixed `void_barcode`
+(`server/formatters.js:196-199`). Any cashier can open DevTools → IndexedDB and read the manager
+approval code, then self-approve every void, refund, and cash-out. Note the schema file and the
+script disagree; the script is what actually runs against PocketBase.
+
+**S2. CRITICAL — Live superuser credentials committed.**
+`.env.example:3-8` holds `POCKETBASE_URL=https://nexasystems.pockethost.io`,
+`POCKETBASE_SUPERUSER_EMAIL=admin@email.com`, `POCKETBASE_SUPERUSER_PASSWORD=admin123`,
+`DEFAULT_CASHIER_PASSWORD=cashier123` — byte-identical to the working `.env`, so these are real
+values, not placeholders. `.env` itself is correctly gitignored and was never committed;
+`.env.example` is tracked and these values are in git history.
+
+**S3. HIGH — All `/api/cashier/*` routes are unauthenticated.**
+`server/index.js:837-841` short-circuits the auth middleware for any path starting `/cashier/`.
+Reachable with no token: `POST /cashier/sales` (ring sales, mutate stock, `:1066`),
+`POST /cashier/sales/:id/void` (`:1164`), `GET /cashier/quick-login-accounts` (`:1652`),
+`POST /cashier/auth/barcode` (`:813`), and `POST /cashier/authorize-void` (`:915`) with no rate
+limit — barcodes are `90` + timestamp + 2 digits, brute-forceable.
+
+**S4. HIGH — `/api/support/tickets` is an open mail relay.** Mounted at `server/index.js:144`,
+before the auth middleware. `api/support/tickets.js:15-21` sets
+`Access-Control-Allow-Origin: '*'`. No auth, no rate limit, no captcha, 5 attachments accepted —
+can drain the Gmail App Password credential.
+
+**S5. HIGH — `PATCH /api/cashiers/:id` escalates privileges by omission.**
+`server/formatters.js:193-212`: `status: input.status || 'active'` re-enables terminated staff;
+`role: 'cashier'` hard-coded demotes an admin; `permissions: parseSellingUnits(input.permissions)`
+returns `[]` for a missing field, and per the rules script's own comment
+(`configure-pocketbase-rules.mjs:178`) empty means *full legacy access*. A name-only edit that
+omits these fields grants full permissions.
+
+**S6. MEDIUM** — `server/formatters.js:194` hardcodes fallback password `'cashier123'`, no
+forced change on first login.
+
+**S7. MEDIUM** — `DELETE /api/cashiers/:id` (`server/index.js:1660`) has no target-role,
+self-delete, or last-admin guard.
+
+**S8. MEDIUM** — CORS accepts any `*.ngrok-free.dev` origin with `credentials: true` whenever
+`NODE_ENV !== 'production'`, which the `npm run host` deploy path never sets
+(`server/index.js:45-49,97-108`); `isSameRequestOrigin` also trusts unvalidated
+`X-Forwarded-Host` (`:60-67`).
+
+**S9. LOW** — `src/cashier-pos/utils/cashierLoginPolicy.js:1-5`
+`allowsCashierBarcodeLogin` only rejects the empty string; its name implies a gate that does not
+exist, and its test (`tests/cashier-login-barcode.test.js`) passes vacuously.
+
+---
+
+## M — Money correctness
+
+**M1. CRITICAL — Refunds never reach the cloud at all.** No `sale_adjustments` collection and
+no `refunded_amount`/`refunded_at` field anywhere in `pocketbase/pb_schema.json` (`sales` fields
+end at `updated`, line 824). Sync only flips `sales.status` to `'adjusted'`
+(`src/cashier-pos/offline/syncEngine.js:740-743`). Amount, items, reason, approver, timestamp
+exist **only** in local Dexie (`saleRepository.js:322`). Wipe a terminal and every refund ever
+issued on it is gone; cloud revenue reports have never netted out a single refund.
+(Was tracker task 6 / B6 — true severity is higher than "reporting.")
+
+**M2. HIGH — Refund restock under-restocks every multi-unit product.**
+`adjustLocalSale` rebuilds `returnedItems` and drops `conversion`
+(`src/cashier-pos/offline/saleRepository.js:267-291`). `restoreProductStock` then hits
+`toBaseStockQuantity(qty, undefined)` → `stockUtils.js:5` defaults to `1`. Refund one case of 24
+and 1 unit comes back, not 24. The cloud op is the same: `desktopApi.js:1299` queues raw UI
+`items`, which `Cashier.jsx:2052-2058` builds without `conversion`. The **void** path is correct
+by contrast (`saleRepository.js:229` passes stored `sale.items`), which is why this went
+unnoticed. (Was tracker B4.)
+
+**M3. HIGH — Refund quantity is unclamped in the cloud op.**
+`desktopApi.js:1294-1315` queues the cloud op with raw UI `items` **before** calling
+`adjustLocalSale`, and never feeds the clamped result back. `adjustLocalSale` is the only place
+clamping happens (`saleRepository.js:270-276`). Refund 99 of a qty-2 line: local restocks 2,
+cloud restocks 99. Also two independent Dexie transactions — `queueCashierOperation` writes
+`pendingOps` standalone (`desktopApi.js:553`) while `adjustLocalSale`'s transaction covers only
+`[products, completedSales]` (`saleRepository.js:311`), so a crash between them loses one side.
+(Was tracker B5/B8.)
+
+**M4. HIGH — `transactionNo` collides every 10 seconds.**
+`desktopApi.js:435-444`: `${YYYYMMDD}${charSum(terminalId)%100}${String(Date.now()).slice(-4)}`.
+The suffix is epoch-ms mod 10000 — wraps every 10s. Minted at `:1078` outside the Dexie
+transaction (which opens later at `saleRepository.js:114`). `completedSales` indexes it
+non-uniquely (`db.js:59`) and `sales.transaction_no` has no unique index (`pb_schema.json:650`).
+`findExistingCloudSale` (`syncEngine.js:205-221`) matches on `transaction_no + cashier_id` only,
+so on retry it can adopt a *different* colliding sale as "already uploaded" and run item/stock
+writes against the wrong record (`:761-771`, and the void/adjust path at `:705-711`).
+(Was tracker B1.)
+
+**M5. HIGH — Void issued mid-upload is silently lost cloud-side.** `voidLocalSale` deletes the
+queued row (`saleRepository.js:228-242`) while `uploadSale` already holds it in memory and
+unconditionally deletes/marks-synced after uploading (`syncEngine.js:811-814`) with no status
+re-read. The cloud keeps `status: 'completed'`, cloud stock stays deducted, and no void op is
+queued because `desktopApi.js:1255` only queues one when `syncStatus === 'synced'`. Stock is
+double-counted. (Was tracker B9.)
+
+**M6. HIGH — Cash in/out double-taps double-count the drawer.** New finding, not in the prior
+tracker. `src/cashier-pos/pages/Cashier.jsx:2192` `confirmCashFlow` has no busy flag and no
+early return; the button (`:4520`) is never disabled and Enter re-submits (`:4592`). Two
+`cash_movements` rows, `shiftSession.cashOut` incremented twice (`:2228-2230`), two activity
+logs — and the admin Audit page derives cash movements from those log lines, so a ₱2,000
+cash-out reconciles ₱4,000 short. `recordCashMovement(...).catch(() => {})` at `:2233` also means
+a failed drawer write is silent while the activity log still claims it happened. Same gap exists
+in `confirmVoidTransaction` (`:2122`, button `:4068`) — a double-invoke double-logs a void as
+"0 item(s), ₱0.00" because the cart is cleared at `:2133` before the second invocation reads it.
+**Correction to the prior tracker:** checkout itself is already correctly guarded
+(`Cashier.jsx:2831` `if (paymentFlow.busy) return`, `:3793` `disabled={paymentFlow.busy}`) — the
+"double-tap double-rings a sale" note in the old deferred list is stale. The real gap is cash
+flow and void, not checkout.
+
+---
+
+## T — Sync / request-volume
+
+**T1. Admin sync engine parity.** Cashier has reachability TTL caching (15s success / 8s
+failure, `syncEngine.js:26-27,272-286`) and schedule jitter (0–15s one-sided — **correction to
+prior tracker text, which said ±15s** — `:31,242,265`); admin has neither
+(`admin/offline/syncEngine.js:302-313,295`). The admin "Sync" click builds
+`new CashierSyncEngine({ pb })` per click (`admin/services/desktopApi.js:1960`), which also
+resets `lastProductRefreshAt` to 0, forcing a full `products.getFullList()` on every click.
+Manual-sync backoff wipe confirmed in both apps
+(`admin/desktopApi.js:1951-1959`, `cashier/desktopApi.js:1107-1111`). Cashier catalog-refresh
+`lastProductRefreshAt = 0` on failure confirmed (`cashier/offline/syncEngine.js:371`), causing
+full-catalog retry every tick with no backoff after any failure.
+**New in this pass:** admin's activity-log upload queue
+(`admin/offline/syncEngine.js:334-336,399-417`) has no `attempts`/`nextAttemptAt` filter at all —
+a single permanently-invalid log row means one wasted `create` every tick, forever, with no
+backoff. **Also new:** admin's own `pendingOps` failed-reset does not clear `attempts`
+(`admin/desktopApi.js:1951`), so an already-exhausted op is re-marked pending and immediately
+re-fails on attempt 11 (asymmetric with cashier's queues, which do reset `attempts`).
+
+**T2. Cashier sales-history N+1 + quick-login fan-out.** `groupSaleItemsBySaleId` needs
+extracting into `src/utils/saleItemGrouping.js` (mirrors a fix already shipped on the admin
+side) — confirmed it does not exist yet. Cashier history still does one request per sale.
+`emailVisibility: true` should be set at quick-login enable-time instead of a page-load backfill
+loop issuing one `users.update` per user.
+
+**T3. Sale-upload batch rewrite.** `ensureCloudSaleItems` (`syncEngine.js:95-156`) +
+`ensureCloudStockDeduction` (`syncEngine.js:158-203`) issue ~8–9 PocketBase requests per line
+item, serially, all awaited. The barcode fallback inside `ensureCloudSaleItems` issues a
+**whole-catalog `getFullList` inside the per-item loop** (`:121`) — confirmed, not previously
+called out this precisely. `pb.createBatch()` is used nowhere in the repo (grep: 0 hits). No
+`lineId` exists anywhere (grep: 0 hits) — everything downstream keys on `productId` only, so two
+cart lines of the same product at different units/prices collapse into one key. The
+`Math.max(baseQuantityToDeduct, syncedQty)` fudge is at `:171` and is worse than previously
+described: `syncedQty` sums `quantity_sold` (selling units) while `baseQuantityToDeduct` is base
+units — the `Math.max` compares two different units and its result is written straight into
+`stock_movements.quantity` (`:190`). Same ordering fix needed in admin's scan/stock-out/adjust
+path and cashier's void/refund path. (Was tracker B2/B3.)
+
+---
+
+## H — Hygiene / non-POS
+
+**H1. HIGH (repo weight)** — `db_json_export/` is 176 MB across 50 tracked files
+(`DocumentItem.json` 87 MB, `Document.json` 65 MB, `Payment.json` 23 MB), raw legacy
+transaction/customer records, permanent in git history. Only consumer is
+`scripts/import-legacy-json.mjs:10`, a migration already executed (results in
+`migration_reports/`).
+
+**H2. HIGH (process)** — `.github/workflows/` contains only `release.yml` (tag-triggered Tauri
+build). **No CI runs tests or lint at all.** `test:offline` in `package.json` names 29 files
+explicitly while `tests/` holds 39 test files — 9 exist but are executed by no npm script:
+`payment-flow.test.js`, `cash-sales.test.js`, `shift-close-receipt.test.js`,
+`cashier-transaction-restore.test.js`, `cashier-login-barcode.test.js`,
+`audit-log-parsing.test.js`, `product-pricing.test.js`, `receipt-pdf.test.js`,
+`developer-mode.test.js`.
+
+**H3. MEDIUM** — `docx` is a production dependency (`package.json`) with zero runtime imports;
+only the unwired `scripts/generate_*.{js,cjs,py}` doc generators use it, and none of those are
+wired to any npm script. Every other dependency is genuinely used
+(`@tauri-apps/plugin-updater` shows 0 static imports but is dynamically imported at
+`src/components/DesktopUpdater.jsx:22` — keep it, it's a false positive).
+
+**H4. LOW** — Root is cluttered with process/merge docs (`MERGE_COMPLETION_SUMMARY.md`,
+`MERGE_EXECUTION_GUIDE.md`, `RESTRUCTURING_NOTES.md`, `QUICK_START_CHECKLIST.md`,
+`SETUP_INSTRUCTIONS.txt`) and a debug harness (`scripts/debug-pb-login.mjs`) shipped alongside
+production scripts.
+
+**H5. LOW** — See S9 above (dead policy stub) — cross-referenced here as hygiene too.
+
+---
+
+## Deferred (unchanged from prior audit — still out of scope for the active remediation pass)
+
+- S4, S6, S7, S8 (support-relay hardening, default-password policy, delete guard, CORS
+  tightening) — real, tracked above, not blocking the security-first pass which targets
+  S1/S2/S3/S5 specifically (the approval-barcode/credential/auth-bypass/privilege-escalation
+  cluster).
+- H1/H2/H3/H4 hygiene cleanup — tracked, scheduled after money-correctness.
+
+## How to resume
+
+Work order for the active remediation: **S1 → S2 → S3 → S5** (security), then
+**M2 → M3 → M6 → M5 → M4 → M1** (money correctness, cheapest/most self-contained first), then
+**T1 → T2 → T3** (sync/request-volume — T3 lands after M4 since stable transaction numbers and
+per-line `lineId` are what make batched writes keyable correctly), then **H1 → H2 → H3 → H4**.
+Full rationale and step-by-step detail for each item lives in
+`C:\Users\ASUS\.claude\plans\run-another-audit-check-golden-wave.md`. Each fix should land with a
+test written first; `npm run test:offline` must stay green throughout (114/114 as of this
+register).
