@@ -44,7 +44,7 @@ async function cashierApiRequest(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
   })
   const text = await res.text().catch(() => '')
-  let payload = null
+  let payload
   try {
     payload = text ? JSON.parse(text) : null
   } catch {
@@ -601,7 +601,7 @@ async function authorizeManagerApproval(authorization = {}) {
     } catch (error) {
       rememberPocketBaseRateLimit(error)
       if (!canUseOfflineLoginFallback(error)) {
-        throw new Error(error?.message || 'Manager approval failed.')
+        throw new Error(error?.message || 'Manager approval failed.', { cause: error })
       }
       // Network/rate-limit-shaped failure -- fall through to the offline
       // hash check below rather than failing outright.

@@ -1823,6 +1823,7 @@ app.get('/api/cashier/quick-login-accounts', asyncRoute(async (_req, res) => {
     records
       .filter((record) => !String(record.void_barcode || '').startsWith('92'))
       .map((record) => {
+        // eslint-disable-next-line no-unused-vars -- destructured only to omit it from the response
         const { cashierBarcode, ...cashier } = toCashier(record)
         return cashier
       }),
