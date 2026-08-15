@@ -191,7 +191,14 @@ export function toUserAccount(record) {
 }
 
 export function cashierPayload(input = {}) {
-  const password = input.password || process.env.DEFAULT_CASHIER_PASSWORD || 'cashier123'
+  // S6: no fallback password. A caller that omits one used to silently get
+  // DEFAULT_CASHIER_PASSWORD or the literal 'cashier123' -- a predictable,
+  // shared password every such account would carry until someone thought to
+  // change it. The admin UI already requires a real password for a new
+  // account; this makes the server enforce the same rule instead of trusting
+  // client-side validation alone (see the route's own check below, which
+  // rejects the request outright rather than reaching PocketBase with none).
+  const password = String(input.password || '')
   const requestedRole = String(input.role || '').trim() === 'manager' ? 'manager' : 'cashier'
   const barcode = String(input.cashierBarcode || input.void_barcode || '').trim()
   const staffBarcode = requestedRole === 'manager' && barcode && !barcode.startsWith('92')

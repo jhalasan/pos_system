@@ -330,8 +330,24 @@ New `tests/cashier-update-payload.test.js` (9 cases, mirroring `cashier-patch-pa
 coverage). `npm run test:offline` (212/212) and `npm run test:vercel` (6/6) pass; `npm run build`,
 `npm run build:vercel`, and `npm run build:cashier` (the actual Tauri build target) all clean.
 
-**S6. MEDIUM** — `server/formatters.js:194` hardcodes fallback password `'cashier123'`, no
-forced change on first login.
+**S6. MEDIUM — Hardcoded fallback password with no forced change. ✅ FIXED (follow-up session).**
+Was: `server/formatters.js:194`'s `cashierPayload` fell back to
+`process.env.DEFAULT_CASHIER_PASSWORD || 'cashier123'` whenever the caller omitted a password —
+a predictable, shared default every such account would silently carry. Checked the Tauri app's
+own local `cashierPayload` (`src/admin-page/services/desktopApi.js:772-797`) for the same gap:
+it does not have one — it only includes `password`/`passwordConfirm` in the payload when the
+caller actually supplies one, which PocketBase's own schema validation would reject outright
+(password is a required field on the `users` auth collection), so the vulnerability was isolated
+to the Express/Vercel path. The admin UI's own form (`CashierManagement.jsx:157-160`) already
+requires a real, ≥8-character password for a new account, so this fallback was effectively
+unreachable through normal use — but a direct API call bypassing the form would still hit it.
+Fix: `cashierPayload` no longer invents a password at all (returns `''` if none supplied);
+`POST /api/cashiers` now rejects the request outright with a 400 if the password is missing or
+under 8 characters, matching the client-side rule as a real server-side backstop instead of
+trusting JS validation alone. New `tests/cashier-create-password.test.js` (3 cases): no password
+supplied never falls back to the literal string or the env var (tested by temporarily setting
+`DEFAULT_CASHIER_PASSWORD` and confirming it's still ignored), and a real supplied password still
+passes through correctly. `npm run test:offline` (239/239) and `npm run test:vercel` (7/7) pass.
 
 **S7. MEDIUM** — `DELETE /api/cashiers/:id` (`server/index.js:1660`) has no target-role,
 self-delete, or last-admin guard.

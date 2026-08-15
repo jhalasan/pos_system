@@ -1584,6 +1584,13 @@ app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, r
   if (!payload.name || !payload.email) {
     return res.status(400).json({ error: 'Name and email are required.' })
   }
+  // S6: reject a missing/weak password outright instead of letting
+  // cashierPayload fall back to a predictable shared default -- the admin
+  // UI already enforces this client-side; this is the server-side backstop
+  // for a direct API call that skips the form.
+  if (!payload.password || payload.password.length < 8) {
+    return res.status(400).json({ error: 'A password of at least 8 characters is required for a new account.' })
+  }
 
   const created = await (await pbCollection('users')).create(payload)
   const staffRole = staffRoleFromRequest(req)
