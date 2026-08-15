@@ -214,19 +214,28 @@ re-read. The cloud keeps `status: 'completed'`, cloud stock stays deducted, and 
 queued because `desktopApi.js:1255` only queues one when `syncStatus === 'synced'`. Stock is
 double-counted. (Was tracker B9.)
 
-**M6. HIGH — Cash in/out double-taps double-count the drawer.** New finding, not in the prior
-tracker. `src/cashier-pos/pages/Cashier.jsx:2192` `confirmCashFlow` has no busy flag and no
-early return; the button (`:4520`) is never disabled and Enter re-submits (`:4592`). Two
-`cash_movements` rows, `shiftSession.cashOut` incremented twice (`:2228-2230`), two activity
-logs — and the admin Audit page derives cash movements from those log lines, so a ₱2,000
-cash-out reconciles ₱4,000 short. `recordCashMovement(...).catch(() => {})` at `:2233` also means
-a failed drawer write is silent while the activity log still claims it happened. Same gap exists
-in `confirmVoidTransaction` (`:2122`, button `:4068`) — a double-invoke double-logs a void as
-"0 item(s), ₱0.00" because the cart is cleared at `:2133` before the second invocation reads it.
-**Correction to the prior tracker:** checkout itself is already correctly guarded
-(`Cashier.jsx:2831` `if (paymentFlow.busy) return`, `:3793` `disabled={paymentFlow.busy}`) — the
-"double-tap double-rings a sale" note in the old deferred list is stale. The real gap is cash
-flow and void, not checkout.
+**M6. HIGH — Cash in/out double-taps double-count the drawer. ✅ FIXED (this session).** New
+finding, not in the prior tracker.
+Was: `confirmCashFlow` had no busy flag and no early return; the button was never disabled and
+Enter re-submitted. Two `cash_movements` rows, `shiftSession.cashOut` incremented twice, two
+activity logs — and the admin Audit page derives cash movements from those log lines, so a
+₱2,000 cash-out reconciled ₱4,000 short. `recordCashMovement(...).catch(() => {})` also meant a
+failed drawer write was silent while the activity log still claimed it happened. Same gap existed
+in `confirmVoidTransaction` — a double-invoke double-logged a void as "0 item(s), ₱0.00" because
+the cart is cleared before the second invocation reads it.
+**Correction to the prior tracker:** checkout itself was already correctly guarded (`Cashier.jsx`
+`if (paymentFlow.busy) return`, `disabled={paymentFlow.busy}`) — the "double-tap double-rings a
+sale" note in the old deferred list was stale. The real gap was cash flow and void, not checkout.
+Fix: added `voidActionLoading` / `cashFlowActionLoading` state (`src/cashier-pos/pages/Cashier.jsx`),
+mirroring the pattern already correct on the refund/exchange lookup flow (`lookupActionLoading`).
+Both `confirmVoidTransaction` and `confirmCashFlow` now early-return while busy, both buttons are
+`disabled` while busy (also disables the barcode/approval input during void so a stray keystroke
+can't re-trigger it), and the Enter-key submit paths route through the same guarded functions so
+they're covered for free. `recordCashMovement(...).catch(() => {})` was removed — a failed drawer
+write now propagates to the existing catch block, which reports the failure instead of silently
+proceeding to log a success. No component test harness exists in this repo for `Cashier.jsx`
+(verified by bundle-check + full offline/vercel suites, which don't regress). `npm run
+test:offline` (126/126) and `npm run test:vercel` (3/3) pass.
 
 ---
 

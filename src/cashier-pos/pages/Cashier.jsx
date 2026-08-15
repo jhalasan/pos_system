@@ -528,6 +528,8 @@ const Cashier = ({ onLogout, user }) => {
   const [lookupRestock, setLookupRestock] = useState(true);
   const [lookupReturnQty, setLookupReturnQty] = useState({});
   const [lookupActionLoading, setLookupActionLoading] = useState(false);
+  const [voidActionLoading, setVoidActionLoading] = useState(false);
+  const [cashFlowActionLoading, setCashFlowActionLoading] = useState(false);
   const [showReceiptSettings, setShowReceiptSettings] = useState(false);
   const [receiptSettings, setReceiptSettings] = useState(loadReceiptSettings);
   const [shortcutSettings, setShortcutSettings] = useState(loadShortcutSettings);
@@ -2120,11 +2122,14 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const confirmVoidTransaction = async (override = {}) => {
+    if (voidActionLoading) return;
+    setVoidActionLoading(true);
     const code = Object.hasOwn(override || {}, 'code') ? override.code : voidApproval.code;
     try {
       await cashierApi.authorizeVoid(code);
     } catch (err) {
       voidApproval.setError(err.message || 'Manager barcode is not valid.');
+      setVoidActionLoading(false);
       return;
     }
 
@@ -2144,6 +2149,7 @@ const Cashier = ({ onLogout, user }) => {
     setShowVoidAuth(false);
     voidApproval.reset();
     showNotification('Transaction has been voided.');
+    setVoidActionLoading(false);
   };
 
   const openCashRegisterForActivity = async (reason, detail) => {
@@ -2190,6 +2196,7 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const confirmCashFlow = async (override = {}) => {
+    if (cashFlowActionLoading) return;
     if (!shiftSession) {
       setShowShiftOpen(true);
       cashFlowApproval.setError('Open a cashier shift before recording cash flow.');
@@ -2206,11 +2213,12 @@ const Cashier = ({ onLogout, user }) => {
     }
 
     const payload = override.code ? { code: String(override.code || '').trim() } : override.email ? { email: String(override.email || '').trim(), password: override.password } : cashFlowApproval.getPayload();
+    if (!payload.code && (!payload.email || !payload.password)) {
+      cashFlowApproval.setError('Enter manager approval credentials.');
+      return;
+    }
+    setCashFlowActionLoading(true);
     try {
-      if (!payload.code && (!payload.email || !payload.password)) {
-        cashFlowApproval.setError('Enter manager approval credentials.');
-        return;
-      }
       const approver = await cashierApi.authorizeVoid(payload);
       const label = cashFlowType === 'in' ? 'Cash In' : 'Cash Out';
       const signedAmount = cashFlowType === 'in' ? amount : -amount;
@@ -2230,6 +2238,9 @@ const Cashier = ({ onLogout, user }) => {
           }
         : null;
       if (nextSession) persistShiftSession(nextSession);
+      // Not swallowed: a lost drawer-movement write must not be reported to
+      // the cashier as a success. If this throws, the catch below surfaces
+      // it and does not log the movement as recorded.
       await cashierApi.recordCashMovement?.({
         sessionId: shiftSession.id,
         cashierId: user?.id,
@@ -2241,7 +2252,7 @@ const Cashier = ({ onLogout, user }) => {
         approvalMethod: approver?.method || cashFlowApproval.method,
         deviceId,
         createdAt: new Date().toISOString(),
-      }).catch(() => {});
+      });
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: label,
@@ -2256,6 +2267,8 @@ const Cashier = ({ onLogout, user }) => {
         detail: withDevice(`Failed cash flow attempt by ${user?.name || user?.email || 'Cashier'} for ${cashFlowType === 'in' ? 'cash in' : 'cash out'} PHP ${amount.toFixed(2)}.`),
       }).catch(() => {});
       cashFlowApproval.setError((typeof err === 'string' ? err : err.message) || 'Unable to record cash flow.');
+    } finally {
+      setCashFlowActionLoading(false);
     }
   };
 
@@ -4065,7 +4078,9 @@ const Cashier = ({ onLogout, user }) => {
             }}>
               Cancel
             </button>
-            <button className="btn btn-danger" onClick={confirmVoidTransaction}>Void Transaction</button>
+            <button className="btn btn-danger" onClick={confirmVoidTransaction} disabled={voidActionLoading}>
+              {voidActionLoading ? 'Voiding…' : 'Void Transaction'}
+            </button>
           </div>
         }
       >
@@ -4076,6 +4091,7 @@ const Cashier = ({ onLogout, user }) => {
           value={voidApproval.code}
           onChange={(e) => voidApproval.setCode(e.target.value)}
           onKeyDown={submitOnEnter(confirmVoidTransaction, (e) => ({ code: e.currentTarget.value }))}
+          disabled={voidActionLoading}
           autoFocus
         />
         {voidApproval.error && <div style={{ color: '#dc2626', marginTop: 10 }}>{voidApproval.error}</div>}
@@ -4516,8 +4532,10 @@ const Cashier = ({ onLogout, user }) => {
         title="Cash Flow"
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" onClick={resetCashFlowModal}>Cancel</button>
-            <button className="btn btn-primary" onClick={confirmCashFlow}>Approve & Open Register</button>
+            <button className="btn btn-outline" onClick={resetCashFlowModal} disabled={cashFlowActionLoading}>Cancel</button>
+            <button className="btn btn-primary" onClick={confirmCashFlow} disabled={cashFlowActionLoading}>
+              {cashFlowActionLoading ? 'Processing…' : 'Approve & Open Register'}
+            </button>
           </div>
         }
       >
