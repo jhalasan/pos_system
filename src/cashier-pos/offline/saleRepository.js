@@ -285,6 +285,12 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
             // applied once across the whole cart, so it must be re-applied
             // here or a discounted sale gets refunded at full price.
             price: discountedUnitPrice(item.price, sale.discountPercent),
+            // Carried through from the *stored* sale line, never from
+            // caller-supplied UI input: a refund restock must convert using
+            // the same unit the sale was originally rung up in, or a
+            // multi-unit product (e.g. a case of 24) restocks 1 base unit
+            // instead of 24.
+            conversion: Number(item.conversion) > 0 ? Number(item.conversion) : 1,
           }
         : null
     })
@@ -308,12 +314,43 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
     restock: adjustment.restock !== false,
   }
 
+  // The cloud op is queued from this SAME clamped, conversion-carrying
+  // `entry` — never from raw caller input — and in the same Dexie
+  // transaction as the local stock/adjustment write. Queuing raw UI items
+  // separately (the old behavior, in desktopApi.js) meant a refund of 99
+  // units on a 2-unit line restocked 2 locally but 99 in the cloud, and a
+  // crash between two independent writes could lose either side.
+  const cloudOpId = globalThis.crypto?.randomUUID?.() || `adjustCompletedSale_${Date.now()}`
+  const cloudOp = {
+    id: cloudOpId,
+    type: 'adjustCompletedSale',
+    entityId: clientSaleId,
+    payload: {
+      transactionNo: sale.transactionNo,
+      cashierId: entry.cashierId || sale.cashierId,
+      approverId: String(adjustment.approverId || ''),
+      type: entry.type,
+      items: entry.items,
+      reason: entry.reason,
+      note: entry.note,
+      restock: entry.restock,
+      createdAt: entry.createdAt,
+    },
+    status: 'pending',
+    attempts: 0,
+    lastError: '',
+    nextAttemptAt: 0,
+    createdAt: Date.now(),
+  }
+
   const canStoreCompletedSales = await hasTable('completedSales')
-  const transactionTables = [cashierDb.products]
+  const transactionTables = [cashierDb.products, cashierDb.pendingOps]
   if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
 
   await cashierDb.transaction('rw', ...transactionTables, async () => {
     if (entry.restock) await restoreProductStock(returnedItems)
+
+    await cashierDb.pendingOps.put(cloudOp)
 
     if (canStoreCompletedSales) {
       await cashierDb.completedSales.put({

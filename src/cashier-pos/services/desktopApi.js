@@ -1159,18 +1159,13 @@ export const desktopCashierApi = {
 
     const approver = await authorizeManagerApproval(authorization)
 
-    await queueCashierOperation('adjustCompletedSale', {
-        transactionNo: localSale.transactionNo,
-        cashierId: cashierId || localSale.cashierId,
-        approverId: approver.id || '',
-        type: type === 'exchange' ? 'exchange' : 'refund',
-        items: items || [],
-        reason: String(reason || ''),
-        note: String(note || ''),
-        restock: restock !== false,
-        createdAt: new Date().toISOString(),
-    }, saleId)
-
+    // adjustLocalSale clamps the requested quantities against what's
+    // actually left to refund and queues the cloud op itself, atomically, in
+    // the same Dexie transaction as the local stock restore — using that
+    // same clamped result, never these raw `items` from the caller. See
+    // saleRepository.js for why: queuing raw UI input separately let a
+    // refund of 99 units on a 2-unit line restock 2 locally but 99 in the
+    // cloud.
     const adjustedSale = await adjustLocalSale(saleId, {
       type,
       items,
@@ -1178,9 +1173,13 @@ export const desktopCashierApi = {
       note,
       restock: restock !== false,
       approvedBy: approver.name,
+      approverId: approver.id || '',
       cashierId,
       createdAt: new Date().toISOString(),
     })
+
+    const activeRuntime = await runtime()
+    activeRuntime.syncEngine.schedule(0)
 
     const latestAdjustment = adjustedSale.adjustments?.at(-1)
     await createCloudActivityLog({

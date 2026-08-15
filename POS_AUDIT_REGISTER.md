@@ -170,23 +170,32 @@ exist **only** in local Dexie (`saleRepository.js:322`). Wipe a terminal and eve
 issued on it is gone; cloud revenue reports have never netted out a single refund.
 (Was tracker task 6 / B6 — true severity is higher than "reporting.")
 
-**M2. HIGH — Refund restock under-restocks every multi-unit product.**
-`adjustLocalSale` rebuilds `returnedItems` and drops `conversion`
-(`src/cashier-pos/offline/saleRepository.js:267-291`). `restoreProductStock` then hits
-`toBaseStockQuantity(qty, undefined)` → `stockUtils.js:5` defaults to `1`. Refund one case of 24
-and 1 unit comes back, not 24. The cloud op is the same: `desktopApi.js:1299` queues raw UI
-`items`, which `Cashier.jsx:2052-2058` builds without `conversion`. The **void** path is correct
-by contrast (`saleRepository.js:229` passes stored `sale.items`), which is why this went
-unnoticed. (Was tracker B4.)
+**M2. HIGH — Refund restock under-restocks every multi-unit product. ✅ FIXED (this session,
+together with M3).**
+Was: `adjustLocalSale` rebuilt `returnedItems` and dropped `conversion`
+(`src/cashier-pos/offline/saleRepository.js:267-291`), so `restoreProductStock` hit
+`toBaseStockQuantity(qty, undefined)` → defaulted to `1`. Refund one case of 24, get 1 unit back.
+The cloud op was the same. The void path was always correct by contrast (it passes stored
+`sale.items`), which is why this went unnoticed. (Was tracker B4.)
 
-**M3. HIGH — Refund quantity is unclamped in the cloud op.**
-`desktopApi.js:1294-1315` queues the cloud op with raw UI `items` **before** calling
-`adjustLocalSale`, and never feeds the clamped result back. `adjustLocalSale` is the only place
-clamping happens (`saleRepository.js:270-276`). Refund 99 of a qty-2 line: local restocks 2,
-cloud restocks 99. Also two independent Dexie transactions — `queueCashierOperation` writes
-`pendingOps` standalone (`desktopApi.js:553`) while `adjustLocalSale`'s transaction covers only
-`[products, completedSales]` (`saleRepository.js:311`), so a crash between them loses one side.
-(Was tracker B5/B8.)
+**M3. HIGH — Refund quantity is unclamped in the cloud op. ✅ FIXED (this session, together with
+M2).**
+Was: `desktopApi.js` queued the cloud op with raw UI `items` **before** calling `adjustLocalSale`,
+and never fed the clamped result back — refund 99 of a qty-2 line and local restocks 2 while cloud
+restocks 99. Also two independent Dexie transactions, so a crash between them could lose either
+side. (Was tracker B5/B8.)
+Fix (both M2 and M3 together, since they're the same root cause — the cloud op and the local
+restock used to be built from two different, independently-computed item lists): `returnedItems`
+in `adjustLocalSale` now carries `conversion` through from the *stored* sale line
+(`saleRepository.js`). The cloud op is now queued *inside* `adjustLocalSale`'s own Dexie
+transaction (added `cashierDb.pendingOps` to `transactionTables`), built from the exact same
+clamped `entry.items` used for the local restock — not a second, separately-computed item list
+from raw UI input. `desktopApi.js`'s `adjustCompletedSale` no longer calls
+`queueCashierOperation` itself; it just passes `approverId` through to `adjustLocalSale` and
+triggers `syncEngine.schedule(0)` afterward. New tests in `tests/return-disposition.test.js`:
+refunding a case (conversion 24) restocks 24 base units; requesting 99 units on a 2-unit line
+queues exactly one cloud op clamped to 2, carrying the same conversion. `npm run test:offline`
+(126/126) and `npm run test:vercel` (3/3) pass.
 
 **M4. HIGH — `transactionNo` collides every 10 seconds.**
 `desktopApi.js:435-444`: `${YYYYMMDD}${charSum(terminalId)%100}${String(Date.now()).slice(-4)}`.
