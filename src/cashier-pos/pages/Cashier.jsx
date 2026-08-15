@@ -15,10 +15,11 @@ import { normalizeBarcode } from '../utils/barcodeUtils';
 import { buildShiftCloseReceiptText, cancelReceiptPrinterJob, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { getDeveloperModeSettings } from '../../utils/developerMode';
-import { getAvailableStockUnits, toBaseStockQuantity } from '../offline/stockUtils';
+import { getAvailableStockUnits } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { restoreCashierTransactions } from '../utils/transactionRestore';
+import { reservedQuantityDetail } from '../utils/cartReservation';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import styles from '../styles/Cashier.module.css';
@@ -727,21 +728,9 @@ const Cashier = ({ onLogout, user }) => {
     ? shiftCloseDenominationTotal
     : Number(shiftClosingAmount || 0);
 
-  const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => {
-    const normalizedProductId = String(productId || '')
-    return transactions.reduce((sum, txn) => {
-      // Only consider active/pending transactions when reserving stock.
-      if (txn.id === excludedTransactionId) return sum;
-      if (txn.status === 'completed' || txn.status === 'voided') return sum;
-      return txn.cartItems.reduce((innerSum, cartItem) => {
-        const itemProductId = String(cartItem.productId || cartItem.id || '')
-        const itemId = String(cartItem.id || '')
-        if (itemProductId !== normalizedProductId) return innerSum
-        if (excludedCartItemId && itemId === excludedCartItemId) return innerSum
-        return innerSum + toBaseStockQuantity(cartItem.quantity, cartItem.conversion)
-      }, sum)
-    }, 0)
-  };
+  const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => (
+    reservedQuantityDetail(transactions, productId, { excludedTransactionId, excludedCartItemId }).reservedBaseQty
+  );
 
   const getRemainingStock = (item, excludedTransactionId = null, excludedCartItemId = null) => {
     const productId = String(item.productId || item.id || '')
@@ -754,6 +743,24 @@ const Cashier = ({ onLogout, user }) => {
     const productId = item.productId || item.id;
     const source = products.find((product) => product.id === productId) || item;
     return getRemainingStock(source, excludedTransactionId);
+  };
+
+  // Explains *why* an add-to-cart was blocked when real stock exists but is
+  // reserved by another open transaction tab -- see M7 in
+  // POS_AUDIT_REGISTER.md. Uses the same (no excluded transaction) basis as
+  // stockForProduct's own add-to-cart checks, so the message matches the
+  // number that actually caused the block.
+  const describeStockReservation = (product, unit) => {
+    const detail = reservedQuantityDetail(transactions, String(product?.id || ''))
+    if (detail.reservedBaseQty <= 0) return ''
+    const conversion = Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1
+    const reservedUnits = isFractional(product)
+      ? floorQty(detail.reservedBaseQty / conversion)
+      : Math.floor(detail.reservedBaseQty / conversion)
+    if (reservedUnits <= 0) return ''
+    const unitName = String(unit?.unit || product?.unit || 'unit').trim() || 'unit'
+    const tabNames = detail.holdingTransactions.map((txn) => txn.name).join(', ')
+    return ` ${formatQty(reservedUnits)} ${pluralUnit(unitName, reservedUnits)} held in an open transaction (${tabNames}) -- close or complete it to free that stock.`
   };
 
   const pendingCartUnits = pendingCartProduct ? normalizeSellingUnits(pendingCartProduct) : [];
@@ -2374,7 +2381,8 @@ const Cashier = ({ onLogout, user }) => {
     const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product) }, selectedUnit)
 
     if (availableQty <= 0) {
-      showNotification(`${product.name} is out of stock for ${selectedUnit?.unit || product.unit || 'this unit'}.`);
+      const reservationNote = describeStockReservation(product, selectedUnit)
+      showNotification(`${product.name} is out of stock for ${selectedUnit?.unit || product.unit || 'this unit'}.${reservationNote}`);
       return;
     }
 
@@ -2428,7 +2436,8 @@ const Cashier = ({ onLogout, user }) => {
     }
 
     if (requestedQty > availableQty) {
-      setInitialCartQuantityError(`Only ${availableQty} ${pluralUnit(unitName, availableQty)} available for ${product.name}.`)
+      const reservationNote = describeStockReservation(product, selectedUnit)
+      setInitialCartQuantityError(`Only ${availableQty} ${pluralUnit(unitName, availableQty)} available for ${product.name}.${reservationNote}`)
       return false
     }
 

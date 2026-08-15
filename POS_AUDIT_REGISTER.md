@@ -303,6 +303,42 @@ Dexie row from inside a fake `sales.create` call. Also updated
 after void) predated tombstoning and is now the expected `1` (tombstoned, not deleted) until a
 sync tick reconciles it. `npm run test:offline` (128/128) and `npm run test:vercel` (3/3) pass.
 
+**M7. MEDIUM — A stray open transaction tab silently blocks adding an in-stock product, with no
+indication why. ✅ FIXED (diagnostic; underlying reservation design intentionally unchanged).**
+New finding, reported by the client, not in the prior tracker.
+Was: `openInitialQuantityPrompt` (`src/cashier-pos/pages/Cashier.jsx:2372-2379`) blocks add-to-cart
+with a plain "out of stock" message whenever `getAvailableStockUnits` returns 0 — but that figure
+is real stock minus a client-side reservation (`getReservedBaseQuantity`, `Cashier.jsx:730-744`)
+that subtracts whatever quantity of the same product sits in the cart of *any other open
+transaction tab* on that terminal (the cashier UI supports multiple simultaneous held-sale tabs,
+`handleNewTransaction`, `Cashier.jsx:3019-3028`). That reservation has three gaps: (1) no expiry —
+a tab created and then forgotten reserves its quantity for the rest of the shift
+(`restoreCashierTransactions`, `src/cashier-pos/utils/transactionRestore.js`, has no time-based
+cleanup); (2) no cap on how many tabs can exist; (3) no visibility — the error message didn't say
+the block was caused by another tab, and the product tile the cashier is looking at still shows the
+real, unreserved `product.qty`, so the screen says "in stock" while add-to-cart refuses it. Only
+cleared by a proper end-of-shift close (`clearCashierTransactions`, `:1309`) or a fresh login with
+no open shift (`:1745`), so it can persist a full workday.
+Fix: the reservation math is extracted into a pure, testable helper —
+`reservedQuantityDetail(transactions, productId, options)`
+(`src/cashier-pos/utils/cartReservation.js`) — with no behavior change (same aggregation
+`getReservedBaseQuantity` did inline before). Both add-to-cart block messages
+(`openInitialQuantityPrompt`'s "out of stock" notification and `commitProductToCart`'s "Only N
+available" error) now call a new `describeStockReservation(product, unit)` that appends which tab
+is holding the reservation and how much, e.g. "3 pieces held in an open transaction (Tab 2) --
+close or complete it to free that stock." This lets a cashier self-diagnose and close the stray tab
+immediately instead of assuming inventory is wrong.
+**Deliberately not changed:** the reservation behavior itself (no expiry, no tab cap). Auto-expiring
+or capping tabs is a business-judgment call (what idle threshold is safe without risking a
+legitimate held sale getting silently dropped?) that needs the client's input, not something to
+guess at. The diagnostic fix directly resolves the reported symptom (confusion about why an
+in-stock item won't add) without touching the underlying multi-tab reservation design, which exists
+specifically to prevent overselling across simultaneously held sales.
+New `tests/cart-reservation.test.js` (9 cases): multi-tab summation, unit-conversion, completed/
+voided exclusion, `excludedTransactionId`/`excludedCartItemId` behavior, cross-product isolation,
+tab-name capture for messaging, malformed-input handling. `npm run test:offline` (198/198) and
+`npm run test:vercel` (3/3) pass; `npm run build` clean.
+
 **M6. HIGH — Cash in/out double-taps double-count the drawer. ✅ FIXED (this session).** New
 finding, not in the prior tracker.
 Was: `confirmCashFlow` had no busy flag and no early return; the button was never disabled and
