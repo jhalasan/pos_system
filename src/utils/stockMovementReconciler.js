@@ -25,6 +25,38 @@ export async function findStockMovement(pb, productId, referenceId) {
   }
 }
 
+// T3 (request-volume half): a multi-line sale used to call findStockMovement
+// once per line -- N requests just to learn which lines (usually none, on a
+// first attempt) were already deducted by an earlier, interrupted upload
+// attempt. reference_id values are already unique per line (they embed the
+// sale's clientSaleId and the line's own lineId/productId), so a single
+// query for "any movement whose reference_id is one of these" replaces all
+// of them. Returns a Map keyed by reference_id for O(1) lookup by callers.
+//
+// Deliberately does NOT swallow a request failure into "found nothing" --
+// see findStockMovement's own comment above for why: a 429/5xx/network blip
+// here must propagate so the caller's existing per-op retry/backoff runs
+// again, instead of silently treating an unknown state as "not yet
+// deducted," which is exactly what would cause a double deduction on retry.
+export async function findExistingStockMovementsByReference(pb, referenceIds = []) {
+  const uniqueReferenceIds = [...new Set(referenceIds.filter(Boolean))]
+  if (!uniqueReferenceIds.length) return new Map()
+
+  const filter = uniqueReferenceIds
+    .map((referenceId) => pb.filter('reference_id = {:referenceId}', { referenceId }))
+    .join(' || ')
+
+  // getList (not getFullList) to match the bounded-read convention already
+  // established by reconcileProductStock above -- a single sale never has
+  // more lines than this page size, so one page is always enough.
+  const { items: movements } = await pb.collection('stock_movements').getList(1, 200, {
+    filter,
+    requestKey: null,
+  })
+
+  return new Map(movements.map((movement) => [movement.reference_id, movement]))
+}
+
 // Movement deltas are summed in integer thousandths (millis) rather than as
 // floating-point numbers. Fractional quantities (e.g. 0.1 + 0.2) do not sum
 // exactly in floating point, and the reconcile step below compares the

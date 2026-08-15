@@ -61,6 +61,7 @@ function makeFakePb({ onSalesCreate } = {}) {
       if (name === 'products') {
         return {
           async getOne(id) { return { id, quantity: 100 } },
+          async getFullList() { return [{ id: 'product-1', quantity: 100 }] },
           async update() { return {} },
         }
       }

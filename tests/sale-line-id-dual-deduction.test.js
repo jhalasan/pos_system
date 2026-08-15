@@ -36,6 +36,7 @@ function makeFakePb() {
       if (name === 'products') {
         return {
           async getOne(id) { return { id, quantity: productQuantity } },
+          async getFullList() { return [{ id: 'product-1', quantity: productQuantity }] },
           async update(id, patch) { productQuantity = Number(patch.quantity); return { id, quantity: productQuantity } },
         }
       }

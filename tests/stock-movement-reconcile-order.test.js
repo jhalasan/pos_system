@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   findStockMovement,
+  findExistingStockMovementsByReference,
   stockQuantityFromMovements,
   reconcileProductStock,
 } from '../src/utils/stockMovementReconciler.js';
@@ -94,6 +95,79 @@ test('findStockMovement re-throws on a 429 (rate limit) instead of swallowing it
 test('findStockMovement re-throws on any other non-404 error', async () => {
   const pb = fakePbWithGetFirstListItem(500);
   await assert.rejects(() => findStockMovement(pb, 'product1', 'ref1'), (error) => error.status === 500);
+});
+
+// --- findExistingStockMovementsByReference: bulk replacement for N calls to
+// findStockMovement, one per sale line (T3 request-volume half) -----------
+
+test('returns an empty map without a request when there are no reference ids', async () => {
+  let calls = 0;
+  const pb = {
+    filter: (str) => str,
+    collection() {
+      calls += 1;
+      return { async getList() { return { items: [] }; } };
+    },
+  };
+  const result = await findExistingStockMovementsByReference(pb, []);
+  assert.equal(result.size, 0);
+  assert.equal(calls, 0, 'must not make any request for an empty input');
+});
+
+test('makes exactly one request regardless of how many reference ids are asked for', async () => {
+  let calls = 0;
+  const pb = {
+    filter: (str) => str,
+    collection() {
+      calls += 1;
+      return {
+        async getList() {
+          return { items: [{ reference_id: 'sale:s1:line-a', id: 'mv1' }] };
+        },
+      };
+    },
+  };
+  const result = await findExistingStockMovementsByReference(pb, [
+    'sale:s1:line-a', 'sale:s1:line-b', 'sale:s1:line-c',
+  ]);
+  assert.equal(calls, 1, 'one bulk request, not one per reference id');
+  assert.equal(result.get('sale:s1:line-a')?.id, 'mv1');
+  assert.equal(result.has('sale:s1:line-b'), false);
+});
+
+test('deduplicates repeated reference ids before building the request', async () => {
+  let requestedFilter = '';
+  const pb = {
+    filter: (str) => str,
+    collection() {
+      return {
+        async getList(_page, _perPage, options) {
+          requestedFilter = options.filter;
+          return { items: [] };
+        },
+      };
+    },
+  };
+  await findExistingStockMovementsByReference(pb, ['sale:s1:line-a', 'sale:s1:line-a']);
+  assert.equal(requestedFilter.split('||').length, 1, 'a duplicate reference id must not appear twice in the filter');
+});
+
+test('a request failure propagates rather than silently reporting "nothing found"', async () => {
+  // Mirrors findStockMovement's own contract (see its comment above): a
+  // 429/5xx/network blip must reach the caller's existing retry/backoff, not
+  // be swallowed into "no movement exists yet" -- that would let a retry
+  // proceed to deduct stock a second time for a line whose true state is
+  // simply unknown, not confirmed undeducted.
+  const pb = {
+    filter: (str) => str,
+    collection() {
+      return { async getList() { throw new Error('network blip'); } };
+    },
+  };
+  await assert.rejects(
+    () => findExistingStockMovementsByReference(pb, ['sale:s1:line-a']),
+    (error) => error.message === 'network blip',
+  );
 });
 
 // --- reconcileProductStock: bounded window + non-blocking mismatch --------
