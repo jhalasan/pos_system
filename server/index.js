@@ -19,6 +19,7 @@ import {
 import {
   activityLogPayload,
   cashierFormData,
+  cashierPatchPayload,
   deriveStatus,
   isFractional,
   productPayload,
@@ -1467,14 +1468,10 @@ app.post('/api/cashiers', upload.single('profile_img'), asyncRoute(async (req, r
 }))
 
 app.patch('/api/cashiers/:id', upload.single('profile_img'), asyncRoute(async (req, res) => {
-  const payload = cashierFormData(req.body || {}, req.file)
-  if (!String(req.body?.password || '').trim()) {
-    delete payload.password
-    delete payload.passwordConfirm
-  }
+  const payload = cashierPatchPayload(req.body || {}, req.file)
   const updated = await (await pbCollection('users')).update(req.params.id, payload)
   const staffRole = staffRoleFromRequest(req)
-  await createLog({ action: staffRole === 'manager' ? 'Manager' : 'Cashier', detail: `Updated ${staffRole} "${payload.email}"` })
+  await createLog({ action: staffRole === 'manager' ? 'Manager' : 'Cashier', detail: `Updated ${staffRole} "${payload.email || updated.email}"` })
   res.json(toCashier(updated))
 }))
 

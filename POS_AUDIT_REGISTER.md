@@ -124,12 +124,24 @@ before the auth middleware. `api/support/tickets.js:15-21` sets
 `Access-Control-Allow-Origin: '*'`. No auth, no rate limit, no captcha, 5 attachments accepted —
 can drain the Gmail App Password credential.
 
-**S5. HIGH — `PATCH /api/cashiers/:id` escalates privileges by omission.**
-`server/formatters.js:193-212`: `status: input.status || 'active'` re-enables terminated staff;
-`role: 'cashier'` hard-coded demotes an admin; `permissions: parseSellingUnits(input.permissions)`
-returns `[]` for a missing field, and per the rules script's own comment
-(`configure-pocketbase-rules.mjs:178`) empty means *full legacy access*. A name-only edit that
-omits these fields grants full permissions.
+**S5. HIGH — `PATCH /api/cashiers/:id` escalates privileges by omission. ✅ FIXED (this
+session).**
+Was: `server/formatters.js:193-212` ran every PATCH through the same `cashierPayload` built for
+POST (a brand-new record, where defaults are correct). `status: input.status || 'active'`
+re-enabled terminated staff on any edit that omitted status; `role: 'cashier'` was hard-coded on
+every update; `permissions: parseSellingUnits(input.permissions)` returned `[]` for a missing
+field, and per the rules script's own comment (`configure-pocketbase-rules.mjs:178`) empty means
+*full legacy access*. A name-only edit that omitted these fields silently granted full
+permissions and reactivated a deactivated account.
+Fix: new `cashierPatchPayload` (`server/formatters.js`) only includes a field in the update
+payload when the caller actually sent it — `status`, `permissions`, and `void_barcode` are left
+untouched if omitted, and `role` is never included at all (this app models a "manager" as a
+`role=cashier` account with a `92`-prefixed `void_barcode`, not a distinct role value — see
+`isManagerStaffRecord` — so there was never a legitimate reason for this endpoint to touch `role`
+in the first place). `PATCH /api/cashiers/:id` (`server/index.js`) now calls this instead of
+`cashierFormData`. New test `tests/cashier-patch-payload.test.js` (7 cases, added to
+`test:offline`) locks in the omission behavior. `npm run test:offline` (124/124) and `npm run
+test:vercel` (3/3) pass.
 
 **S6. MEDIUM** — `server/formatters.js:194` hardcodes fallback password `'cashier123'`, no
 forced change on first login.

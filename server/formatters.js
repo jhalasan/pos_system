@@ -222,6 +222,48 @@ export function cashierFormData(input = {}, file) {
   }
 }
 
+// A genuine partial update for PATCH /api/cashiers/:id -- unlike
+// cashierPayload (used for POST /api/cashiers, where every field
+// legitimately needs a default because the record is brand new), this must
+// never invent a value for a field the caller didn't send. cashierPayload's
+// defaults meant an edit that merely renamed a cashier would also silently
+// re-activate a deactivated account (status defaulted to 'active'),
+// overwrite the target's role to 'cashier' (demoting an admin if this
+// endpoint were ever pointed at an admin's id), and reset permissions to []
+// (which the rules script treats as "full legacy access", not "no access").
+export function cashierPatchPayload(input = {}, file) {
+  const payload = {}
+
+  if (input.name !== undefined) payload.name = String(input.name || '').trim()
+  if (input.email !== undefined) payload.email = String(input.email || '').trim()
+  if (input.shift !== undefined) payload.shift = input.shift || 'Morning'
+  if (input.status !== undefined) payload.status = input.status
+  if (input.permissions !== undefined) payload.permissions = parseSellingUnits(input.permissions)
+
+  if (input.cashierBarcode !== undefined || input.void_barcode !== undefined) {
+    const requestedRole = String(input.role || '').trim() === 'manager' ? 'manager' : 'cashier'
+    const barcode = String(input.cashierBarcode || input.void_barcode || '').trim()
+    payload.void_barcode = requestedRole === 'manager' && barcode && !barcode.startsWith('92')
+      ? `92${barcode}`
+      : barcode
+  }
+
+  const password = String(input.password || '').trim()
+  if (password) {
+    payload.password = password
+    payload.passwordConfirm = password
+  }
+
+  // role is intentionally never touched here: this app models a "manager"
+  // as a role="cashier" account with a 92-prefixed void_barcode (see
+  // isManagerStaffRecord in server/index.js), not a distinct role value, so
+  // there is no legitimate reason for this endpoint to change role at all.
+
+  if (file) payload.profile_img = new File([file.buffer], file.originalname, { type: file.mimetype })
+
+  return payload
+}
+
 export function toActivityLog(record) {
   const user = Array.isArray(record.expand?.user_id)
     ? record.expand.user_id[0]
