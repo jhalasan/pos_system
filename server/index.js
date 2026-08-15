@@ -10,6 +10,8 @@ import 'dotenv/config'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleTotals.js'
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import { accountDeletionError } from '../src/utils/accountDeletionGuard.js'
+import { isSameHost } from '../src/utils/corsOrigin.js'
+import { isCatalogActive } from '../src/utils/productLifecycle.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -51,7 +53,14 @@ const ngrokHostPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.dev$/i
 const ngrokAppPattern = /^https:\/\/[a-z0-9-]+\.ngrok-free\.app$/i
 const localNetworkHostPattern = /^(localhost|127(?:\.\d{1,3}){3}|\[::1\]|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[0-1])(?:\.\d{1,3}){2})$/i
 const isVercelAdminPortal = Boolean(process.env.VERCEL || process.env.ADMIN_WEB_ONLY === 'true')
-const allowDevelopmentOrigins = process.env.NODE_ENV !== 'production' && !isVercelAdminPortal
+// S8: this used to default to permissive (allowed unless NODE_ENV was
+// explicitly set to 'production') so any deployment that forgot to set
+// NODE_ENV -- which none of this project's own npm scripts do -- silently
+// ran with ngrok/local-network origins plus credentials accepted in
+// production. Flipped to fail-closed: the loose rules (used by Local Coding
+// Mode, LAN Team Testing Mode, and Remote Demo Mode -- see README.md) now
+// require deliberately opting in.
+const allowDevelopmentOrigins = String(process.env.ALLOW_DEV_CORS_ORIGINS || '').toLowerCase() === 'true' && !isVercelAdminPortal
 const desktopOrigins = new Set(['http://tauri.localhost', 'https://tauri.localhost', 'tauri://localhost'])
 
 function parseOrigin(origin) {
@@ -63,12 +72,11 @@ function parseOrigin(origin) {
 }
 
 function requestHost(req) {
-  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim()
-  return forwardedHost || req.get('host') || ''
+  return req.get('host') || ''
 }
 
 function isSameRequestOrigin(req, parsedOrigin) {
-  return Boolean(parsedOrigin && requestHost(req).toLowerCase() === parsedOrigin.host.toLowerCase())
+  return Boolean(parsedOrigin) && isSameHost(requestHost(req), parsedOrigin.host)
 }
 
 // Minimal in-memory sliding-window limiter for auth-adjacent endpoints
@@ -1980,9 +1988,14 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     })
     .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const totalRevenue = completedSales.reduce((sum, sale) => sum + netSaleAmount(sale), 0)
-  const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+  // Stock-composition stats only count the active catalog (see
+  // src/utils/productLifecycle.js); productsById below stays on the
+  // unfiltered `products` list since resolving a past sale item's product
+  // name must keep working after that product is archived/deleted.
+  const catalogProducts = products.filter(isCatalogActive)
+  const currentStockUnits = catalogProducts.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
 
-  const criticalStockProducts = products
+  const criticalStockProducts = catalogProducts
     .filter(isCriticalStock)
     .sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0))
   const criticalAlerts = criticalStockProducts
@@ -2034,10 +2047,10 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     return totals
   }, { cash: 0, gcash: 0 })
   const inventoryHealth = [
-    { label: 'In Stock', value: products.filter((p) => p.status === 'in-stock').length, color: '#16a34a' },
-    { label: 'Low', value: products.filter((p) => p.status === 'low').length, color: '#f59e0b' },
-    { label: 'Critical', value: products.filter((p) => p.status === 'critical').length, color: '#f97316' },
-    { label: 'Out of Stock', value: products.filter((p) => p.status === 'out-of-stock').length, color: '#ef4444' },
+    { label: 'In Stock', value: catalogProducts.filter((p) => p.status === 'in-stock').length, color: '#16a34a' },
+    { label: 'Low', value: catalogProducts.filter((p) => p.status === 'low').length, color: '#f59e0b' },
+    { label: 'Critical', value: catalogProducts.filter((p) => p.status === 'critical').length, color: '#f97316' },
+    { label: 'Out of Stock', value: catalogProducts.filter((p) => p.status === 'out-of-stock').length, color: '#ef4444' },
   ]
   const topCategoryMap = new Map()
   for (const product of productSales.values()) topCategoryMap.set(product.category || 'Uncategorized', (topCategoryMap.get(product.category || 'Uncategorized') || 0) + product.units)

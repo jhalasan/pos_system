@@ -86,7 +86,7 @@ If teammates run their own frontend but use your API, set their frontend `.env` 
 VITE_API_URL=http://<your-computer-ip>:3001/api
 ```
 
-The API now accepts `localhost`, common private-network IPs, and configured `CLIENT_ORIGIN` values.
+Add `ALLOW_DEV_CORS_ORIGINS=true` to your `.env` for this mode -- it's what lets the API accept requests from common private-network IPs in addition to `localhost` and configured `CLIENT_ORIGIN` values. It's off by default so a real deployment can't accidentally inherit it.
 
 ## Remote Demo Mode
 
@@ -100,7 +100,10 @@ POCKETBASE_PROXY_TARGET=https://your-instance.pockethost.io
 POCKETBASE_SUPERUSER_EMAIL=your-pocketbase-superuser-email
 POCKETBASE_SUPERUSER_PASSWORD=your-pocketbase-superuser-password
 VITE_API_URL=
+ALLOW_DEV_CORS_ORIGINS=true
 ```
+
+`ALLOW_DEV_CORS_ORIGINS=true` is what lets the API accept requests from your ngrok URL. Only set it for a temporary demo like this one -- leave it unset for Permanent Remote Mode below.
 
 Then run these in separate terminals:
 

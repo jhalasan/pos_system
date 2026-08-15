@@ -12,6 +12,7 @@ import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { buildStockOutText, printStockOutRecords } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
 import { formatQty, pluralizeUnit, quantizeQty, floorQty, isFractional } from '../../utils/quantity'
+import { isCatalogActive } from '../../utils/productLifecycle'
 
 const stockOutReasons = {
   expired: 'Expired goods',
@@ -199,9 +200,15 @@ export default function Inventory() {
   const [reconcileNote, setReconcileNote] = useState('')
   const [reconciling, setReconciling] = useState(false)
 
-  const totalProducts = products.length
-  const lowItems = products.filter((p) => p.status !== 'in-stock').length
-  const stockValue = products.reduce((s, p) => s + p.qty * p.price, 0)
+  // Total Products / low-stock alerts / stock value only count the active
+  // catalog (see src/utils/productLifecycle.js) -- an archived or deleted
+  // product shouldn't inflate "how many products do I stock" or trigger a
+  // restock alert. Barcode scanning and search below still use the
+  // unfiltered `products` list on purpose.
+  const catalogProducts = useMemo(() => products.filter(isCatalogActive), [products])
+  const totalProducts = catalogProducts.length
+  const lowItems = catalogProducts.filter((p) => p.status !== 'in-stock').length
+  const stockValue = catalogProducts.reduce((s, p) => s + p.qty * p.price, 0)
   const categories = useMemo(() => {
     return [...new Set([
       ...defaultCategories,

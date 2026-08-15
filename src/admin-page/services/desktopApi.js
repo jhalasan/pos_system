@@ -28,6 +28,7 @@ import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTotals'
+import { isCatalogActive } from '../../utils/productLifecycle'
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 import { accountDeletionError } from '../../utils/accountDeletionGuard'
 
@@ -1008,6 +1009,11 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   const filtered = filterAnalyticsRecords(sales, saleItems, options)
   sales = filtered.sales
   saleItems = filtered.saleItems
+  // Stock-composition stats only count the active catalog (see
+  // src/utils/productLifecycle.js). productLookup below stays on the
+  // unfiltered `products` list, since resolving a past sale's product name
+  // must still work after that product is later archived/deleted.
+  const catalogProducts = products.filter(isCatalogActive)
   const todayStart = new Date(now)
   todayStart.setHours(0, 0, 0, 0)
   const yesterdayStart = new Date(todayStart)
@@ -1107,13 +1113,13 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     if (year) year.value += amount
   }
 
-  const criticalStockProducts = products
+  const criticalStockProducts = catalogProducts
     .filter(isCriticalStock)
     .sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0))
   const criticalAlerts = criticalStockProducts
     .slice(0, 8)
     .map((product) => ({ name: product.name, left: product.qty }))
-  const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
+  const currentStockUnits = catalogProducts.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
   const paymentTotals = completedSales.reduce((totals, sale) => {
     const method = String(sale.payment_method || sale.paymentMethod || 'cash').toLowerCase()
     const amount = netSaleAmount(sale)
@@ -1122,17 +1128,17 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     return totals
   }, { cash: 0, gcash: 0 })
   const inventoryHealth = [
-    { label: 'In Stock', value: products.filter((p) => deriveStatus(p) === 'in-stock').length, color: '#16a34a' },
-    { label: 'Low', value: products.filter((p) => deriveStatus(p) === 'low').length, color: '#f59e0b' },
-    { label: 'Critical', value: products.filter((p) => deriveStatus(p) === 'critical').length, color: '#f97316' },
-    { label: 'Out of Stock', value: products.filter((p) => deriveStatus(p) === 'out-of-stock').length, color: '#ef4444' },
+    { label: 'In Stock', value: catalogProducts.filter((p) => deriveStatus(p) === 'in-stock').length, color: '#16a34a' },
+    { label: 'Low', value: catalogProducts.filter((p) => deriveStatus(p) === 'low').length, color: '#f59e0b' },
+    { label: 'Critical', value: catalogProducts.filter((p) => deriveStatus(p) === 'critical').length, color: '#f97316' },
+    { label: 'Out of Stock', value: catalogProducts.filter((p) => deriveStatus(p) === 'out-of-stock').length, color: '#ef4444' },
   ]
   const topCategories = new Map()
   for (const product of productSales.values()) topCategories.set(product.category || 'Uncategorized', (topCategories.get(product.category || 'Uncategorized') || 0) + product.units)
   const dataQuality = {
-    generatedBarcodes: products.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
-    uncategorized: products.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
-    nonPositivePrices: products.filter((p) => Number(p.price) <= 0).length,
+    generatedBarcodes: catalogProducts.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
+    uncategorized: catalogProducts.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
+    nonPositivePrices: catalogProducts.filter((p) => Number(p.price) <= 0).length,
   }
 
   return {
