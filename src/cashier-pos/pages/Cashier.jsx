@@ -1623,6 +1623,7 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const result = await printReceiptPdf(receiptDataForTransaction(txn), {
         directory: receiptSettings.receiptPdfDirectory,
+        copies: 1,
       });
       showNotification(`${copyLabel} PDF test saved to ${result.path}.`);
     } catch (err) {
@@ -1940,7 +1941,7 @@ const Cashier = ({ onLogout, user }) => {
           change: lookupSale.change,
           gcashRef: lookupSale.refNumber,
         },
-      });
+      }, { copies: 1 });
       showNotification(result?.pdfPath
         ? `Receipt PDF saved to ${result.pdfPath}.`
         : `Receipt sent to ${result?.printerName || 'the configured printer'}.`);
@@ -1980,7 +1981,7 @@ const Cashier = ({ onLogout, user }) => {
           change: sale.change,
           gcashRef: sale.refNumber,
         },
-      });
+      }, { copies: 1 });
       showNotification(result?.pdfPath
         ? `Receipt PDF saved to ${result.pdfPath}.`
         : `Receipt sent to ${result?.printerName || 'the configured printer'}.`);
@@ -2018,6 +2019,7 @@ const Cashier = ({ onLogout, user }) => {
         },
       }, {
         directory: receiptSettings.receiptPdfDirectory,
+        copies: 1,
       });
       showNotification(`PDF test saved to ${result.path}.`);
     } catch (err) {

@@ -448,7 +448,13 @@ export async function printCompletedReceipt(receiptData, options = {}) {
 
   if (invoke) {
     await assertReceiptPrinterReady({ ...options, printerName })
-    const contents = receipts.join('\n')
+    // `copies` below already tells the Rust side (print_receipt_impl) to
+    // send this job that many times, once per physical copy -- passing
+    // `contents` pre-joined into `copies` concatenated receipts as well
+    // used to multiply the two together (e.g. 3 copies requested printed
+    // 3 x 3 = 9). A single receipt's text is the correct unit of work here;
+    // the repeat count belongs only to `copies`.
+    const contents = buildReceiptText(receiptData)
     try {
       return await invoke('print_receipt', {
         printerName,
@@ -466,7 +472,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
         return invoke('print_receipt', {
           printerName: '',
           contents,
-          copies: 1,
+          copies: receipts.length,
           openCashDrawer,
           documentName,
           beforeFeedLines,
