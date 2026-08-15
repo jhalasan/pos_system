@@ -116,7 +116,12 @@ export default function Dashboard() {
         <select className="select" value={source} onChange={(event) => setSource(event.target.value)}><option value="live">Live POS</option><option value="legacy">Legacy Import</option><option value="sample">Sample/Test</option><option value="all">All Sources</option></select>
         <select className="select" value={range} onChange={(event) => setRange(event.target.value)}><option value="1">Today</option><option value="7">Last 7 Days</option><option value="30">Last 30 Days</option><option value="all">All Time</option></select>
         <span className="count">{data.analyticsMeta?.salesCount || 0} matching transactions</span>
-        {refreshingFullData && <span className="count">Updating with latest synced data…</span>}
+        {refreshingFullData && (
+          <span className="updating-badge" role="status" aria-live="polite">
+            <span className="sync-button-spinner" aria-hidden="true" />
+            Updating with latest synced data…
+          </span>
+        )}
         <button className="btn btn-outline" onClick={() => navigate('/admin/products')}><IconPlus size={15} /> New Product</button>
         <button className="btn btn-outline" onClick={() => navigate('/admin/inventory')}><IconScan size={15} /> Stock In / Out</button>
         <button className="btn btn-primary" onClick={handleSyncNow} disabled={syncingNow}><IconCloud size={15} /> {syncingNow ? 'Syncing…' : 'Sync Now'}</button>

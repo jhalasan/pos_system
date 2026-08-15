@@ -186,6 +186,8 @@ ul { list-style: none; }
 .sync-button-icon.spinning { animation:sync-spin .9s linear infinite; }
 .sync-button-spinner { width:16px; height:16px; flex:0 0 auto; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:sync-spin .75s linear infinite; }
 @keyframes sync-spin { to { transform:rotate(360deg); } }
+.updating-badge { display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border:1px solid #bfdbfe; border-radius:999px; background:#eff6ff; color:#1d4ed8; font-size:12px; white-space:nowrap; }
+.updating-badge .sync-button-spinner { border-color:#1d4ed8; border-right-color:transparent; }
 .offline-download-status { display:flex; align-items:flex-start; gap:12px; margin:16px 0; padding:14px; border:1px solid var(--border); border-radius:10px; background:var(--surface-2); }
 .offline-download-status.loading { border-color:#bfdbfe; background:#eff6ff; color:#1d4ed8; }
 .offline-download-status > div { display:grid; gap:4px; }

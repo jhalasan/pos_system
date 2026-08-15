@@ -225,7 +225,12 @@ export default function Analytics() {
           {datePreset === 'custom' && <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />}
           <span className="count">{data.analyticsMeta?.salesCount || 0} matching sale(s)</span>
           <span className="analytics-filter-summary">{sourceLabel} · {rangeLabel}</span>
-          {refreshingFullData && <span className="analytics-filter-summary">Updating with latest synced data…</span>}
+          {refreshingFullData && (
+            <span className="updating-badge" role="status" aria-live="polite">
+              <span className="sync-button-spinner" aria-hidden="true" />
+              Updating with latest synced data…
+            </span>
+          )}
           <button
             className="btn btn-outline btn-sm"
             disabled={refreshingFullData}
