@@ -27,6 +27,7 @@ export default function Dashboard() {
   const [readinessMessage, setReadinessMessage] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
   const [syncingNow, setSyncingNow] = useState(false)
+  const [refreshingFullData, setRefreshingFullData] = useState(false)
 
   async function handleSyncNow() {
     setSyncingNow(true)
@@ -67,18 +68,29 @@ export default function Dashboard() {
     const from = new Date(now)
     if (range !== 'all') from.setDate(from.getDate() - (Number(range) - 1))
     const filters = { source, from: range === 'all' ? '' : localDateKey(from), to: range === 'all' ? '' : localDateKey(now) }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRefreshingFullData(true)
     void api.dashboard(filters)
       .then((result) => {
         if (!active) return
         setData(result)
         setError('')
         setLoading(false)
+        // This first result is local-only -- fast, but only reflects
+        // whatever's cached on this one terminal, not every other
+        // terminal's synced sales. It used to swap in silently once the
+        // full cloud-merged figures arrived, with nothing on screen to
+        // explain why the numbers had just changed; that looked exactly
+        // like a bug even though the swap itself was correct.
         void api.dashboard({ ...filters, preferCloud: true })
           .then((freshResult) => { if (active) setData(freshResult) })
           .catch(() => {})
+          .finally(() => { if (active) setRefreshingFullData(false) })
       })
       .catch((loadError) => {
-        if (active) setError(loadError.message || 'Unable to load dashboard.')
+        if (!active) return
+        setError(loadError.message || 'Unable to load dashboard.')
+        setRefreshingFullData(false)
       })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
@@ -104,6 +116,7 @@ export default function Dashboard() {
         <select className="select" value={source} onChange={(event) => setSource(event.target.value)}><option value="live">Live POS</option><option value="legacy">Legacy Import</option><option value="sample">Sample/Test</option><option value="all">All Sources</option></select>
         <select className="select" value={range} onChange={(event) => setRange(event.target.value)}><option value="1">Today</option><option value="7">Last 7 Days</option><option value="30">Last 30 Days</option><option value="all">All Time</option></select>
         <span className="count">{data.analyticsMeta?.salesCount || 0} matching transactions</span>
+        {refreshingFullData && <span className="count">Updating with latest synced data…</span>}
         <button className="btn btn-outline" onClick={() => navigate('/admin/products')}><IconPlus size={15} /> New Product</button>
         <button className="btn btn-outline" onClick={() => navigate('/admin/inventory')}><IconScan size={15} /> Stock In / Out</button>
         <button className="btn btn-primary" onClick={handleSyncNow} disabled={syncingNow}><IconCloud size={15} /> {syncingNow ? 'Syncing…' : 'Sync Now'}</button>

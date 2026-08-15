@@ -65,7 +65,13 @@ const salesRanges = {
 
 export default function Analytics() {
   const navigate = useNavigate()
-  const { data, setData, loading, error } = useApi(api.dashboard, emptyAnalytics)
+  // Plain state, not useApi(api.dashboard, ...) -- that hook fires its own
+  // unfiltered fetch on mount, which used to race the filtered two-stage
+  // fetch below (whichever of the two resolved last silently won,
+  // regardless of which one was actually correct/complete).
+  const [data, setData] = useState(emptyAnalytics)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const { data: fsnProducts } = useApi(api.fsnInventory, [])
   const [exporting, setExporting] = useState(false)
   const [exportStatus, setExportStatus] = useState('')
@@ -88,13 +94,40 @@ export default function Analytics() {
     }
   }, [customFrom, customTo, datePreset])
 
+  const [refreshingFullData, setRefreshingFullData] = useState(false)
+
   useEffect(() => {
+    let active = true
     const filters = { source: dataSource, from: dateRangeFilter.from, to: dateRangeFilter.to }
+    // A local-only fetch paints fast (works offline, no network round trip),
+    // but was never followed up here -- unlike Dashboard.jsx, this effect
+    // used to stop there, so Analytics stayed permanently stuck on whatever
+    // happened to be cached on this one terminal even after an explicit
+    // Refresh click. preferCloud:true merges in every other terminal's
+    // synced sales too; that second fetch is what actually makes the
+    // figures complete.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setRefreshingFullData(true)
     void api.dashboard(filters).then((result) => {
+      if (!active) return
       setData(result)
+      setError('')
+      setLoading(false)
       setLastUpdated(new Date().toISOString())
+      return api.dashboard({ ...filters, preferCloud: true }).then((fullResult) => {
+        if (!active) return
+        setData(fullResult)
+        setLastUpdated(new Date().toISOString())
+      })
+    }).catch((loadError) => {
+      if (active) setError(loadError.message || 'Unable to load analytics.')
+    }).finally(() => {
+      if (!active) return
+      setLoading(false)
+      setRefreshingFullData(false)
     })
-  }, [dataSource, dateRangeFilter, setData])
+    return () => { active = false }
+  }, [dataSource, dateRangeFilter])
   const maxUnits = Math.max(1, ...data.topProducts.map((p) => p.units))
   const activeSalesRange = salesRanges[salesRange] || salesRanges.hourlySales
   const activeSalesData = data[salesRange] || []
@@ -192,7 +225,19 @@ export default function Analytics() {
           {datePreset === 'custom' && <input className="input" type="date" value={customTo} onChange={(event) => setCustomTo(event.target.value)} />}
           <span className="count">{data.analyticsMeta?.salesCount || 0} matching sale(s)</span>
           <span className="analytics-filter-summary">{sourceLabel} · {rangeLabel}</span>
-          <button className="btn btn-outline btn-sm" onClick={() => { void api.dashboard({ source: dataSource, from: data.analyticsMeta?.from || '', to: data.analyticsMeta?.to || '' }).then((result) => { setData(result); setLastUpdated(new Date().toISOString()) }) }}>Refresh</button>
+          {refreshingFullData && <span className="analytics-filter-summary">Updating with latest synced data…</span>}
+          <button
+            className="btn btn-outline btn-sm"
+            disabled={refreshingFullData}
+            onClick={() => {
+              setRefreshingFullData(true)
+              void api.dashboard({ source: dataSource, from: data.analyticsMeta?.from || '', to: data.analyticsMeta?.to || '', preferCloud: true })
+                .then((result) => { setData(result); setLastUpdated(new Date().toISOString()) })
+                .finally(() => setRefreshingFullData(false))
+            }}
+          >
+            {refreshingFullData ? 'Refreshing…' : 'Refresh'}
+          </button>
         </div>
       </div>
 
