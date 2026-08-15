@@ -369,18 +369,45 @@ indefinitely. New `tests/sale-item-grouping.test.js` (4 cases: grouping, relatio
 camelCase fallback, missing reference). `npm run test:offline` (153/153) and `npm run test:vercel`
 (3/3) pass.
 
-**T3. Sale-upload batch rewrite.** `ensureCloudSaleItems` (`syncEngine.js:95-156`) +
-`ensureCloudStockDeduction` (`syncEngine.js:158-203`) issue ~8–9 PocketBase requests per line
-item, serially, all awaited. The barcode fallback inside `ensureCloudSaleItems` issues a
-**whole-catalog `getFullList` inside the per-item loop** (`:121`) — confirmed, not previously
-called out this precisely. `pb.createBatch()` is used nowhere in the repo (grep: 0 hits). No
-`lineId` exists anywhere (grep: 0 hits) — everything downstream keys on `productId` only, so two
-cart lines of the same product at different units/prices collapse into one key. The
-`Math.max(baseQuantityToDeduct, syncedQty)` fudge is at `:171` and is worse than previously
-described: `syncedQty` sums `quantity_sold` (selling units) while `baseQuantityToDeduct` is base
-units — the `Math.max` compares two different units and its result is written straight into
-`stock_movements.quantity` (`:190`). Same ordering fix needed in admin's scan/stock-out/adjust
-path and cashier's void/refund path. (Was tracker B2/B3.)
+**T3. Sale-upload batch rewrite. 🔶 PARTIALLY FIXED (this session) — the correctness bug (B3) is
+fixed; the request-volume optimization (`pb.createBatch()`) is not.**
+Was: `ensureCloudSaleItems` + `ensureCloudStockDeduction` issue ~8–9 PocketBase requests per line
+item, serially, all awaited, with a whole-catalog `getFullList` inside the per-item barcode
+fallback loop. `pb.createBatch()` is used nowhere in the repo. No `lineId` existed anywhere —
+everything downstream keyed on `productId` only, so two cart lines of the same product at
+different units/prices (e.g. one sold as a case, one sold loose) collapsed into one stock-movement
+reference key: creating the movement for line 1 made the dedup lookup report "already handled" for
+line 2, silently skipping its deduction (or its restock, in the void/refund path — same bug,
+same fix). The `Math.max(baseQuantityToDeduct, syncedQty)` fudge compared two different units
+(selling-unit `quantity_sold` vs. base-unit `baseQuantityToDeduct`) and wrote the larger,
+nonsensical result straight into `stock_movements.quantity`. (Was tracker B2/B3.)
+Done — the correctness fix (B3):
+- New `scripts/add-sale-item-line-id.mjs` (additive-only migration): `sale_items.line_id`. **Not
+  yet run against production** — same as M1's migration, per the client's choice this session.
+- `finalizeSaleLocally` (`saleRepository.js`) now mints a stable `lineId` per cart line.
+- `ensureCloudSaleItems`/`ensureCloudStockDeduction` and the void/refund restock path
+  (`syncEngine.js`) now key their stock-movement dedup reference on `lineId` (falling back to
+  `productId` only for sales queued before this field existed, a narrow transition window). The
+  `Math.max` fudge is now applied only in that same legacy-fallback branch — any sale with a
+  `lineId` uses the correct, unambiguous `baseQuantityToDeduct` directly.
+- `adjustLocalSale`'s `returnedItems` now also carries `lineId` through from the stored line, so
+  the refund/exchange cloud op inherits the same per-line correctness.
+- New `tests/sale-line-id-dual-deduction.test.js`: two cart lines of the same product (one a case
+  of 24, one loose) both get deducted — 26 base units total, not 24 or 2 alone — and produce two
+  distinct stock-movement references.
+- Investigated and ruled out: admin's scan/stock-out/adjust path does **not** need this fix —
+  each of those ops already operates on exactly one product per op (`op.id` is already a unique,
+  unambiguous reference), so there is no multi-line-per-op collision possible there. The "same fix
+  needed" note in the original finding did not hold up under closer reading of that code path.
+**Not done — the request-volume optimization:** the `pb.createBatch()` rewrite itself (~8–9
+requests per line item down to one transactional batch). This is architecturally a bigger change
+than the correctness fix: `findStockMovement`'s per-line idempotency check currently runs
+*before* deciding what to write, interleaved with live lookups — a single atomic batch can't
+interleave conditional lookups between its writes, so this needs a real redesign (bulk-check all
+lines' existing movements first, then submit one batch containing only the writes actually
+needed), not a mechanical swap. Scoped as a distinct follow-up; the correctness bug it was
+originally paired with is now independently fixed. `npm run test:offline` (154/154) and `npm run
+test:vercel` (3/3) pass.
 
 ---
 

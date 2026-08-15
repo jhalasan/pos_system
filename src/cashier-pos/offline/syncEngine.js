@@ -135,23 +135,28 @@ async function ensureCloudSaleItems(pb, sale, cloudSale) {
     }
 
     // attempt to create sale_item; if productId still missing, try without product relation
+    const lineKey = item.lineId || productId
     const payload = {
       sale_id: cloudSale.id,
       product_id: productId || null,
       quantity_sold: Number(item.quantity) || 0,
       price_at_sale: Number(item.price) || 0,
+      // May be undefined against a PocketBase instance that hasn't run
+      // scripts/add-sale-item-line-id.mjs yet — PocketBase silently ignores
+      // unknown fields on create, so this is safe either way.
+      line_id: item.lineId || undefined,
     }
 
     try {
       const created = await pb.collection('sale_items').create(payload, {
-        requestKey: `sale-item:${sale.clientSaleId}:${productId || 'unknown'}`,
+        requestKey: `sale-item:${sale.clientSaleId}:${lineKey || 'unknown'}`,
       })
       createdItems.push(created)
     } catch {
       // If creation failed due to invalid product relation, try removing product_id
       const fallback = { ...payload, product_id: null }
       const created = await pb.collection('sale_items').create(fallback, {
-        requestKey: `sale-item-fallback:${sale.clientSaleId}:${Date.now()}`,
+        requestKey: `sale-item-fallback:${sale.clientSaleId}:${lineKey || Date.now()}`,
       })
       createdItems.push(created)
     }
@@ -165,16 +170,36 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     const productId = String(item.productId || '').trim()
     if (!productId) continue
 
+    // lineId gives each cart line its own identity, distinct from
+    // productId — without it, two lines of the same product (e.g. one sold
+    // as a case, one sold loose) shared a single productId-keyed movement
+    // reference: creating the movement for line 1 made findStockMovement
+    // report "already deducted" for line 2, silently skipping it. Sales
+    // queued before this field existed have no lineId; those fall back to
+    // the old productId-keyed behavior (and still need the syncedQty
+    // fallback below, since without a lineId there is no way to tell their
+    // sale_items row apart from another line of the same product either).
+    const lineKey = item.lineId || productId
+
     const product = await pb.collection('products').getOne(productId, { requestKey: null })
     const previousQuantity = quantizeQty(product.quantity)
-    const matchingSaleItems = cloudSaleItems.filter((saleItem) => {
-      const saleItemProductId = Array.isArray(saleItem.product_id) ? saleItem.product_id[0] : saleItem.product_id
-      return saleItemProductId === productId
-    })
-    const syncedQty = quantizeQty(matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0))
     const baseQuantityToDeduct = quantizeQty(toBaseStockQuantity(Number(item.quantity) || 0, Number(item.conversion) || 1))
-    const effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
-    const movementReference = `sale:${sale.clientSaleId}:${productId}`
+
+    let effectiveQtyToDeduct = baseQuantityToDeduct
+    if (!item.lineId) {
+      // Legacy fallback only: without a lineId there's no reliable way to
+      // match this specific line's own sale_items row, so fall back to the
+      // old (unit-mismatched, but the previous behavior) heuristic of
+      // trusting whichever is larger.
+      const matchingSaleItems = cloudSaleItems.filter((saleItem) => {
+        const saleItemProductId = Array.isArray(saleItem.product_id) ? saleItem.product_id[0] : saleItem.product_id
+        return saleItemProductId === productId
+      })
+      const syncedQty = quantizeQty(matchingSaleItems.reduce((sum, saleItem) => sum + (Number(saleItem.quantity_sold) || 0), 0))
+      effectiveQtyToDeduct = Math.max(baseQuantityToDeduct, syncedQty)
+    }
+
+    const movementReference = `sale:${sale.clientSaleId}:${lineKey}`
     if (await findStockMovement(pb, productId, movementReference)) {
       // A retry may find the durable movement after another sync process has
       // already handled the sale. Reconcile instead of trusting a possibly
@@ -187,7 +212,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     await pb.collection('products').update(product.id, {
       quantity: numberFieldValue(nextQuantity),
     }, {
-      requestKey: `product-stock:${sale.clientSaleId}:${productId}`,
+      requestKey: `product-stock:${sale.clientSaleId}:${lineKey}`,
     })
     await pb.collection('stock_movements').create({
       product_id: product.id,
@@ -201,7 +226,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
       user_id: sale.cashierId,
       created_at: sale.createdAt || new Date().toISOString(),
     }, {
-      requestKey: `stock-movement:sale:${sale.clientSaleId}:${productId}`,
+      requestKey: `stock-movement:sale:${sale.clientSaleId}:${lineKey}`,
     })
     await reconcileProductStock(pb, product.id)
   }
@@ -743,8 +768,14 @@ export class CashierSyncEngine extends EventTarget {
       for (const item of (op.type === 'adjustCompletedSale' && payload.restock === false) ? [] : (payload.items || [])) {
           const productId = String(item.productId || item.id || '')
           if (!productId) continue
+          // Same fix as ensureCloudStockDeduction above: without lineId,
+          // refunding/voiding two lines of the same product shares a single
+          // (op.id, productId) movement reference, so restoring stock for
+          // line 1 makes this lookup report "already restored" for line 2,
+          // silently skipping it.
+          const lineKey = item.lineId || productId
           const existingMovement = await this.pb.collection('stock_movements').getFirstListItem(
-            this.pb.filter('reference_id = {:referenceId} && product_id = {:productId}', { referenceId: op.id, productId }),
+            this.pb.filter('reference_id = {:referenceId} && product_id = {:productId}', { referenceId: `${op.id}:${lineKey}`, productId }),
             { requestKey: null },
           ).catch(() => null)
           if (existingMovement) continue
@@ -753,7 +784,7 @@ export class CashierSyncEngine extends EventTarget {
           const product = await this.pb.collection('products').getOne(productId, { requestKey: null })
           const previousQuantity = quantizeQty(product.quantity)
           const nextQuantity = quantizeQty(previousQuantity + returnedQuantity)
-          await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { requestKey: `${op.id}:${productId}:stock` })
+          await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { requestKey: `${op.id}:${lineKey}:stock` })
           await this.pb.collection('stock_movements').create({
             product_id: product.id,
             movement_type: op.type === 'voidCompletedSale' ? 'void_return' : payload.type === 'exchange' ? 'exchange_return' : 'refund_return',
@@ -761,11 +792,11 @@ export class CashierSyncEngine extends EventTarget {
             previous_quantity: previousQuantity,
             new_quantity: nextQuantity,
             reference_type: op.type === 'voidCompletedSale' ? 'void' : payload.type,
-            reference_id: op.id,
+            reference_id: `${op.id}:${lineKey}`,
             notes: `${op.type === 'voidCompletedSale' ? 'Void' : payload.type} ${payload.transactionNo}${payload.reason ? `: ${payload.reason}` : ''}`,
             user_id: payload.cashierId,
             created_at: payload.createdAt || new Date().toISOString(),
-          }, { requestKey: `${op.id}:${productId}:movement` })
+          }, { requestKey: `${op.id}:${lineKey}:movement` })
           await reconcileProductStock(this.pb, product.id)
       }
       if (op.type === 'adjustCompletedSale' && payload.adjustmentId) {

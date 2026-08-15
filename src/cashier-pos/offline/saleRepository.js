@@ -78,6 +78,14 @@ export async function finalizeSaleLocally(sale) {
     splitPayments: sale.splitPayments || null,
     refNumber: String(sale.refNumber || ''),
     items: sale.items.map((item) => ({
+      // A stable per-line identity, distinct from productId. Two cart lines
+      // of the SAME product (different unit, different price — e.g. one
+      // sold as a case, one sold loose) used to collapse into a single
+      // productId-keyed stock-movement reference in
+      // ensureCloudStockDeduction: creating the movement for line 1 made
+      // findStockMovement report "already deducted" for line 2, silently
+      // skipping its deduction. lineId gives each line its own reference.
+      lineId: newClientSaleId(),
       productId: String(item.productId || item.id || ''),
       name: String(item.name || ''),
       barcode: String(item.barcode || ''),
@@ -321,6 +329,11 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
             // multi-unit product (e.g. a case of 24) restocks 1 base unit
             // instead of 24.
             conversion: Number(item.conversion) > 0 ? Number(item.conversion) : 1,
+            // Also carried through from the stored line (T3): without it,
+            // refunding two lines of the same product shares a single
+            // productId-keyed cloud stock-movement reference, silently
+            // skipping the second line's restock.
+            lineId: item.lineId || '',
           }
         : null
     })
