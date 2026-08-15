@@ -119,10 +119,40 @@ process alive forever. New regression test `tests/cashier-api-auth.test.js` (add
 `/cashier/auth/login` remains reachable. `npm run test:offline` (117/117) and `npm run
 test:vercel` (3/3) pass.
 
-**S4. HIGH — `/api/support/tickets` is an open mail relay.** Mounted at `server/index.js:144`,
-before the auth middleware. `api/support/tickets.js:15-21` sets
-`Access-Control-Allow-Origin: '*'`. No auth, no rate limit, no captcha, 5 attachments accepted —
-can drain the Gmail App Password credential.
+**S4. HIGH — `/api/support/tickets` is an open mail relay. ✅ FIXED (follow-up session).**
+Was: two separate implementations of this route exist. `server/index.js:176` (the Express route,
+live on the desktop/local-host deployment) already had origin-restricted CORS via the app's global
+`cors()` middleware and an image-only file filter, but no rate limit. `api/support/tickets.js`
+(a standalone Vercel serverless function) is the one **actually live in production on Vercel** —
+Vercel's filesystem routing matches a literal `api/support/tickets.js` file before the
+catch-all `/api/:path* → /api` rewrite in `vercel.json` ever applies, so this standalone file, not
+the Express app, handles every request to this path on the deployed admin-web target. It had
+`Access-Control-Allow-Origin: '*'` (line 17, old), no rate limit, and no attachment type filter —
+an unauthenticated (by design, since support has to work for a cashier who can't log in) endpoint
+that sends mail through the business's own SMTP credential, reachable by anyone who found the URL,
+browser or script.
+Fix: `api/support/tickets.js` now validates the request `Origin` against `CLIENT_ORIGIN` plus the
+same `desktopOrigins` set used in `server/index.js` (the Tauri desktop app calls this Vercel URL
+cross-origin from a fixed `tauri://` origin; the deployed web app's own same-origin calls aren't
+gated by CORS in the first place). Origin restriction alone would not be sufficient on its own — a
+non-browser caller can send any `Origin` header it likes, or none — so the primary control is a new
+per-IP sliding-window rate limiter (same design as `server/index.js`'s `checkRateLimit`, with the
+added caveat that a serverless deployment may run several concurrent instances each with their own
+copy of the in-memory counter, so this is a soft per-instance bound, not a hard global cap — still
+a meaningful deterrent versus none). Also added the same image-only (`jpeg`/`png`/`webp`) attachment
+filter `server/index.js`'s version already had — the frontend (`SupportContactModal.jsx`) already
+restricts its file picker to `accept="image/*"`, so this is pure hardening with no legitimate use
+case affected. `server/index.js`'s Express route got the matching rate limiter for
+defense-in-depth/consistency, reusing the existing `checkRateLimit`.
+**Deliberately not added:** a captcha. That requires picking and integrating a third-party service
+(reCAPTCHA/hCaptcha) plus a frontend change — a real, separately-scoped decision, not something to
+bundle into a security patch without the client choosing a provider.
+New `tests/support-tickets-security.test.js` (5 cases, driving the actual standalone handler over a
+real HTTP server the way Vercel invokes it): a disallowed origin gets no `Access-Control-Allow-
+Origin` header, the desktop origin is allowed, a configured `CLIENT_ORIGIN` is allowed, a
+non-image attachment is rejected with a clear message, and repeated requests from the same
+connection eventually 429. `npm run test:offline` (203/203) and `npm run test:vercel` (3/3) pass;
+`npm run build` and `npm run build:vercel` both clean.
 
 **S5. HIGH — `PATCH /api/cashiers/:id` escalates privileges by omission. ✅ FIXED (this
 session).**
@@ -527,9 +557,10 @@ exact boundary of what landed.
   `DEFAULT_CASHIER_PASSWORD` have also been rotated via the PocketHost dashboard. S2's remaining
   open piece is only the optional git-history rewrite (item 3 in S2 above), which was always framed
   as optional.
-- **S4, S6, S7, S8** (support-relay hardening, default-password policy, delete guard, CORS
-  tightening) — real findings, never in scope for this pass (which targeted the
-  approval-barcode/credential/auth-bypass/privilege-escalation cluster specifically).
+- **S4 — ✅ DONE (follow-up session).** Support-ticket mail relay hardened; see S4 above.
+- **S6, S7, S8** (default-password policy, delete guard, CORS tightening) — real findings, never
+  in scope for this pass (which targeted the approval-barcode/credential/auth-bypass/
+  privilege-escalation cluster specifically).
 - **M1 — ✅ DONE (follow-up session).** Schema, cloud write, and dashboard/FSN report wiring are
   all complete; see M1 above.
 - **T3**: the correctness bug (same-SKU-two-lines under-deduction) is fixed; the `pb.createBatch()`

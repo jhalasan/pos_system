@@ -174,6 +174,8 @@ function asyncRoute(handler) {
 }
 
 app.post('/api/support/tickets', supportUpload.array('attachments', 5), asyncRoute(async (req, res) => {
+  if (!checkRateLimit(req, res, 'support-ticket')) return
+
   const smtpHost = String(process.env.SMTP_HOST || '').trim()
   const smtpUser = String(process.env.SMTP_USER || '').trim()
   const smtpPass = String(process.env.SMTP_PASS || '').trim()
