@@ -26,6 +26,7 @@
     "pb:migrate": "node scripts/backfill-base-quantity.mjs",
     "pb:migrate:refund-schema": "node scripts/add-refund-reporting-schema.mjs",
     "pb:migrate:sale-item-line-id": "node scripts/add-sale-item-line-id.mjs",
+    "pb:migrate:product-lifecycle": "node scripts/add-product-lifecycle-schema.mjs",
     "test:e2e": "node tests/e2e/run-e2e.mjs",
     "test:offline": "node scripts/run-offline-tests.mjs",
     "test:vercel": "node --test tests/admin-vercel-boundary.test.js",

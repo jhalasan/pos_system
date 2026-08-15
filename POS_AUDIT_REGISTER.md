@@ -580,11 +580,11 @@ proceeding to log a success. No component test harness exists in this repo for `
 test:offline` (126/126) and `npm run test:vercel` (3/3) pass.
 
 **M9. HIGH — Deleting a product with sale/stock history silently fails cloud-side and the product
-reappears. ✅ FIXED (this session, two layers).** New finding, not in the prior tracker or
+reappears. ✅ FIXED (this session, three layers).** New finding, not in the prior tracker or
 register — surfaced by the client noticing products they'd deleted coming back after "sometime,
-or the next day." Had two independent causes; the first fix was real but insufficient on its own,
-found out only because the client re-tested and reported the product still coming back
-*immediately* after the first fix landed.
+or the next day." Had three stacked causes; each of the first two fixes was real and necessary but
+not sufficient on its own — found out because the client re-tested after each fix and reported the
+product still coming back, which is what kept the investigation going instead of stopping early.
 
 Layer 1 — the hard delete itself was silently failing. Any product that has ever been sold or had
 a stock movement is referenced by PocketBase relation fields (`sale_items.product_id`,
@@ -623,6 +623,33 @@ tests) proving a queued lifecycle/name/price edit survives an intervening stale 
 genuinely clean `npm ci` checkout as well as the local sandbox, since this session's CI run
 separately surfaced that the local sandbox's `node_modules` had drifted enough to mask real lint
 failures.
+
+Layer 3 — the actual, decisive root cause, found only by connecting directly to the live
+production PocketBase (`nexasystems.pockethost.io`) and inspecting its real schema, rather than
+trusting `pocketbase/pb_schema.json` as ground truth: **`products.lifecycle_status` did not exist
+on production at all.** `pb.collections.getOne('products').fields.find(f => f.name ===
+'lifecycle_status')` returned `undefined`. The field only ever existed in the repo's local schema
+reference file — a snapshot of what the schema is supposed to look like — and was never actually
+applied to production as a real migration, unlike every other schema addition in this register
+(M1's refund fields, T4's `sale_item.line_id`), which all shipped with a `scripts/add-*.mjs`
+migration script. This one never had one. PocketBase does not reject writes to an unrecognized
+field name — it silently accepts and discards them — so both the pre-existing Archive button
+(which predates this session entirely) and Layers 1–2's fixes had been writing
+`lifecycle_status: 'archived'` into the void the whole time; the write always "succeeded" and did
+nothing, which is exactly why the product kept looking untouched. Layers 1 and 2 were both real,
+correctly-diagnosed bugs and remain necessary — they just could not do anything visible until this
+field actually existed to write to. Fixed with a new additive-only migration script,
+`scripts/add-product-lifecycle-schema.mjs` (mirrors `add-refund-reporting-schema.mjs`'s pattern),
+run against production this session (`npm run pb:migrate:product-lifecycle`) with working
+superuser connectivity confirmed live — unlike M1's schema migration, which was written but left
+for the client to run due to no connectivity at the time. Verified after running: fetched the live
+`products` collection schema and confirmed the field now exists with the expected `select` type
+and `[active, inactive, archived]` values; round-tripped a real write/read against an actual
+production product (`prd000000000001`, "MILO 24g") — set `lifecycle_status: 'archived'`, read it
+back as `'archived'`, then reverted it to `'active'` to leave no test data behind. Client should
+re-test Delete and Archive now that all three layers are in place; if it still reappears, the next
+thing to check is whether the reappearing product predates this fix and simply needs to be
+deleted/archived once more now that the mechanism actually persists.
 
 ---
 
