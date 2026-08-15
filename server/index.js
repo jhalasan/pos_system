@@ -8,6 +8,7 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
 import { netSaleAmount } from '../src/utils/saleTotals.js'
+import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -455,7 +456,7 @@ async function authorizeManagerApproval({ code, email, password }) {
       throw error
     })
 
-    if (legacyManager && (legacyManager.role !== 'cashier' || barcode.startsWith('92'))) {
+    if (legacyManager && legacyManagerBarcodeRecords([legacyManager]).length > 0) {
       return {
         id: legacyManager.id,
         name: legacyManager.name || legacyManager.email || 'Manager',
@@ -880,8 +881,11 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
 // else, and there is no separately hosted Express instance. So these three
 // specific, already rate-limited (S3), already minimal-response endpoints
 // stay reachable here even in admin-only mode -- everything else under
-// /cashier/* remains blocked, unchanged.
-const cashierVercelAllowlist = new Set(['/auth/barcode', '/authorize-void', '/quick-login-accounts'])
+// /cashier/* remains blocked, unchanged. /manager-approval-hashes is the
+// same story for offline-capable manager approval: it hands out only
+// salted one-way hashes (never the real barcode), so exposing it here
+// carries the same reasoning as the other three.
+const cashierVercelAllowlist = new Set(['/auth/barcode', '/authorize-void', '/quick-login-accounts', '/manager-approval-hashes'])
 app.use('/api/cashier', (req, res, next) => {
   if (!isVercelAdminPortal || cashierVercelAllowlist.has(req.path)) {
     next()
@@ -1040,6 +1044,66 @@ app.post('/api/cashier/authorize-void', asyncRoute(async (req, res) => {
     password: req.body?.password,
   })
   res.json({ ok: true, approver })
+}))
+
+// Same eligibility rule authorizeManagerApproval's legacyManager branch
+// uses -- kept as one function so the online verify and the offline-hash
+// list below can never silently diverge on who counts as a manager.
+function legacyManagerBarcodeRecords(users = []) {
+  return users.filter((record) => {
+    const barcode = String(record.void_barcode || '').trim()
+    if (!barcode) return false
+    return record.role !== 'cashier' || barcode.startsWith('92')
+  })
+}
+
+// Offline manager approval (reversing S1's original online-only decision,
+// per client request -- see POS_AUDIT_REGISTER.md). The real barcode/code
+// must never be cached on a terminal in reversible form; instead this hands
+// out a freshly salted, one-way PBKDF2 hash of each currently active
+// approval credential. A cashier terminal caches these while online and,
+// when offline, hashes a scanned/typed value locally and compares -- see
+// src/utils/managerApprovalHash.js, shared by both sides. A fresh random
+// salt is minted on every call; nothing here is persisted server-side, so
+// there is no stored hash to leak either.
+app.get('/api/cashier/manager-approval-hashes', asyncRoute(async (req, res) => {
+  if (!checkRateLimit(req, res, 'manager-approval-hashes')) return
+
+  const usersCollection = await pbCollection('users')
+  const eligibleUsers = await usersCollection.getFullList({
+    filter: '(role = "manager" || role = "admin" || role = "cashier") && status != "inactive"',
+  })
+  const legacyManagers = legacyManagerBarcodeRecords(eligibleUsers)
+
+  const authBarcodesCollection = await pbCollection('authorization_barcodes')
+  const activeAuthBarcodes = await authBarcodesCollection.getFullList({
+    filter: 'status = "active"',
+    expand: 'generated_by',
+  }).catch(() => [])
+
+  const entries = []
+  for (const manager of legacyManagers) {
+    const salt = randomSaltHex()
+    const hash = await deriveApprovalHash(manager.void_barcode, salt)
+    entries.push({ approverId: manager.id, approverName: manager.name || manager.email || 'Manager', salt, hash })
+  }
+  for (const authBarcode of activeAuthBarcodes) {
+    const code = String(authBarcode.code || '').trim()
+    if (!code) continue
+    const generatedBy = Array.isArray(authBarcode.expand?.generated_by)
+      ? authBarcode.expand.generated_by[0]
+      : authBarcode.expand?.generated_by
+    const salt = randomSaltHex()
+    const hash = await deriveApprovalHash(code, salt)
+    entries.push({
+      approverId: generatedBy?.id || '',
+      approverName: generatedBy?.name || generatedBy?.email || 'Manager',
+      salt,
+      hash,
+    })
+  }
+
+  res.json({ ok: true, entries, generatedAt: new Date().toISOString() })
 }))
 
 app.post('/api/cashier/activity-log', asyncRoute(async (req, res) => {

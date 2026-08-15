@@ -25,6 +25,7 @@ import {
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
+import { findApprovalHashMatch } from '../../utils/managerApprovalHash'
 
 let runtimePromise
 
@@ -507,6 +508,57 @@ function numberPayload(value) {
   return Number.isFinite(number) ? Math.max(0, number) : 0
 }
 
+const MANAGER_APPROVAL_HASHES_KEY = 'managerApprovalHashes'
+const MANAGER_APPROVAL_HASHES_REFRESH_INTERVAL_MS = 15 * 60_000
+let managerApprovalHashesRefreshLoopStarted = false
+
+// Offline manager approval (reversing S1's original online-only decision,
+// per client request -- relying on internet always being up isn't
+// realistic for their store). The server hands out only a salted, one-way
+// hash of each active manager credential (GET
+// /api/cashier/manager-approval-hashes, see server/index.js and
+// src/utils/managerApprovalHash.js) -- the real barcode is never cached
+// here, so this does not reopen the leak S1 closed.
+async function refreshManagerApprovalHashes() {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return false
+  if (isPocketBaseRateLimited()) return false
+  try {
+    await initializeCashierDb()
+    const activeRuntime = await runtime()
+    const staffToken = activeRuntime.pb.authStore.token
+    const result = await cashierApiRequest('/cashier/manager-approval-hashes', {
+      headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : {},
+    })
+    const entries = Array.isArray(result?.entries) ? result.entries : []
+    await cashierDb.settings.put({
+      key: MANAGER_APPROVAL_HASHES_KEY,
+      value: { entries, fetchedAt: new Date().toISOString() },
+    })
+    return true
+  } catch (error) {
+    rememberPocketBaseRateLimit(error)
+    return false
+  }
+}
+
+async function cachedManagerApprovalHashes() {
+  await initializeCashierDb()
+  const cached = await cashierDb.settings.get(MANAGER_APPROVAL_HASHES_KEY)
+  return Array.isArray(cached?.value?.entries) ? cached.value.entries : []
+}
+
+// Started once per app session (from a successful login), not tied to the
+// sync engine's own tick loop -- this cache only matters for an action a
+// cashier might take at any moment (a void/refund needing approval), not
+// for anything queued, so it keeps its own simple, independent schedule.
+function startManagerApprovalHashesRefreshLoop() {
+  if (managerApprovalHashesRefreshLoopStarted) return
+  managerApprovalHashesRefreshLoopStarted = true
+  globalThis.setInterval?.(() => {
+    void refreshManagerApprovalHashes()
+  }, MANAGER_APPROVAL_HASHES_REFRESH_INTERVAL_MS)
+}
+
 async function authorizeManagerApproval(authorization = {}) {
   const payload = typeof authorization === 'string' ? { code: authorization } : authorization
   const method = String(payload?.method || '').trim().toLowerCase()
@@ -522,41 +574,59 @@ async function authorizeManagerApproval(authorization = {}) {
     }
   }
 
-  // Manager approval codes are verified server-side only (POST
-  // /api/cashier/authorize-void, using the server's own PocketBase
-  // credentials) and are never cached on the terminal — a cached list of
-  // approval barcodes is exactly what let any cashier read and reuse a
-  // manager's code. That means this action requires connectivity; there is
-  // deliberately no offline fallback.
-  if (globalThis.navigator && !globalThis.navigator.onLine) {
-    throw new Error('Manager approval requires an internet connection. Approval codes are verified online only.')
-  }
-  if (isPocketBaseRateLimited()) {
-    throw new Error(pocketBaseRateLimitMessage())
-  }
-
   const usePassword = (method === 'password' || (!method && email && password)) && email && password
   const useBarcode = !usePassword && (method === 'barcode' || (!method && code)) && code
   if (!usePassword && !useBarcode) {
     throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
   }
 
-  const requestBody = usePassword ? { email, password } : { code }
-  try {
-    const activeRuntime = await runtime()
-    const staffToken = activeRuntime.pb.authStore.token
-    const result = await cashierApiRequest('/cashier/authorize-void', {
-      method: 'POST',
-      body: JSON.stringify(requestBody),
-      headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : {},
-    })
-    return result?.approver
-  } catch (error) {
-    rememberPocketBaseRateLimit(error)
-    if (canUseOfflineLoginFallback(error)) {
-      throw new Error('Manager approval requires an internet connection. Approval codes are verified online only.')
+  const offline = Boolean(globalThis.navigator) && !globalThis.navigator.onLine
+  const rateLimited = isPocketBaseRateLimited()
+
+  if (!offline && !rateLimited) {
+    const requestBody = usePassword ? { email, password } : { code }
+    try {
+      const activeRuntime = await runtime()
+      const staffToken = activeRuntime.pb.authStore.token
+      const result = await cashierApiRequest('/cashier/authorize-void', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : {},
+      })
+      // A successful online approval is also a good moment to refresh the
+      // offline cache -- best-effort, never blocks the approval that just
+      // succeeded.
+      void refreshManagerApprovalHashes()
+      return result?.approver
+    } catch (error) {
+      rememberPocketBaseRateLimit(error)
+      if (!canUseOfflineLoginFallback(error)) {
+        throw new Error(error?.message || 'Manager approval failed.')
+      }
+      // Network/rate-limit-shaped failure -- fall through to the offline
+      // hash check below rather than failing outright.
     }
-    throw new Error(error?.message || 'Manager approval failed.')
+  }
+
+  // Offline fallback: barcode only. Password-based approval still requires
+  // connectivity -- caching a verifiable hash of a manager's actual login
+  // password offline is a materially different risk than a low-entropy
+  // barcode and was not part of what was asked for here.
+  if (!useBarcode) {
+    throw new Error('Manager approval by email and password requires an internet connection. Use a manager barcode instead, or reconnect.')
+  }
+  const cachedEntries = await cachedManagerApprovalHashes()
+  const match = await findApprovalHashMatch(code, cachedEntries)
+  if (!match) {
+    throw new Error(cachedEntries.length
+      ? 'Manager barcode was not found or is inactive.'
+      : 'Manager approval is not available offline yet on this terminal -- connect to the internet at least once so approval data can be cached.')
+  }
+  return {
+    id: match.approverId,
+    name: match.approverName,
+    email: '',
+    method: 'barcode-offline',
   }
 }
 
@@ -645,6 +715,8 @@ export const desktopCashierApi = {
       detail: 'Signed in to cashier POS',
     })
     void cashierApiRequest('/cashier/quick-login-accounts').then(cacheQuickLoginAccounts).catch(() => {})
+    void refreshManagerApprovalHashes()
+    startManagerApprovalHashesRefreshLoop()
     if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       activeRuntime.refreshProducts().catch((error) => {
         rememberPocketBaseRateLimit(error)
@@ -738,6 +810,8 @@ export const desktopCashierApi = {
       action: 'Login',
       detail: 'Signed in to cashier POS using barcode',
     })
+    void refreshManagerApprovalHashes()
+    startManagerApprovalHashesRefreshLoop()
     return { user }
   },
 

@@ -27,6 +27,9 @@ Full original plan detail (first audit's ground truth) lives at
   sync/request-volume work, then hygiene.** The security items were previously deferred; they
   are promoted because the manager-approval control that money-correctness fixes (refund/void)
   depend on is currently defeatable by any cashier (see S1).
+- **Manager barcode approval works offline** via a locally cached salted one-way hash (see S1's
+  "Decision reversed" entry) — this supersedes S1's original online-only choice; do not revert to
+  online-only without the client. Email/password manager approval remains online-only.
 
 ## Verified fixed (merged to `main`)
 
@@ -102,6 +105,54 @@ reachable (non-404) on a simulated Vercel deployment, while a non-allowlisted ca
 `npm run test:vercel` (6/6) pass; both `npm run build` and `npm run build:vercel` clean.
 **Action required from the client: redeploy the Vercel project** with this change for barcode
 login to work again — the fix is in the code, not yet live until the Vercel deployment is rebuilt.
+(Resolved: the client's local `main` was 19 commits ahead of `origin/main` — none of this
+session's or the prior session's work had ever been pushed to GitHub, so no redeploy could have
+picked it up. Pushed; confirmed `origin/main` matches local `main`.)
+
+**Decision reversed (follow-up session, client request): manager approval is no longer
+online-only.** The original S1 fix deliberately chose online-only approval over caching a salted
+hash locally (see "Fix" above), because relying on connectivity was judged an acceptable
+trade-off at the time. The client has since determined it isn't — their store can't rely on
+internet always being available — and asked for the offline-capable option that was originally
+declined.
+Built: `GET /api/cashier/manager-approval-hashes` (`server/index.js`, added to the same Vercel
+admin-only-gate exemption list as the other three cashier auth endpoints, same reasoning) hands out
+a freshly minted, salted, one-way PBKDF2 hash (100,000 iterations, SHA-256, via the standard Web
+Crypto API) of every currently active manager barcode/authorization code — covering both
+`users.void_barcode` (`role="manager"`/`"admin"`, or `role="cashier"` with a `92`-prefixed barcode)
+and the standalone `authorization_barcodes` collection. The real barcode is never cached on the
+terminal in reversible form and nothing is persisted server-side either — a fresh salt is minted on
+every call, so there is no stored hash to leak. New shared `src/utils/managerApprovalHash.js`
+(`deriveApprovalHash`, `matchesApprovalHash`, `findApprovalHashMatch`) runs identically on both
+server and client (same Web Crypto API, so there is no risk of a client/server algorithm mismatch
+silently breaking matches). The client (`authorizeManagerApproval`,
+`src/cashier-pos/services/desktopApi.js`) tries the existing online verify first when reachable;
+on a network-shaped failure (or when already known offline), it falls back to hashing the
+scanned/typed barcode against the cached entries. The cache refreshes on every login and every
+15 minutes while online (`startManagerApprovalHashesRefreshLoop`), and best-effort after every
+successful online approval.
+**Scope, deliberately limited to barcode approval.** Email/password manager approval remains
+online-only — caching a verifiable hash of a manager's actual login password offline is a
+materially different risk than a low-entropy barcode (a password is also the credential used to
+access far more than just approvals) and was not part of what was asked for. A manager can still
+use their barcode offline; email/password approval will prompt to reconnect or use a barcode
+instead.
+**Residual risk, inherent to any offline-capable auth, not eliminated:** if a manager is
+deactivated or their barcode changed while a terminal is offline, that terminal keeps accepting the
+old cached hash until it next successfully reconnects and refreshes (up to 15 minutes after
+reconnecting, or immediately on next login). This is the same trade-off the pre-existing offline
+cashier *login* fallback already has — not a new category of risk, just extended to approval too,
+per the client's explicit choice.
+New `tests/manager-approval-hash.test.js` (10 cases): salt uniqueness, hash determinism, hash
+sensitivity to both value and salt, correct match/rejection, malformed-input handling,
+multi-candidate matching. New `tests/admin-vercel-boundary.test.js` case confirming the hash
+endpoint is reachable (not 404) on the Vercel admin-only gate. The wiring inside
+`authorizeManagerApproval` itself has no automated test coverage — `desktopApi.js` references
+`import.meta.env` at module scope and can't be imported in a plain Node test (same limitation
+already documented for `Cashier.jsx` under M6); verified instead via `esbuild` bundle-check plus
+the full suite, consistent with how this codebase already handles this class of file.
+`npm run test:offline` (222/222) and `npm run test:vercel` (7/7) pass; `npm run build`,
+`npm run build:vercel`, and `npm run build:cashier` all clean.
 
 **S2. CRITICAL — Live superuser credentials committed. ⚠️ FILE FIXED (this session); PASSWORD
 ROTATION STILL REQUIRED — action for the client, not something this session could do.**

@@ -67,6 +67,14 @@ test('remote admin deployment still answers manager-approval verification', asyn
   assert.equal(response.status, 401)
 })
 
+test('remote admin deployment still answers the offline manager-approval hash endpoint', async () => {
+  // Same reasoning as above: reachable (not 404), gated by the same
+  // cashier-bearer-token requirement (401 with none supplied).
+  const response = await fetch(`${baseUrl}/api/cashier/manager-approval-hashes`)
+  assert.notEqual(response.status, 404)
+  assert.equal(response.status, 401)
+})
+
 test('remote admin deployment does not expose the development PocketBase proxy', async () => {
   const response = await fetch(`${baseUrl}/api/pocketbase/health`)
   assert.equal(response.status, 401)
