@@ -810,6 +810,40 @@ the JS join/copies logic and the Rust `print_receipt_impl` loop (quoted above), 
 else broke. `npm run test:offline` (255/255) and `npm run test:vercel` (7/7) pass (unrelated to this
 fix, confirming no regression elsewhere).
 
+**M12. MEDIUM — A failed non-product sync operation had no way to be cleared from the Sync
+Center; it stayed "Failed" forever. ✅ FIXED (follow-up session).** Reported by the client via a
+screenshot from a real terminal (POS-25A2EE): an `UpdateStaff` op for a cashier
+("SYRA MAE ENARIO") stuck at `Failed · The requested resource wasn't found.`, with no button to
+resolve or dismiss it, unlike the other two items in the same screenshot (a duplicate-barcode
+product conflict and a stale-product-data conflict, both of which already had working resolution
+paths — see below).
+Was: `Sidebar.jsx`'s Sync Center only ever rendered a "Discard" button for failed *product* ops
+(`isDiscardableProductFailure` explicitly checks `type` against
+`['createProduct','updateProduct','deleteProduct']`), because discarding a failed product op also
+deletes that product's local cached copy (`discardFailedProductSync` in `desktopApi.js`) — there
+was no equivalent path for any other Admin op type. A 404 on retry (the target record was deleted
+or replaced elsewhere) can never succeed no matter how many times "Retry All" is clicked, so an op
+like this was permanently stuck with zero way to clear it from the UI.
+Fix: new `discardFailedSyncOperation(id)` (`desktopApi.js`) — deliberately much simpler than the
+product version, since a failed non-product op has no local cache to clean up; it only ever
+removes the stuck queue entry itself, never touches the actual cloud record (if the edit still
+needs to be made, it has to be made again). Wired into `Sidebar.jsx` via a new
+`isDiscardableOtherFailure` check (any Admin-sourced failed op that isn't one of the three product
+types) with its own "Discard" button, explicit in its confirmation dialog that this only clears
+the stuck entry and does not affect the cloud.
+**Not a bug — for context, since the same screenshot raised them:** the duplicate-barcode product
+conflict ("C2 SOLO 24'S") and the stale-cloud-data conflict ("MARLBORO RED CRAFTED") both already
+have working resolution paths in this same UI (the existing product-discard button once an op
+exceeds `MAX_ATTEMPTS` and flips to `failed`, and the Use Cloud/Review Fields/Use Local buttons for
+`conflict`-status ops respectively) — they require a one-time manual decision from whoever is at
+that terminal (pick a different barcode; choose which version of the product to keep), not a code
+fix. Confirmed via a direct query against production PocketBase that this was a real, currently-
+used terminal (16 shift sessions, 661 activity log entries from real staff), not sample data.
+**Not automatically tested:** same `import.meta.env` constraint as the rest of `desktopApi.js` (see
+M11's note above) keeps this out of the plain-`node --test` suite. Verified by direct code trace,
+a fresh-clone `npm run lint` (0 errors), and `npm run build` (clean). `npm run test:offline`
+(262/262) unaffected, confirming no regression elsewhere.
+
 ---
 
 ## T — Sync / request-volume

@@ -143,9 +143,18 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
     }
   }
 
+  const productOpTypes = ['createProduct', 'updateProduct', 'deleteProduct']
   const isDiscardableProductFailure = (op) => op.source === 'Admin'
     && op.status === 'failed'
-    && ['createProduct', 'updateProduct', 'deleteProduct'].includes(op.type)
+    && productOpTypes.includes(op.type)
+
+  // A failed non-product Admin op (e.g. updating a staff member whose
+  // record has since been deleted or renamed elsewhere) used to have no
+  // way to clear it from this list at all -- it would sit here forever,
+  // with every "Retry All" re-attempting a change that can never succeed.
+  const isDiscardableOtherFailure = (op) => op.source === 'Admin'
+    && op.status === 'failed'
+    && !productOpTypes.includes(op.type)
 
   async function discardFailedProduct(op) {
     const name = op.payload?.name || op.payload?.barcode || 'this local product'
@@ -157,6 +166,21 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
       flash(`Discarded obsolete changes for ${name}.`)
     } catch (error) {
       flash(error.message || 'Unable to discard the failed product change.')
+    } finally {
+      setDiscarding(false)
+    }
+  }
+
+  async function discardFailedOperation(op) {
+    const label = op.payload?.name || op.payload?.email || String(op.type || 'change').replaceAll('_', ' ')
+    if (!await dialog.confirm(`Discard the failed change for “${label}”?\n\nThis removes the stuck sync entry only. It does not affect the actual record in the cloud -- if the change still needs to be made, make it again.`, { title: 'Discard failed change', confirmLabel: 'Discard change' })) return
+    setDiscarding(true)
+    try {
+      await api.discardFailedSyncOperation(op.id)
+      setSyncQueue(await api.syncQueueDetails())
+      flash(`Discarded the stuck sync entry for ${label}.`)
+    } catch (error) {
+      flash(error.message || 'Unable to discard the failed change.')
     } finally {
       setDiscarding(false)
     }
@@ -286,6 +310,7 @@ export default function Sidebar({ open = false, collapsed = false, onNavigate = 
                 <div className={`sync-queue-card ${op.status}`} key={op.id}>
                   <div><strong>{op.payload?.name || op.transactionNo || op.payload?.barcode || op.type}</strong><small>{op.source || 'Admin'} · {String(op.type || 'change').replaceAll('_', ' ')} · {op.status}{op.createdAt ? ` · ${new Date(op.createdAt).toLocaleString('en-PH')}` : ''}</small>{op.lastError && <p>{op.lastError}</p>}</div>
                   {isDiscardableProductFailure(op) && <button className="btn btn-outline btn-sm sync-discard-btn" onClick={() => discardFailedProduct(op)} disabled={discarding}>Discard</button>}
+                  {isDiscardableOtherFailure(op) && <button className="btn btn-outline btn-sm sync-discard-btn" onClick={() => discardFailedOperation(op)} disabled={discarding}>Discard</button>}
                   {op.status === 'conflict' && <div className="sync-conflict-actions"><button className="btn btn-outline btn-sm" onClick={() => resolveConflict(op, 'cloud')}>Use Cloud</button><button className="btn btn-outline btn-sm" onClick={() => reviewFields(op)}>Review Fields</button><button className="btn btn-primary btn-sm" onClick={() => resolveConflict(op, 'local')}>Use Local</button></div>}
                 </div>
               ))}

@@ -2077,6 +2077,28 @@ export const desktopAdminApi = {
     reconcileAdminSyncStatus(await adminDb.pendingOps.toArray(), { force: true })
     return { discarded: true, productId: operation.productId }
   },
+  // A failed product op needs its local cached product deleted alongside the
+  // queue entry (discardFailedProductSync above) -- there is no local
+  // product record left to reconcile once discarded. A failed non-product
+  // Admin op (e.g. UpdateStaff against a staff record that's since been
+  // deleted or renamed, surfacing as "the requested resource wasn't found")
+  // has no such cache to clean up; the cashier/staff record itself is
+  // untouched either way, so discarding here only ever removes the stuck
+  // queue entry. Before this, a failed non-product op had no discard path
+  // in the UI at all (Sidebar.jsx's isDiscardableProductFailure explicitly
+  // excludes non-product types) and stayed in the Sync Center forever, with
+  // every "Retry All" re-attempting a change that can never succeed.
+  async discardFailedSyncOperation(id) {
+    await startAdminRuntime()
+    const productTypes = new Set(['createProduct', 'updateProduct', 'deleteProduct'])
+    const operation = await adminDb.pendingOps.get(id)
+    if (!operation || operation.status !== 'failed' || productTypes.has(operation.type)) {
+      throw new Error('The failed change was not found or is not safe to discard.')
+    }
+    await adminDb.pendingOps.delete(id)
+    reconcileAdminSyncStatus(await adminDb.pendingOps.toArray(), { force: true })
+    return { discarded: true }
+  },
   async discardAllFailedProductSync() {
     await startAdminRuntime()
     await initializeCashierDb()
