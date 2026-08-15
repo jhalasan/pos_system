@@ -26,6 +26,7 @@ import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
+import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -806,9 +807,15 @@ function cashierBody(data) {
 }
 
 function cashierUpdateBody(data) {
-  const body = cashierBody(data)
-  if (body instanceof FormData) return body
-  return body
+  const payload = cashierUpdatePayload(data)
+  if (!data.imageFile) return payload
+
+  const formData = new FormData()
+  for (const [key, value] of Object.entries(payload)) {
+    formData.append(key, key === 'permissions' ? JSON.stringify(value || []) : (value ?? ''))
+  }
+  formData.append('profile_img', data.imageFile)
+  return formData
 }
 
 async function cacheUsers(records) {
@@ -2543,7 +2550,7 @@ export const desktopAdminApi = {
     }
     if (!(await isCloudReachable())) {
       const existing = await adminDb.users.get(staffId)
-      const payload = cashierPayload(data)
+      const payload = cashierUpdatePayload(data)
       delete payload.password
       delete payload.passwordConfirm
       if (data.imageFile) {

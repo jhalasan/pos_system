@@ -203,6 +203,30 @@ in the first place). `PATCH /api/cashiers/:id` (`server/index.js`) now calls thi
 `test:offline`) locks in the omission behavior. `npm run test:offline` (124/124) and `npm run
 test:vercel` (3/3) pass.
 
+**Gap found and fixed (follow-up session): the same vulnerability was still fully live in the
+desktop (Tauri) admin app — the client's primary app — via a completely separate code path.**
+The S5 fix above only covers `server/index.js`'s Express PATCH route, which the web (Vercel) admin
+uses. The desktop admin app never calls that route at all: `src/admin-page/services/
+desktopApi.js`'s `updateCashier` writes staff edits straight to PocketBase
+(`pb.collection('users').update(...)`), reusing `cashierPayload` — the same create-time builder
+that defaults `status` to `'active'`, hard-codes `role`, and defaults `permissions` to `[]` — for
+every update (online, offline-queued, and the password-change branch alike). A name-only edit to
+a cashier from the Tauri app would have silently reactivated a terminated account and reset
+permissions to full legacy access, identical to the original S5 bug, just in the code path the
+client actually uses day to day.
+Fix: extracted a new `cashierUpdatePayload` (`src/admin-page/utils/cashierUpdatePayload.js`,
+a pure function so it's testable without a Vite/`import.meta.env` shim — `desktopApi.js` can't be
+imported directly in a plain Node test) mirroring `cashierPatchPayload`'s omit-when-absent
+semantics exactly. Wired into `updateCashier`'s three branches (online, offline-queued, and the
+password-change branch's own body builder via `cashierUpdateBody`). The offline-queued branch also
+had a related bug fixed as a side effect: it always sent `void_barcode` (defaulting to `''` when
+not part of the edit), which meant editing a cashier without touching their barcode field could
+wipe it; the new payload omits it when not part of the edit, so `local.cashierBarcode` correctly
+falls back to the existing cached value instead.
+New `tests/cashier-update-payload.test.js` (9 cases, mirroring `cashier-patch-payload.test.js`'s
+coverage). `npm run test:offline` (212/212) and `npm run test:vercel` (6/6) pass; `npm run build`,
+`npm run build:vercel`, and `npm run build:cashier` (the actual Tauri build target) all clean.
+
 **S6. MEDIUM** — `server/formatters.js:194` hardcodes fallback password `'cashier123'`, no
 forced change on first login.
 
@@ -277,7 +301,20 @@ negative), a fully refunded sale drops out of `lastSoldAt`, refunds don't cross-
 products or other sales of the same product, voided sales stay excluded regardless of refund data.
 `npm run test:offline` (189/189) and `npm run test:vercel` (3/3) pass; `npm run build` clean.
 
-**M2. HIGH — Refund restock under-restocks every multi-unit product. ✅ FIXED (this session,
+**⚠️ Gap found, NOT yet fixed: the netting above only reaches the web (Vercel) admin dashboard —
+the desktop (Tauri) admin app, the client's primary app, computes its own dashboard/FSN figures
+independently and does not net refunds at all.**
+`src/admin-page/services/desktopApi.js`'s `buildDashboardFromRecords` (~line 989) and
+`buildFsnMetrics` (~line 1153) are a **separate, parallel implementation** — not a call into the
+Express `/api/dashboard`/`/api/inventory/fsn` routes fixed above — that sums raw
+`total_amount`/`quantity_sold` with no refund awareness, merging local (not-yet-synced) sales with
+cloud PocketBase records for offline-first support. This is real, scoped follow-up work, not
+something to retrofit blind: it needs the same `sale_adjustments` join as the server-side fix, but
+applied against a dataset that already merges local-Dexie and cloud sales with its own
+override/dedup logic (`fsnInventory()`/`dashboard()`, ~lines 1811-1926) — a legacy local sale's
+refund state needs checking too, which the server-side fix never had to consider.
+**Until this lands, refund data recorded via M1's cloud write is not reflected in the dashboard the
+client actually looks at day to day** (only in the secondary Vercel web admin, if used).
 together with M3).**
 Was: `adjustLocalSale` rebuilt `returnedItems` and dropped `conversion`
 (`src/cashier-pos/offline/saleRepository.js:267-291`), so `restoreProductStock` hit
