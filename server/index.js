@@ -1654,7 +1654,19 @@ app.get('/api/cashier/quick-login-accounts', asyncRoute(async (_req, res) => {
     sort: 'email',
     filter: 'role="cashier" && quick_login_enabled=true && status!="inactive"',
   })
-  res.json(records.map((record) => toCashier(record)))
+  // Never hand a cashier terminal another account's approval barcode: a
+  // 92-prefixed void_barcode marks a cashier-role account that can also
+  // approve overrides, and cashierBarcode is the raw code itself. Both are
+  // stripped from this list-for-quick-switching endpoint; a barcode scan
+  // still verifies live against POST /api/cashier/auth/barcode.
+  res.json(
+    records
+      .filter((record) => !String(record.void_barcode || '').startsWith('92'))
+      .map((record) => {
+        const { cashierBarcode, ...cashier } = toCashier(record)
+        return cashier
+      }),
+  )
 }))
 
 app.delete('/api/cashiers/:id', asyncRoute(async (req, res) => {

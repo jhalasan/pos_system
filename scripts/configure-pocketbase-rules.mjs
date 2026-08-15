@@ -84,9 +84,14 @@ await updateCollection('products', {
 await patchField('products', 'quantity', { required: false, min: 0 })
 await ensureBoolField('products', 'allow_fractional', 'Whether this product can be stocked and sold in decimal quantities (e.g. rice by the kilogram).')
 
+// Admin-only: these are the manager void/refund/cash-out approval codes.
+// A cashier who can list this collection can read every manager's approval
+// barcode and self-approve any override — approval must be verified
+// server-side (see server/index.js authorizeManagerApproval), never by
+// letting the client hold the code list.
 await updateCollection('authorization_barcodes', {
-  listRule: readRule,
-  viewRule: readRule,
+  listRule: adminRule,
+  viewRule: adminRule,
   createRule: adminRule,
   updateRule: adminRule,
   deleteRule: adminRule,
@@ -168,9 +173,14 @@ await updateCollection('audit_reviews', {
   deleteRule: adminRule,
 })
 
+// Admin, or the account's own record only — a cashier must not be able to
+// list every staff account (that exposes other cashiers' and managers'
+// void_barcode, which is the same approval-code leak as
+// authorization_barcodes above).
+const selfOrAdminRule = '@request.auth.role = "admin" || id = @request.auth.id'
 await updateCollection('users', {
-  listRule: readRule,
-  viewRule: readRule,
+  listRule: selfOrAdminRule,
+  viewRule: selfOrAdminRule,
   createRule: adminRule,
   updateRule: adminRule,
   deleteRule: adminRule,

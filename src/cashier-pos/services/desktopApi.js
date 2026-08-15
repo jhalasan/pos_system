@@ -1,4 +1,3 @@
-import PocketBase from 'pocketbase'
 import { adminDb, initializeAdminDb } from '../../admin-page/offline/db'
 import { initializeCashierDb } from '../offline/db'
 import { cashierDb } from '../offline/db'
@@ -24,10 +23,37 @@ import {
 } from '../../utils/pocketbaseRateLimit'
 import { getTerminalId } from '../../utils/terminalIdentity'
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
-import { createPacedPocketBase } from '../../utils/pacedPocketBase'
-import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 let runtimePromise
+
+const API_URL = import.meta.env.VITE_API_URL || '/api'
+
+// Manager approval, quick-login account listing, and barcode login all used
+// to read the `authorization_barcodes`/`users` PocketBase collections
+// directly with the cashier's own token, which meant any cashier could list
+// every manager's approval code. Those collections are now admin-only (see
+// scripts/configure-pocketbase-rules.mjs); this terminal instead calls the
+// existing Express /api/cashier/* endpoints, which use the server's own
+// PocketBase credentials and never hand back the underlying code list.
+async function cashierApiRequest(path, options = {}) {
+  const res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  })
+  const text = await res.text().catch(() => '')
+  let payload = null
+  try {
+    payload = text ? JSON.parse(text) : null
+  } catch {
+    payload = null
+  }
+  if (!res.ok) {
+    const error = new Error(payload?.error || text || 'Request failed.')
+    error.status = res.status
+    throw error
+  }
+  return payload
+}
 
 function pocketBaseErrorMessage(error, fallback = 'Unable to login right now.') {
   const fieldErrors = error?.response?.data || error?.data?.data || {}
@@ -132,60 +158,6 @@ async function adminCachedCashierQuickLoginAccounts() {
       .then((records) => records.map(toQuickLoginAccount).filter((account) => account.email))
   } catch {
     return []
-  }
-}
-
-function cachedApprover(record, code) {
-  const barcode = String(record?.cashierBarcode || record?.void_barcode || '').trim()
-  if (!barcode || barcode !== code) return null
-  const role = String(record?.role || '').trim()
-  const status = String(record?.status || 'active').trim()
-  const isManagerBarcode = barcode.startsWith('92')
-  const canApprove = role === 'manager' || role === 'admin' || (role === 'cashier' && isManagerBarcode)
-  if (!canApprove || status === 'inactive') return null
-
-  return {
-    id: record.id || '',
-    name: record.name || record.email || 'Manager',
-    email: record.email || '',
-    method: 'barcode',
-  }
-}
-
-async function cachedManagerApprovalByBarcode(code) {
-  const barcode = String(code || '').trim()
-  if (!barcode) return null
-
-  try {
-    await initializeCashierDb()
-    const cashierRecord = await cashierDb.quickLoginAccounts
-      .filter((record) => cachedApprover(record, barcode))
-      .first()
-    const approver = cachedApprover(cashierRecord, barcode)
-    if (approver) return approver
-  } catch {
-    // Cache fallback is best-effort; cloud lookup remains the source of truth.
-  }
-
-  try {
-    await initializeAdminDb()
-    const authorizationRecord = await adminDb.authorizationBarcodes
-      .filter((record) => record.barcode === barcode && record.status === 'active' && !record.deleted)
-      .first()
-    if (authorizationRecord) {
-      return {
-        id: authorizationRecord.generatedById || '',
-        name: authorizationRecord.generatedBy || 'Manager',
-        email: authorizationRecord.generatedByEmail || '',
-        method: 'barcode',
-      }
-    }
-    const adminRecord = await adminDb.users
-      .filter((record) => cachedApprover(record, barcode))
-      .first()
-    return cachedApprover(adminRecord, barcode)
-  } catch {
-    return null
   }
 }
 
@@ -450,47 +422,6 @@ function canUseOfflineLoginFallback(error) {
     || /network|fetch|timeout|offline|connection/i.test(String(error?.message || ''))
 }
 
-async function refreshAuthorizationBarcodeCache(activeRuntime) {
-  const records = await activeRuntime.pb.collection('authorization_barcodes').getFullList({
-    expand: 'generated_by',
-    requestKey: null,
-  })
-  await initializeAdminDb()
-  const normalized = records.map((record) => {
-    const generatedBy = Array.isArray(record.expand?.generated_by) ? record.expand.generated_by[0] : record.expand?.generated_by
-    return {
-      id: record.id,
-      barcode: record.code || '',
-      label: record.label || 'Void and Discount Approval',
-      status: record.status || 'active',
-      generatedBy: generatedBy?.name || generatedBy?.email || 'Admin',
-      generatedById: generatedBy?.id || '',
-      generatedByEmail: generatedBy?.email || '',
-      createdAt: record.created || new Date().toISOString(),
-      pendingSync: false,
-    }
-  })
-  await adminDb.transaction('rw', adminDb.authorizationBarcodes, async () => {
-    const pending = await adminDb.authorizationBarcodes.filter((record) => record.pendingSync).toArray()
-    await adminDb.authorizationBarcodes.clear()
-    await adminDb.authorizationBarcodes.bulkPut([...normalized, ...pending])
-  })
-}
-
-async function managerPasswordHash(email, password) {
-  const bytes = new TextEncoder().encode(`manager-approval:${String(email).toLowerCase()}:${password}`)
-  const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
-  return [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, '0')).join('')
-}
-
-async function cachedManagerApprovalByPassword(email, password) {
-  await initializeCashierDb()
-  const credential = await cashierDb.settings.get(`managerApproval:${String(email).toLowerCase()}`)
-  if (!credential?.value?.hash) return null
-  const hash = await managerPasswordHash(email, password)
-  return hash === credential.value.hash ? credential.value.manager : null
-}
-
 async function cashierPasswordHash(email, password) {
   const bytes = new TextEncoder().encode(`cashier-login:${String(email).toLowerCase()}:${password}`)
   const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
@@ -593,103 +524,40 @@ async function authorizeManagerApproval(authorization = {}) {
       method: 'developer-barcode',
     }
   }
-  const activeRuntime = await runtime()
 
+  // Manager approval codes are verified server-side only (POST
+  // /api/cashier/authorize-void, using the server's own PocketBase
+  // credentials) and are never cached on the terminal — a cached list of
+  // approval barcodes is exactly what let any cashier read and reuse a
+  // manager's code. That means this action requires connectivity; there is
+  // deliberately no offline fallback.
   if (globalThis.navigator && !globalThis.navigator.onLine) {
-    if ((method === 'barcode' || (!method && code)) && code) {
-      const cachedManager = await cachedManagerApprovalByBarcode(code)
-      if (cachedManager) return cachedManager
-      throw new Error('Manager barcode is not cached on this terminal or is inactive.')
-    }
-    if ((method === 'password' || (!method && email && password)) && email && password) {
-      const cachedManager = await cachedManagerApprovalByPassword(email, password)
-      if (cachedManager) return { ...cachedManager, method: 'password' }
-      throw new Error('These manager credentials have not been verified and cached on this terminal yet.')
-    }
-    throw new Error('Offline manager approval requires a cached barcode or previously verified manager credentials.')
+    throw new Error('Manager approval requires an internet connection. Approval codes are verified online only.')
+  }
+  if (isPocketBaseRateLimited()) {
+    throw new Error(pocketBaseRateLimitMessage())
   }
 
-  if ((method === 'barcode' || (!method && code)) && code) {
-    const authorizationRecord = await activeRuntime.pb.collection('authorization_barcodes').getFirstListItem(
-      activeRuntime.pb.filter('code = {:code} && status = "active"', { code }),
-      { expand: 'generated_by', requestKey: null },
-    ).catch(() => null)
-
-    if (authorizationRecord) {
-      const generatedBy = Array.isArray(authorizationRecord.expand?.generated_by)
-        ? authorizationRecord.expand.generated_by[0]
-        : authorizationRecord.expand?.generated_by
-
-      await initializeAdminDb().then(() => adminDb.authorizationBarcodes.put({
-        id: authorizationRecord.id,
-        barcode: authorizationRecord.code,
-        label: authorizationRecord.label || 'Void and Discount Approval',
-        status: authorizationRecord.status,
-        generatedBy: generatedBy?.name || generatedBy?.email || 'Manager',
-        generatedById: generatedBy?.id || '',
-        generatedByEmail: generatedBy?.email || '',
-        createdAt: authorizationRecord.created,
-        pendingSync: false,
-      })).catch(() => {})
-      return {
-        id: generatedBy?.id || '',
-        name: generatedBy?.name || generatedBy?.email || 'Manager',
-        email: generatedBy?.email || '',
-        method: 'barcode',
-      }
-    }
-
-    const legacyManager = await activeRuntime.pb.collection('users').getFirstListItem(
-      activeRuntime.pb.filter('void_barcode = {:code} && (role = "manager" || role = "admin" || role = "cashier") && status != "inactive"', { code }),
-      { requestKey: null },
-    ).catch(() => null)
-
-    if (legacyManager && (legacyManager.role !== 'cashier' || code.startsWith('92'))) {
-      return {
-        id: legacyManager.id,
-        name: legacyManager.name || legacyManager.email || 'Manager',
-        email: legacyManager.email || '',
-        method: 'barcode',
-      }
-    }
-
-    const cachedManager = await cachedManagerApprovalByBarcode(code)
-    if (cachedManager) return cachedManager
+  const usePassword = (method === 'password' || (!method && email && password)) && email && password
+  const useBarcode = !usePassword && (method === 'barcode' || (!method && code)) && code
+  if (!usePassword && !useBarcode) {
+    throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
   }
 
-  if ((method === 'password' || (!method && email && password)) && email && password) {
-    if (globalThis.navigator && !globalThis.navigator.onLine) {
-      throw new Error('Offline manager approval currently supports cached barcodes. Use a manager or authorization barcode.')
-    }
-    const adminClient = createPacedPocketBase(new PocketBase(import.meta.env.VITE_POCKETBASE_URL), sharedGovernor)
-    adminClient.autoCancellation(false)
-    const auth = await adminClient.collection('users').authWithPassword(email, password).catch(async (error) => {
-      const cachedManager = await cachedManagerApprovalByPassword(email, password)
-      if (cachedManager) return { record: { ...cachedManager, role: 'manager', status: 'active' } }
-      throw error
+  const requestBody = usePassword ? { email, password } : { code }
+  try {
+    const result = await cashierApiRequest('/cashier/authorize-void', {
+      method: 'POST',
+      body: JSON.stringify(requestBody),
     })
-    const manager = auth.record
-
-    if (!['manager', 'admin'].includes(manager?.role) && !(manager?.role === 'cashier' && String(manager?.void_barcode || '').startsWith('92'))) {
-      throw new Error('Only manager accounts can approve cashier overrides.')
+    return result?.approver
+  } catch (error) {
+    rememberPocketBaseRateLimit(error)
+    if (canUseOfflineLoginFallback(error)) {
+      throw new Error('Manager approval requires an internet connection. Approval codes are verified online only.')
     }
-    if (manager?.status === 'inactive') throw new Error('This manager account is inactive.')
-
-    const approver = {
-      id: manager.id,
-      name: manager.name || manager.email || 'Manager',
-      email: manager.email || '',
-      method: 'password',
-    }
-    await initializeCashierDb()
-    await cashierDb.settings.put({
-      key: `managerApproval:${email.toLowerCase()}`,
-      value: { hash: await managerPasswordHash(email, password), manager: approver },
-    })
-    return approver
+    throw new Error(error?.message || 'Manager approval failed.')
   }
-
-  throw new Error(code ? 'Manager barcode was not found or is inactive.' : 'Manager approval requires a barcode or manager email and password.')
 }
 
 async function adminCachedProductByBarcode(barcode) {
@@ -776,18 +644,12 @@ export const desktopCashierApi = {
       action: 'Login',
       detail: 'Signed in to cashier POS',
     })
-    void activeRuntime.pb.collection('users').getFullList({
-      filter: 'role = "cashier" && quick_login_enabled = true && status != "inactive"',
-      fields: 'id,name,email,role,shift,status,quick_login_enabled,void_barcode',
-      sort: 'name',
-      requestKey: null,
-    }).then(cacheQuickLoginAccounts).catch(() => {})
+    void cashierApiRequest('/cashier/quick-login-accounts').then(cacheQuickLoginAccounts).catch(() => {})
     if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       activeRuntime.refreshProducts().catch((error) => {
         rememberPocketBaseRateLimit(error)
         console.warn('Product catalog refresh failed after cashier login:', error)
       })
-      refreshAuthorizationBarcodeCache(activeRuntime).catch(() => {})
     }
     return { user: { ...auth.record, imageUrl: cashierProfileImageUrl(auth.record, activeRuntime.pb) } }
   },
@@ -817,14 +679,17 @@ export const desktopCashierApi = {
     if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       let cloudChecked = false
-      const record = await activeRuntime.pb.collection('users').getFirstListItem(
-        activeRuntime.pb.filter('void_barcode = {:code} && role = "cashier"', { code }),
-        { requestKey: null },
-      ).then((result) => {
+      // Verified server-side (POST /api/cashier/auth/barcode), not by
+      // listing `users` with this terminal's own token — that collection is
+      // admin-only now (see scripts/configure-pocketbase-rules.mjs).
+      const record = await cashierApiRequest('/cashier/auth/barcode', {
+        method: 'POST',
+        body: JSON.stringify({ barcode: code }),
+      }).then((result) => {
         cloudChecked = true
-        return result
+        return result?.user || null
       }).catch((error) => {
-        if (error?.status === 404) {
+        if (error?.status === 401) {
           cloudChecked = true
           return null
         }

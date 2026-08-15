@@ -49,15 +49,29 @@ Both re-confirmed accurate in this pass — no regressions.
 
 ## S — Security (new to this register; previously deferred, now promoted)
 
-**S1. CRITICAL — Manager approval barcodes are readable by cashiers.**
-`scripts/configure-pocketbase-rules.mjs:15,87-93` sets
+**S1. CRITICAL — Manager approval barcodes are readable by cashiers. ✅ FIXED (this session,
+online-only approval, per client decision).**
+Was: `scripts/configure-pocketbase-rules.mjs:15,87-93` set
 `authorization_barcodes.listRule = '@request.auth.role = "cashier" || ... "admin"'`, overriding
-the admin-only (`null`) rule in `pocketbase/pb_schema.json`. The cashier client bulk-downloads
-them into IndexedDB — `src/cashier-pos/services/desktopApi.js:453-477`. Same script does it
-again for `users` at `:171-177`, and manager identity is just a `92`-prefixed `void_barcode`
-(`server/formatters.js:196-199`). Any cashier can open DevTools → IndexedDB and read the manager
-approval code, then self-approve every void, refund, and cash-out. Note the schema file and the
-script disagree; the script is what actually runs against PocketBase.
+the admin-only (`null`) rule in `pocketbase/pb_schema.json`. The cashier client bulk-downloaded
+them into IndexedDB (`desktopApi.js:453-477`, old line numbers), and did the same for `users`
+(`:171-177`, old), leaking every manager's `92`-prefixed `void_barcode`
+(`server/formatters.js:196-199`).
+Fix: `authorization_barcodes` and `users` PB rules are now admin-only /
+self-or-admin (`scripts/configure-pocketbase-rules.mjs`). `authorizeManagerApproval` in
+`src/cashier-pos/services/desktopApi.js` no longer queries either collection directly or caches
+barcodes/password hashes locally — it calls the existing server-mediated
+`POST /api/cashier/authorize-void` (`server/index.js:915`), which verifies against PocketBase
+using the server's own superuser credentials and never returns the code list. This makes manager
+approval **online-only** (client decision: no offline fallback, rather than caching a salted hash
+locally) — void/refund/cash-out approval now requires connectivity. `loginWithBarcode`'s online
+verification and the quick-login account list were also moved off direct `users` queries onto
+`POST /api/cashier/auth/barcode` and `GET /api/cashier/quick-login-accounts` (the latter now
+strips `cashierBarcode`/hides `92`-prefixed accounts server-side, `server/index.js`) so the
+tightened `users` rule doesn't break normal cashier-switching. `npm run test:offline` (114/114)
+and `npm run test:vercel` (3/3) still pass. **Not yet done:** S3 still applies to these same
+endpoints — `authorize-void` has no rate limit yet, so this fix closes the bulk-read leak but not
+the brute-force vector; that lands with S3.
 
 **S2. CRITICAL — Live superuser credentials committed.**
 `.env.example:3-8` holds `POCKETBASE_URL=https://nexasystems.pockethost.io`,
