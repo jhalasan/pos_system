@@ -421,6 +421,7 @@ export default function ProductManagement() {
             <option value="active">Active Products</option>
             <option value="inactive">Inactive Products</option>
             <option value="archived">Archived Products</option>
+            <option value="deleted">Deleted Products</option>
             <option value="all">All Lifecycle Statuses</option>
           </select>
           <select className="select" value={sortBy} onChange={(e) => { setSortBy(e.target.value); setVisibleCount(pageSize) }} aria-label="Sort products">
@@ -541,10 +542,10 @@ export default function ProductManagement() {
                           </button>
                           <button
                             className="icon-btn"
-                            title={(p.lifecycleStatus || 'active') === 'archived' ? 'Restore product' : 'Archive product'}
-                            onClick={() => handleLifecycle(p, (p.lifecycleStatus || 'active') === 'archived' ? 'active' : 'archived')}
+                            title={['archived', 'deleted'].includes(p.lifecycleStatus || 'active') ? 'Restore product' : 'Archive product'}
+                            onClick={() => handleLifecycle(p, ['archived', 'deleted'].includes(p.lifecycleStatus || 'active') ? 'active' : 'archived')}
                           >
-                            {(p.lifecycleStatus || 'active') === 'archived' ? '↺' : <IconArchive size={15} />}
+                            {['archived', 'deleted'].includes(p.lifecycleStatus || 'active') ? '↺' : <IconArchive size={15} />}
                           </button>
                           <button
                             className="icon-btn del"

@@ -651,6 +651,24 @@ re-test Delete and Archive now that all three layers are in place; if it still r
 thing to check is whether the reappearing product predates this fix and simply needs to be
 deleted/archived once more now that the mechanism actually persists.
 
+Layer 4 — client feedback after re-testing: reusing Archive's `lifecycle_status: 'archived'` for
+Delete's fallback meant a deleted product was indistinguishable from an archived one, both showing
+under the same "Archived Products" filter — "no sense of adding an archive button if the delete
+button does that too." Fixed by giving Delete its own distinct status, `'deleted'`, separate from
+`'archived'` end to end: the schema migration script now also adds `'deleted'` as an allowed
+`lifecycle_status` select value (`ensureSelectValue`, additive, run against production this
+session); both delete fallback paths (`syncEngine.js`, `server/index.js`) write `'deleted'` instead
+of `'archived'`; the three places that whitelist which `lifecycleStatus` values survive a save
+(`productBody` in `syncEngine.js`, `localProductFromForm` in `desktopApi.js`, `productPayload` in
+`server/formatters.js`) now accept `'deleted'` too, so re-saving a deleted product's other fields
+later doesn't silently reset it back to active. `ProductManagement.jsx` gained its own "Deleted
+Products" filter option alongside "Archived Products" rather than folding deleted items into the
+Archived view, and the restore (↺) toggle now recognizes both `'archived'` and `'deleted'` as
+restorable back to `'active'`. Updated `tests/product-delete-relation-constraint.test.js` to assert
+`'deleted'` specifically (and that it is *not* `'archived'`). `npm run test:offline` (236/236) and
+`npm run test:vercel` (7/7) pass; verified against a clean `npm ci` checkout and all three
+production builds.
+
 ---
 
 ## T — Sync / request-volume

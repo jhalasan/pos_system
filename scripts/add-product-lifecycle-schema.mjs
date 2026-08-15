@@ -59,6 +59,32 @@ async function ensureField(collectionName, field) {
   console.log(`${collectionName}.${field.name}: field created`)
 }
 
+// Adding a new option to an already-created select field's allowed `values`
+// -- run separately from ensureField because that helper skips entirely once
+// the field exists, and this migration shipped a second time (see M9 layer
+// 4 in POS_AUDIT_REGISTER.md) to add 'deleted' as its own distinct status,
+// separate from 'archived', after the client pointed out Delete and Archive
+// looked identical from the product list.
+async function ensureSelectValue(collectionName, fieldName, value) {
+  const collection = await pb.collections.getOne(collectionName)
+  const fieldsKey = fieldsKeyOf(collection)
+  const fields = collection[fieldsKey] || []
+  const field = fields.find((existing) => existing.name === fieldName)
+  if (!field) {
+    console.log(`${collectionName}.${fieldName}: field does not exist yet, run ensureField first`)
+    return
+  }
+  if ((field.values || []).includes(value)) {
+    console.log(`${collectionName}.${fieldName}: "${value}" already an allowed value, skipping`)
+    return
+  }
+  const nextFields = fields.map((existing) => (
+    existing.name === fieldName ? { ...existing, values: [...(existing.values || []), value] } : existing
+  ))
+  await pb.collections.update(collection.id, { [fieldsKey]: nextFields })
+  console.log(`${collectionName}.${fieldName}: added "${value}" to allowed values`)
+}
+
 await authAsSuperuser()
 
 await ensureField('products', {
@@ -69,5 +95,13 @@ await ensureField('products', {
   values: ['active', 'inactive', 'archived'],
   help: 'Controls whether the product appears in active selling and inventory lists. Missing/absent means active.',
 })
+
+// 'deleted' is intentionally distinct from 'archived': Archive is an
+// explicit, reversible admin action a manager takes on a product still in
+// active rotation; Delete falling back to this status (because the product
+// has sale/stock history and cannot be hard-removed) should not be
+// indistinguishable from that -- it must not show up under the "Archived
+// Products" filter, only under an explicit "Deleted Products" one.
+await ensureSelectValue('products', 'lifecycle_status', 'deleted')
 
 console.log('Product lifecycle schema migration complete.')

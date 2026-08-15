@@ -131,7 +131,7 @@ async function productBody(pb, data) {
     profitMargin: Number.isFinite(profitMargin) ? Math.max(0, profitMargin) : 0,
     has_multiple_units: Boolean(data.hasMultipleUnits ?? data.has_multiple_units),
     allow_fractional: Boolean(data.allowFractional ?? data.allow_fractional),
-    lifecycle_status: ['inactive', 'archived'].includes(data.lifecycleStatus || data.lifecycle_status) ? (data.lifecycleStatus || data.lifecycle_status) : 'active',
+    lifecycle_status: ['inactive', 'archived', 'deleted'].includes(data.lifecycleStatus || data.lifecycle_status) ? (data.lifecycleStatus || data.lifecycle_status) : 'active',
   }
   // include selling units when present so desktop/admin sync preserves additional units
   if (Array.isArray(data.sellingUnits) && data.sellingUnits.length > 0) {
@@ -695,16 +695,20 @@ export class AdminSyncEngine extends EventTarget {
         // it deleted only in this terminal's local cache used to leave the
         // cloud record fully live, so it would silently reappear the next
         // time any device (or this one, after a cache reset) pulled a
-        // fresh catalog. Archive it on the cloud record instead -- durable,
-        // and already respected everywhere (cashier catalog filters,
-        // product listings) via lifecycle_status.
-        const archived = await this.pb.collection('products').update(
+        // fresh catalog. Mark it 'deleted' on the cloud record instead --
+        // durable, and already respected everywhere (cashier catalog
+        // filters, product listings) via lifecycle_status. Deliberately a
+        // distinct value from 'archived': Archive is a reversible admin
+        // action on a product still in rotation, and must stay a separate,
+        // visibly different outcome from Delete -- not the same button
+        // under two names.
+        const deletedRecord = await this.pb.collection('products').update(
           op.productId,
-          { lifecycle_status: 'archived' },
+          { lifecycle_status: 'deleted' },
           { expand: 'category', requestKey: op.id },
         ).catch(() => null)
-        if (archived) {
-          await replaceLocalProductWithCloud(op.productId, archived, this.pb)
+        if (deletedRecord) {
+          await replaceLocalProductWithCloud(op.productId, deletedRecord, this.pb)
         } else {
           const existing = await adminDb.products.get(op.productId).catch(() => null)
           if (existing) {

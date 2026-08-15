@@ -137,7 +137,7 @@ export function productPayload(input, categoryId) {
     has_multiple_units: hasMultipleUnits,
     allow_fractional: booleanFieldValue(input.allowFractional ?? input.allow_fractional),
     selling_units: parseSellingUnits(input.sellingUnits || input.selling_units),
-    lifecycle_status: ['inactive', 'archived'].includes(input.lifecycleStatus || input.lifecycle_status) ? (input.lifecycleStatus || input.lifecycle_status) : 'active',
+    lifecycle_status: ['inactive', 'archived', 'deleted'].includes(input.lifecycleStatus || input.lifecycle_status) ? (input.lifecycleStatus || input.lifecycle_status) : 'active',
   }
 }
 

@@ -1435,7 +1435,7 @@ app.patch('/api/products/:id', upload.single('product_img'), asyncRoute(async (r
 }))
 
 app.delete('/api/products/:id', asyncRoute(async (req, res) => {
-  let archivedInstead = false
+  let markedDeletedInstead = false
   try {
     await (await pbCollection('products')).delete(req.params.id)
   } catch (error) {
@@ -1446,18 +1446,21 @@ app.delete('/api/products/:id', asyncRoute(async (req, res) => {
     // rejects it to protect referential integrity. Falling through here
     // used to leave the cloud record fully intact while only pretending to
     // the caller that it was gone, so it would silently reappear on the
-    // next full catalog pull. Archive it instead: same "gone from active
-    // views" outcome the caller wants, but durable on the record itself.
+    // next full catalog pull. Mark it 'deleted' instead: same "gone from
+    // active views" outcome the caller wants, but durable on the record
+    // itself -- and deliberately a distinct lifecycle_status from
+    // 'archived', so Delete and the separate Archive action never look like
+    // the same button under two names.
     if (isRelationConstraint) {
-      await (await pbCollection('products')).update(req.params.id, { lifecycle_status: 'archived' }).catch(() => {})
-      archivedInstead = true
+      await (await pbCollection('products')).update(req.params.id, { lifecycle_status: 'deleted' }).catch(() => {})
+      markedDeletedInstead = true
     }
   }
 
   await createLog({
     action: 'Product',
-    detail: archivedInstead
-      ? `Archived product ${req.params.id} (has sale/stock history, could not be permanently deleted)`
+    detail: markedDeletedInstead
+      ? `Deleted product ${req.params.id} (has sale/stock history, marked deleted rather than permanently removed)`
       : `Deleted product ${req.params.id}`,
   })
   res.status(204).end()

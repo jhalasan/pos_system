@@ -1353,7 +1353,7 @@ async function localProductFromForm(data, id = newId('product')) {
     tiers: data.tiers || [{ label: 'Retail', price: Number(data.price) || 0 }],
     sellingUnits: Array.isArray(data.sellingUnits) ? data.sellingUnits : [],
     allowFractional,
-    lifecycleStatus: ['inactive', 'archived'].includes(data.lifecycleStatus) ? data.lifecycleStatus : 'active',
+    lifecycleStatus: ['inactive', 'archived', 'deleted'].includes(data.lifecycleStatus) ? data.lifecycleStatus : 'active',
     status: deriveStatus(data),
     pendingSync: true,
     deleted: false,
