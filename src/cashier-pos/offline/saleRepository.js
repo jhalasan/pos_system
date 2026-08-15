@@ -5,6 +5,7 @@ import { normalizeProduct, safeBulkPutProducts } from './productRepository.js'
 import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
 import { discountedUnitPrice, quantizeQty } from '../../utils/quantity.js'
+import { mintTransactionNumber } from './transactionNumber.js'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -61,7 +62,12 @@ export async function finalizeSaleLocally(sale) {
     cashierId: sale.cashierId,
     cashierName: String(sale.cashierName || ''),
     customerName: String(sale.customerName || '').trim().slice(0, 120),
-    transactionNo: sale.transactionNo || `OFFLINE-${clientSaleId.slice(0, 8).toUpperCase()}`,
+    // Minted fresh below, inside the transaction — never the caller-supplied
+    // `sale.transactionNo` (a UI preview, or the old racy generator). See
+    // transactionNumber.js: the number that actually gets recorded must be
+    // claimed atomically against this terminal's own counter, which only
+    // this transaction can guarantee.
+    transactionNo: '',
     totalAmount: Number(sale.totalAmount),
     subtotalAmount: Number(sale.subtotalAmount) || Number(sale.totalAmount),
     discountPercent: Number(sale.discountPercent) || 0,
@@ -91,6 +97,7 @@ export async function finalizeSaleLocally(sale) {
   const transactionTables = [
     cashierDb.products,
     cashierDb.pendingSales,
+    cashierDb.settings,
   ]
   if (canStoreCompletedSales) transactionTables.push(cashierDb.completedSales)
   // Pre-resolve any missing products from the admin cache before starting
@@ -136,6 +143,8 @@ export async function finalizeSaleLocally(sale) {
           quantity: quantizeQty(product.quantity - baseQuantity),
         })
       }
+
+      pendingSale.transactionNo = await mintTransactionNumber(new Date(createdAt))
 
       await cashierDb.pendingSales.add(pendingSale)
       if (canStoreCompletedSales) {

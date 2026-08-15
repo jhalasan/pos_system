@@ -202,6 +202,24 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
   }
 }
 
+// A transaction_no + cashier_id match alone used to be accepted as "this is
+// the sale I just retried creating" — but transaction_no collisions were
+// possible under the old generator (see transactionNumber.js), and even
+// under the new one, matching on cashier_id + one field is thin corroboration
+// for a write this consequential. Adopting the wrong record here means every
+// subsequent item/stock write in uploadSale runs against someone else's
+// sale. Requires amount and a same-day timestamp to also agree before
+// treating a match as corroborated.
+function isCorroboratedSaleMatch(found, sale) {
+  if (!found) return false
+  const amountMatches = Number(found.total_amount) === Number(sale.totalAmount)
+  const foundTime = new Date(found.created_at || found.created || 0).getTime()
+  const saleTime = new Date(sale.createdAt || 0).getTime()
+  const withinOneDay = Number.isFinite(foundTime) && Number.isFinite(saleTime)
+    && Math.abs(foundTime - saleTime) <= 24 * 60 * 60 * 1000
+  return amountMatches && withinOneDay
+}
+
 async function findExistingCloudSale(pb, sale) {
   const filters = [
     pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
@@ -214,7 +232,7 @@ async function findExistingCloudSale(pb, sale) {
     const found = await pb.collection('sales').getFirstListItem(filter, {
       requestKey: null,
     }).catch(() => null)
-    if (found) return found
+    if (found && isCorroboratedSaleMatch(found, sale)) return found
   }
 
   return null

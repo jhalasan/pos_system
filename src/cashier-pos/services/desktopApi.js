@@ -14,6 +14,7 @@ import {
   getPendingSales,
   voidLocalSale,
 } from '../offline/saleRepository'
+import { peekNextTransactionNumber } from '../offline/transactionNumber'
 import { startCashierRuntime } from '../offline/runtime'
 import {
   isPocketBaseRateLimit,
@@ -21,7 +22,6 @@ import {
   pocketBaseRateLimitMessage,
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
-import { getTerminalId } from '../../utils/terminalIdentity'
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
 
 let runtimePromise
@@ -402,17 +402,6 @@ async function ensureProducts() {
   }
 
   return products
-}
-
-function localTransactionNumber() {
-  const now = new Date()
-  const day = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('')
-  const terminalCode = [...getTerminalId()].reduce((sum, character) => sum + character.charCodeAt(0), 0) % 100
-  return `${day}${String(terminalCode).padStart(2, '0')}${String(Date.now()).slice(-4)}`
 }
 
 function canUseOfflineLoginFallback(error) {
@@ -883,7 +872,11 @@ export const desktopCashierApi = {
   },
 
   async nextTransactionNumber() {
-    return { transactionNo: localTransactionNumber() }
+    await initializeCashierDb()
+    // A display estimate only -- the number actually recorded is minted
+    // fresh, atomically, inside finalizeSaleLocally. See
+    // offline/transactionNumber.js.
+    return { transactionNo: await peekNextTransactionNumber() }
   },
 
   async salesHistory({ cashierId }) {
@@ -941,10 +934,9 @@ export const desktopCashierApi = {
         if (!canUseOfflineLoginFallback(error)) throw error
       })
     }
-    const queued = await finalizeSaleLocally({
-      ...sale,
-      transactionNo: sale.transactionNo || localTransactionNumber(),
-    })
+    // finalizeSaleLocally always mints its own transactionNo atomically; any
+    // value passed here is ignored (see transactionNumber.js).
+    const queued = await finalizeSaleLocally(sale)
     const activeRuntime = await runtime()
     void activeRuntime.syncEngine.syncNow()
     return {

@@ -197,15 +197,42 @@ refunding a case (conversion 24) restocks 24 base units; requesting 99 units on 
 queues exactly one cloud op clamped to 2, carrying the same conversion. `npm run test:offline`
 (126/126) and `npm run test:vercel` (3/3) pass.
 
-**M4. HIGH — `transactionNo` collides every 10 seconds.**
-`desktopApi.js:435-444`: `${YYYYMMDD}${charSum(terminalId)%100}${String(Date.now()).slice(-4)}`.
-The suffix is epoch-ms mod 10000 — wraps every 10s. Minted at `:1078` outside the Dexie
-transaction (which opens later at `saleRepository.js:114`). `completedSales` indexes it
-non-uniquely (`db.js:59`) and `sales.transaction_no` has no unique index (`pb_schema.json:650`).
-`findExistingCloudSale` (`syncEngine.js:205-221`) matches on `transaction_no + cashier_id` only,
-so on retry it can adopt a *different* colliding sale as "already uploaded" and run item/stock
-writes against the wrong record (`:761-771`, and the void/adjust path at `:705-711`).
-(Was tracker B1.)
+**M4. HIGH — `transactionNo` collides every 10 seconds. ✅ FIXED (desktop cashier, this
+session).**
+Was: `desktopApi.js` generated `${YYYYMMDD}${charSum(terminalId)%100}${String(Date.now()).slice(-4)}`
+— the suffix is epoch-ms mod 10000, wrapping every 10s, minted outside any transaction.
+`findExistingCloudSale` matched on `transaction_no + cashier_id` only, so on retry it could adopt
+a *different* colliding sale as "already uploaded" and run item/stock writes against the wrong
+record. (Was tracker B1.)
+Fix: new `src/cashier-pos/offline/transactionNumber.js` — all-numeric, `YYYYMMDD` (8) + a
+deterministic per-terminal ordinal (6) + a persistent per-terminal-per-day counter (5) = 19
+digits. `mintTransactionNumber()` claims the counter atomically and is only ever called from
+*inside* `finalizeSaleLocally`'s own Dexie transaction (`cashierDb.settings` added to its table
+list) — the caller-supplied `sale.transactionNo` is now ignored entirely for the number that
+actually gets recorded; `nextTransactionNumber()` (the UI preview shown before checkout) uses a
+non-consuming `peekNextTransactionNumber()` instead, which may legitimately differ from the final
+number if another open tab finalizes first — that's a display estimate, not a reservation, and the
+UI already prefers the authoritative returned value over the preview (`Cashier.jsx`). Verified via
+grep: no receipt/CSV-export/admin consumer assumes a fixed digit count, and PocketBase's
+`sales.transaction_no` field has no max-length constraint (just `pattern: "^[0-9]+$"`), so the new
+19-digit format is accepted as-is. `findExistingCloudSale` now also requires the matched record's
+`total_amount` and a same-day timestamp to corroborate before adopting it on retry.
+**Deliberately NOT done:** promoting `completedSales.transactionNo` to a Dexie unique index. A
+hard unique constraint added via a Dexie version-bump migration can throw `ConstraintError` and
+break the upgrade on any terminal that already has duplicate values from the old generator —
+verifying that's safe requires either real production data or the client's input on how to handle
+existing duplicates first. Left as a distinct, separately-scoped follow-up.
+**New finding, not yet fixed:** the *web* (server-backed) cashier's `nextTransactionNumber()`
+(`server/index.js`) has the same class of bug via a different mechanism — it reads all of today's
+sales, computes `max(sequence)+1`, and returns it with no atomic claim, so two concurrent web
+checkouts can compute and use the identical next number (classic read-then-write race). Not fixed
+in this pass; the desktop terminal is this codebase's primary offline-first architecture and was
+the audit's explicit citation, but this is real and should be scoped alongside it.
+New `tests/transaction-number.test.js` (all-numeric, no same-terminal collision even minted in the
+same millisecond, correct day-boundary reset, peek doesn't consume) and
+`tests/cashier-sale-retry-corroboration.test.js` (an uncorroborated same-`transaction_no` match is
+rejected; a corroborated one is adopted). `npm run test:offline` (134/134) and `npm run
+test:vercel` (3/3) pass.
 
 **M5. HIGH — Void issued mid-upload is silently lost cloud-side. ✅ FIXED (this session).**
 Was: `voidLocalSale` deleted the queued row while `uploadSale` already held it in memory and
