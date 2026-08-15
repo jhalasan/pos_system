@@ -25,6 +25,7 @@ import { resolveRequiredProductPrice } from '../offline/productPricing'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
+import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -541,18 +542,6 @@ function receiptItemFromCloud(item) {
   }
 }
 
-function groupSaleItemsBySaleId(items) {
-  const map = new Map()
-  for (const item of items) {
-    const saleId = firstRelation(item.sale_id ?? item.saleId)
-    if (!saleId) continue
-    const list = map.get(saleId) || []
-    list.push(item)
-    map.set(saleId, list)
-  }
-  return map
-}
-
 function receiptRecordFromCloudSale(sale, itemsBySaleId) {
   const cashier = Array.isArray(sale.expand?.cashier_id)
     ? sale.expand.cashier_id[0]
@@ -858,18 +847,6 @@ async function cacheUsers(records) {
       })
     }
   })
-}
-
-async function ensureQuickLoginEmailVisibility(records = []) {
-  return Promise.all(records.map(async (record) => {
-    if (!record?.quick_login_enabled || record.emailVisibility) return record
-
-    try {
-      return await pb.collection('users').update(record.id, { emailVisibility: true }, { requestKey: null })
-    } catch {
-      return record
-    }
-  }))
 }
 
 function saleDate(sale) {
@@ -1482,7 +1459,12 @@ async function listDesktopStaff(role = 'cashier') {
       const isManager = record.role === 'manager' || (record.role === 'cashier' && String(record.void_barcode || '').startsWith('92'))
       return staffRole === 'manager' ? isManager : record.role === 'cashier' && !isManager
     })
-    const records = await ensureQuickLoginEmailVisibility(staffRecords)
+    // emailVisibility is set at quick-login enable-time now (see
+    // setQuickLoginEnabled/updateCashier below), not backfilled here on
+    // every page load -- that backfill used to issue one users.update per
+    // staff record with quick_login_enabled=true and emailVisibility=false,
+    // every single time this list loaded.
+    const records = staffRecords
     const cloudIds = new Set(cloudRecords.map((record) => String(record.id)))
     const staleCachedStaff = await adminDb.users
       .filter((user) => ['cashier', 'manager'].includes(String(user.role || '')) && !user.pendingSync && !cloudIds.has(String(user.id)))
@@ -2164,7 +2146,7 @@ export const desktopAdminApi = {
       if (staff.length === 0) {
         throw new Error('The cloud returned zero staff accounts. Check the users collection list rule and confirm this terminal is connected to the correct PocketBase database.')
       }
-      await cacheUsers(await ensureQuickLoginEmailVisibility(staff))
+      await cacheUsers(staff)
       await this.authorizationBarcodes()
       await copyAdminProductCatalogToCashier()
       const readiness = await this.offlineReadiness()
@@ -2676,9 +2658,8 @@ export const desktopAdminApi = {
         sort: 'name,email',
         requestKey: null,
       })
-      const records = await ensureQuickLoginEmailVisibility(cloudRecords)
-      await cacheUsers(records)
-      return records.map(toSettingsUser)
+      await cacheUsers(cloudRecords)
+      return cloudRecords.map(toSettingsUser)
     }
 
     return (await adminDb.users.where('role').equals('admin').toArray()).map(toSettingsUser)

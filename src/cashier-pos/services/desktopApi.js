@@ -24,6 +24,7 @@ import {
 } from '../../utils/pocketbaseRateLimit'
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
+import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 
 let runtimePromise
 
@@ -320,29 +321,6 @@ async function cloudSaleItems(pb, saleId) {
   }).then((items) => items.map(cloudSaleItemToLocal))
 }
 
-// PocketBase GETs are paced as 'interactive' priority, which only waits out
-// an already-active rate-limit cooldown rather than queueing on the token
-// bucket (see pacedPocketBase.js) - so firing one sale_items request per
-// sale in a single Promise.all can itself burst past PocketHost's limit on
-// a busy day. A handful of those requests then get silently swallowed by
-// the .catch(() => []) below, producing sales with a wrongly-empty items
-// list. Bounding concurrency keeps a full day's history fetch from ever
-// firing that burst in the first place.
-const SALE_ITEMS_FETCH_CONCURRENCY = 3
-
-async function mapWithConcurrency(list, limit, mapper) {
-  const results = new Array(list.length)
-  let nextIndex = 0
-  async function worker() {
-    while (nextIndex < list.length) {
-      const current = nextIndex++
-      results[current] = await mapper(list[current], current)
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, list.length) }, worker))
-  return results
-}
-
 async function cloudSalesHistory({ cashierId } = {}) {
   if (globalThis.navigator && !globalThis.navigator.onLine) return []
 
@@ -357,9 +335,36 @@ async function cloudSalesHistory({ cashierId } = {}) {
     requestKey: null,
   }).catch(() => [])
 
-  return mapWithConcurrency(sales, SALE_ITEMS_FETCH_CONCURRENCY, async (sale) => {
-    const items = await cloudSaleItems(activeRuntime.pb, sale.id).catch(() => null)
-    return { sale: toCashierCloudSale(sale, items || []), itemsFetchFailed: items === null }
+  if (sales.length === 0) return []
+
+  // One bulk fetch grouped in memory, instead of one request per sale (even
+  // bounded-concurrency, that was still N requests for N sales — reliably
+  // exceeding PocketHost's per-IP concurrent-request cap on a busy day and
+  // silently dropping line items on the overflowed requests). Mirrors the
+  // same fix already shipped on the admin side (see
+  // admin-page/services/desktopApi.js's fetchReceiptRecords).
+  const allItemsFetchFailed = { failed: false }
+  const allSaleItems = await activeRuntime.pb.collection('sale_items').getFullList({
+    sort: 'created',
+    expand: 'product_id',
+    requestKey: null,
+  }).catch(() => {
+    allItemsFetchFailed.failed = true
+    return []
+  })
+  const itemsBySaleId = groupSaleItemsBySaleId(allSaleItems)
+
+  return sales.map((sale) => {
+    const items = itemsBySaleId.get(sale.id)
+    // A sale that genuinely has zero items looks identical to "the bulk
+    // fetch failed" unless the fetch's own outcome is tracked separately —
+    // only treat this as a failure if the whole fetch errored, not just
+    // because this particular sale had no matching group.
+    const itemsFetchFailed = allItemsFetchFailed.failed
+    return {
+      sale: toCashierCloudSale(sale, (items || []).map(cloudSaleItemToLocal)),
+      itemsFetchFailed,
+    }
   })
 }
 

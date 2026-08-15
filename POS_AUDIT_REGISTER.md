@@ -350,11 +350,24 @@ New tests: `tests/pending-queue-retry.test.js` (3 cases) and
 `tests/admin-sync-reachability-cache.test.js` (3 cases, mirroring the existing cashier coverage).
 `npm run test:offline` (149/149) and `npm run test:vercel` (3/3) pass.
 
-**T2. Cashier sales-history N+1 + quick-login fan-out.** `groupSaleItemsBySaleId` needs
-extracting into `src/utils/saleItemGrouping.js` (mirrors a fix already shipped on the admin
-side) — confirmed it does not exist yet. Cashier history still does one request per sale.
-`emailVisibility: true` should be set at quick-login enable-time instead of a page-load backfill
-loop issuing one `users.update` per user.
+**T2. Cashier sales-history N+1 + quick-login fan-out. ✅ FIXED (this session).**
+Was: cashier's `cloudSalesHistory` fetched sale items with one bounded-concurrency request per
+sale (still N requests total for N sales), while the admin side already had a fixed pattern (one
+bulk `sale_items.getFullList()` + in-memory grouping). `ensureQuickLoginEmailVisibility` issued
+one `users.update` per staff record with `quick_login_enabled=true && !emailVisibility`, on
+**every** staff-list page load (3 call sites) — redundant, since `emailVisibility: true` is
+already set at quick-login enable-time (`setQuickLoginEnabled`/`updateCashier`).
+Fix: extracted `groupSaleItemsBySaleId` into shared `src/utils/saleItemGrouping.js`; admin's
+`fetchReceiptRecords` now imports it instead of keeping its own copy, and cashier's
+`cloudSalesHistory` (`src/cashier-pos/services/desktopApi.js`) was rewritten to do the same
+bulk-fetch-then-group pattern instead of one request per sale — dropped the now-unused
+`mapWithConcurrency`/`SALE_ITEMS_FETCH_CONCURRENCY` bounded-fan-out helper entirely.
+`ensureQuickLoginEmailVisibility` and all 3 call sites removed — enable-time already covers every
+account going forward; a legacy account enabled before that fix landed is a narrow, one-time
+edge case (toggling quick-login off/on fixes it), not worth N requests on every page load
+indefinitely. New `tests/sale-item-grouping.test.js` (4 cases: grouping, relation-array unwrap,
+camelCase fallback, missing reference). `npm run test:offline` (153/153) and `npm run test:vercel`
+(3/3) pass.
 
 **T3. Sale-upload batch rewrite.** `ensureCloudSaleItems` (`syncEngine.js:95-156`) +
 `ensureCloudStockDeduction` (`syncEngine.js:158-203`) issue ~8–9 PocketBase requests per line
