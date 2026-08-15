@@ -188,25 +188,43 @@ cash-sales fix landing alongside this one) and `npm run build:cashier` clean.
 **Ask the client to confirm** after rebuilding the Tauri app: log in by barcode, then void a synced
 sale, and check whether the catalog-refresh warning still appears.
 
-**S2. CRITICAL — Live superuser credentials committed. ⚠️ FILE FIXED (this session); PASSWORD
-ROTATION STILL REQUIRED — action for the client, not something this session could do.**
+**S2. CRITICAL — Live superuser credentials committed. ✅ PASSWORD ROTATED (follow-up session);
+optional history rewrite still not done.**
 Was: `.env.example:3-8` held `POCKETBASE_URL=https://nexasystems.pockethost.io`,
 `POCKETBASE_SUPERUSER_EMAIL=admin@email.com`, `POCKETBASE_SUPERUSER_PASSWORD=admin123`,
 `DEFAULT_CASHIER_PASSWORD=cashier123` — byte-identical to the working `.env`, so these were real
 values, not placeholders. `.env` itself is correctly gitignored and was never committed;
 `.env.example` was tracked and these values are in git history already.
-Fix: `.env.example` now holds placeholders only (`replace-with-a-secret` / a generic
-`your-pocketbase-host.pockethost.io`). **This does not remove the real values from git
-history** — anyone with a clone still has `admin@email.com` / `admin123` from an old commit.
-**Required, not yet done (needs the client's own PocketHost dashboard access):**
-1. Rotate the PocketBase superuser password immediately (PocketHost dashboard → the
-   `nexasystems` project → superuser account) and update the real `.env` (untracked, safe) with
-   the new value.
-2. Rotate `DEFAULT_CASHIER_PASSWORD` similarly — any staff account created without an explicit
-   password used this value.
-3. Decide whether to rewrite git history to purge the old commit(s) (`git filter-repo` or BFG) —
-   optional once rotated, since the exposed password will no longer work, but the URL + old
-   credential pattern stays visible in history either way unless rewritten.
+File fix (earlier this session): `.env.example` now holds placeholders only. This alone did not
+remove the real values from git history — anyone with a clone still had `admin@email.com` /
+`admin123` from an old commit, and the password kept working against production until rotated.
+**Password rotation (this follow-up, done with the client's explicit go-ahead):** by this point in
+the session, working superuser connectivity had already been confirmed live (used for the M9
+schema migrations), so the rotation was performed directly via the PocketBase API rather than left
+for the client to do manually through the PocketHost dashboard:
+1. Authenticated as the superuser with the old (leaked) password, called
+   `pb.collection('_superusers').update(id, { password, passwordConfirm, oldPassword })` with a new
+   28-character random password.
+2. Verified from a fresh client (not reusing the authenticated session) that the new password
+   authenticates successfully, and separately confirmed the old, leaked password no longer works at
+   all — both checked directly against production, not assumed.
+3. Updated the real `.env` (gitignored, confirmed via `git check-ignore` before writing) with the
+   new value immediately, so nothing on this machine broke.
+4. `DEFAULT_CASHIER_PASSWORD` (the fallback password used when a staff account is created without
+   an explicit one) was rotated to a new random value the same way, in `.env` only — this is an
+   app-level constant, not a PocketBase account, so there was no server-side value to update, but
+   **it does not retroactively change any cashier account already created under the old default**;
+   any such account still has `cashier123` as its actual login password until an admin resets it.
+5. **Client-side action required immediately after this rotation, not yet confirmed done:** the
+   Vercel-deployed web admin portal reads both of these from its own environment variables (set in
+   the Vercel dashboard, not from any file in this repo) — the client confirmed they have access
+   and would update it themselves right after the rotation. Until that update happens, the
+   Vercel-hosted server's PocketBase authentication will fail on every request that needs the
+   superuser connection.
+**Still not done, optional:** rewriting git history (`git filter-repo` or BFG) to purge the old
+commit(s) that hold `admin@email.com` / `admin123`. No longer strictly necessary for security now
+that the password is rotated and confirmed non-functional, but the URL and old credential *pattern*
+stays visible in history either way unless rewritten — the client's call, not defaulted to here.
 
 **S3. HIGH — All `/api/cashier/*` routes are unauthenticated. ✅ FIXED (this session).**
 Was: `server/index.js:837-841` short-circuited the auth middleware for any path starting
