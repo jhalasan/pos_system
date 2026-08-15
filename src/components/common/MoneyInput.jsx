@@ -31,6 +31,7 @@ export default function MoneyInput({ value, onChange, inputRef: externalRef, min
   const setRef = (node) => {
     nodeRef.current = node;
     if (typeof externalRef === 'function') externalRef(node);
+    // eslint-disable-next-line react-hooks/immutability -- externalRef is a ref object (the `inputRef` prop convention used throughout this codebase), not a plain prop; merging forwarded refs by writing .current is the standard safe pattern.
     else if (externalRef) externalRef.current = node;
   };
 
@@ -58,6 +59,7 @@ export default function MoneyInput({ value, onChange, inputRef: externalRef, min
       inputMode="decimal"
       value={displayValue}
       onChange={handleChange}
+      // eslint-disable-next-line react-hooks/immutability -- setRef merges the forwarded ref via the same safe .current write disabled above
       inputRef={setRef}
     />
   );
