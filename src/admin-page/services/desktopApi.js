@@ -27,6 +27,8 @@ import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
+import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTotals'
+import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -885,6 +887,12 @@ function localSaleItems(sale) {
 }
 
 function localSaleAsCloudLike(sale) {
+  // A cloud sale carries refunded_amount/refunded_units directly; a local,
+  // not-yet-synced sale only has its inline .adjustments[] array. Compute
+  // the equivalent here so netSaleAmount treats both shapes the same way,
+  // regardless of sync state -- see src/utils/localSaleAdjustments.js.
+  const { refundedAmount, refundedUnits } = refundedAmountAndUnits(sale.adjustments)
+
   return {
     ...sale,
     id: sale.clientSaleId || sale.id || sale.transactionNo,
@@ -895,6 +903,8 @@ function localSaleAsCloudLike(sale) {
     ref_number: sale.refNumber,
     cashier_id: sale.cashierId,
     status: sale.status || 'completed',
+    refunded_amount: refundedAmount,
+    refunded_units: refundedUnits,
   }
 }
 
@@ -993,7 +1003,7 @@ function filterAnalyticsRecords(sales = [], saleItems = [], options = {}) {
   }
 }
 
-function buildDashboardFromRecords(products, sales = [], saleItems = [], now = new Date(), options = {}) {
+function buildDashboardFromRecords(products, sales = [], saleItems = [], now = new Date(), options = {}, adjustments = []) {
   const filtered = filterAnalyticsRecords(sales, saleItems, options)
   sales = filtered.sales
   saleItems = filtered.saleItems
@@ -1007,47 +1017,60 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const dailySales = completedSales
     .filter((sale) => saleDate(sale) >= todayStart)
-    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const yesterdaySales = completedSales
     .filter((sale) => {
       const created = saleDate(sale)
       return created >= yesterdayStart && created < todayStart
     })
-    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const monthlySales = completedSales
     .filter((sale) => saleDate(sale) >= monthStart)
-    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
   const lastMonthSales = completedSales
     .filter((sale) => {
       const created = saleDate(sale)
       return created >= lastMonthStart && created < monthStart
     })
-    .reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
-  const totalRevenue = completedSales.reduce((sum, sale) => sum + (Number(sale.total_amount ?? sale.totalAmount) || 0), 0)
+    .reduce((sum, sale) => sum + netSaleAmount(sale), 0)
+  const totalRevenue = completedSales.reduce((sum, sale) => sum + netSaleAmount(sale), 0)
 
+  // Net units per (sale, product) before rolling up into the per-product
+  // breakdown, rather than summing raw quantity_sold -- see M1 in
+  // POS_AUDIT_REGISTER.md: refunds net out of units-sold/FSN analytics, not
+  // just revenue. Mirrors server/index.js's /api/dashboard fix exactly;
+  // this is a separate, parallel implementation for the Tauri admin app,
+  // which never calls the Express routes.
   const productLookup = buildProductLookup(products)
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
-  const productSales = new Map()
-  let selectedUnitsSold = 0
-
+  const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
+  const rawUnitsBySaleProduct = new Map()
   for (const item of saleItems) {
     const saleId = firstRelation(item.sale_id ?? item.saleId)
     if (!completedSaleIds.has(saleId)) continue
-
-    const quantity = Number(item.quantity_sold ?? item.quantity) || 0
-    selectedUnitsSold += quantity
     const product = resolveSaleItemProduct(item, productLookup)
     const productId = product?.id || firstRelation(item.product_id ?? item.productId)
     if (!productId) continue
 
     const expandedProduct = expandedSaleItemProduct(item)
-    const current = productSales.get(productId) || {
-      id: productId,
+    const key = `${saleId}:${productId}`
+    const existing = rawUnitsBySaleProduct.get(key) || {
+      productId,
       name: product?.name || item.name || expandedProduct?.name || productId,
       category: product?.category || expandedProduct?.category || '',
-      units: 0,
+      quantity: 0,
     }
-    current.units += quantity
+    existing.quantity += Number(item.quantity_sold ?? item.quantity) || 0
+    rawUnitsBySaleProduct.set(key, existing)
+  }
+
+  const productSales = new Map()
+  let selectedUnitsSold = 0
+  for (const [key, { productId, name, category, quantity }] of rawUnitsBySaleProduct) {
+    const netQuantity = Math.max(0, quantity - (refundedUnits.get(key) || 0))
+    selectedUnitsSold += netQuantity
+    const current = productSales.get(productId) || { id: productId, name, category, units: 0 }
+    current.units += netQuantity
     productSales.set(productId, current)
   }
 
@@ -1058,7 +1081,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   for (const sale of completedSales) {
     const created = saleDate(sale)
     if (created < todayStart) continue
-    hourlySales[created.getHours()].value += Number(sale.total_amount ?? sale.totalAmount) || 0
+    hourlySales[created.getHours()].value += netSaleAmount(sale)
   }
 
   const monthlyTrend = lastMonths(8, now)
@@ -1071,7 +1094,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   const yearlyTrendByKey = new Map(yearlyTrend.map((item) => [item.key, item]))
   for (const sale of completedSales) {
     const created = saleDate(sale)
-    const amount = Number(sale.total_amount ?? sale.totalAmount) || 0
+    const amount = netSaleAmount(sale)
     const day = dailyTrendByKey.get(dateKey(created))
     if (day) day.value += amount
     const week = weeklyTrendByKey.get(weekKey(created))
@@ -1092,7 +1115,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   const currentStockUnits = products.reduce((sum, product) => sum + (Number(product.qty) || 0), 0)
   const paymentTotals = completedSales.reduce((totals, sale) => {
     const method = String(sale.payment_method || sale.paymentMethod || 'cash').toLowerCase()
-    const amount = Number(sale.total_amount ?? sale.totalAmount) || 0
+    const amount = netSaleAmount(sale)
     if (method === 'gcash') totals.gcash += amount
     else totals.cash += amount
     return totals
@@ -1149,7 +1172,7 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
     ],
     recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({
       id: sale.id, transactionNo: sale.transaction_no || sale.transactionNo || sale.id,
-      amount: Number(sale.total_amount ?? sale.totalAmount) || 0,
+      amount: netSaleAmount(sale),
       paymentMethod: sale.payment_method || sale.paymentMethod || 'cash', createdAt: saleDate(sale).toISOString(),
     })),
     topCategories: [...topCategories].map(([name, units]) => ({ name, units })).sort((a, b) => b.units - a.units).slice(0, 5),
@@ -1157,14 +1180,18 @@ function buildDashboardFromRecords(products, sales = [], saleItems = [], now = n
   }
 }
 
-function buildFsnMetrics(products = [], sales = [], saleItems = [], now = new Date()) {
+function buildFsnMetrics(products = [], sales = [], saleItems = [], now = new Date(), adjustments = []) {
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const completedSaleIds = new Set(completedSales.map((sale) => sale.id))
   const salesById = new Map(completedSales.map((sale) => [sale.id, sale]))
   const ninetyDaysAgo = new Date(now)
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90)
   const productLookup = buildProductLookup(products)
-  const metrics = new Map()
+  // Net units per (sale, product) before rolling into FSN classification --
+  // see M1 in POS_AUDIT_REGISTER.md. Mirrors buildDashboardFromRecords and
+  // server/index.js's buildSalesMetrics.
+  const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
+  const rawBySaleProduct = new Map()
 
   for (const item of saleItems) {
     const saleId = firstRelation(item.sale_id ?? item.saleId)
@@ -1175,12 +1202,19 @@ function buildFsnMetrics(products = [], sales = [], saleItems = [], now = new Da
     const productId = product?.id || firstRelation(item.product_id ?? item.productId)
     if (!productId) continue
 
-    const quantity = saleItemQuantity(item)
-    const soldAt = saleDate(sale)
+    const key = `${saleId}:${productId}`
+    const existing = rawBySaleProduct.get(key) || { productId, soldAt: saleDate(sale), quantity: 0 }
+    existing.quantity += saleItemQuantity(item)
+    rawBySaleProduct.set(key, existing)
+  }
+
+  const metrics = new Map()
+  for (const [key, { productId, soldAt, quantity }] of rawBySaleProduct) {
+    const netQuantity = Math.max(0, quantity - (refundedUnits.get(key) || 0))
     const current = metrics.get(productId) || { units90: 0, totalUnits: 0, lastSoldAt: null }
-    current.totalUnits += quantity
-    if (soldAt >= ninetyDaysAgo) current.units90 += quantity
-    if (!current.lastSoldAt || soldAt > current.lastSoldAt) current.lastSoldAt = soldAt
+    current.totalUnits += netQuantity
+    if (soldAt >= ninetyDaysAgo) current.units90 += netQuantity
+    if (netQuantity > 0 && (!current.lastSoldAt || soldAt > current.lastSoldAt)) current.lastSoldAt = soldAt
     metrics.set(productId, current)
   }
 
@@ -1820,9 +1854,10 @@ export const desktopAdminApi = {
     const localCompletedSales = await localCashierCompletedSales()
     let cloudSales = []
     let cloudSaleItems = []
+    let cloudAdjustments = []
 
     if (await isCloudReachable()) {
-      ;[cloudSales, cloudSaleItems] = await Promise.all([
+      ;[cloudSales, cloudSaleItems, cloudAdjustments] = await Promise.all([
         pb.collection('sales').getFullList({
           requestKey: null,
         }).catch(() => []),
@@ -1830,6 +1865,10 @@ export const desktopAdminApi = {
           expand: 'product_id',
           requestKey: null,
         }).catch(() => []),
+        // sale_adjustments may not exist on an un-migrated PocketBase (M1's
+        // schema migration is additive and applied separately) -- degrade to
+        // un-netted FSN figures rather than failing the whole report.
+        pb.collection('sale_adjustments').getFullList({ requestKey: null }).catch(() => []),
       ])
     }
 
@@ -1874,7 +1913,8 @@ export const desktopAdminApi = {
     for (const sale of localSales) salesById.set(sale.id, sale)
 
     const saleItems = [...cloudSaleItems, ...localItems]
-    const metrics = buildFsnMetrics(products, [...salesById.values()], saleItems, new Date())
+    const adjustments = [...cloudAdjustments, ...localAdjustmentsNotYetSynced(localSalesForMovement, cloudAdjustments)]
+    const metrics = buildFsnMetrics(products, [...salesById.values()], saleItems, new Date(), adjustments)
     return products.map((product) => classifyFsnProduct(product, metrics.get(product.id), new Date()))
   },
 
@@ -1889,18 +1929,20 @@ export const desktopAdminApi = {
       const products = await listDesktopProducts()
       const localSales = localCompletedSales.map(localSaleAsCloudLike)
       const localItems = localCompletedSales.flatMap(localSaleItems)
-      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options)
+      const adjustments = localAdjustmentsNotYetSynced(localCompletedSales, [])
+      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options, adjustments)
     }
     if (!(await isCloudReachable())) {
       const products = await listDesktopProducts()
       const localSales = localCompletedSales.map(localSaleAsCloudLike)
       const localItems = localCompletedSales.flatMap(localSaleItems)
-      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options)
+      const adjustments = localAdjustmentsNotYetSynced(localCompletedSales, [])
+      return buildDashboardFromRecords(products, localSales, localItems, new Date(), options, adjustments)
     }
 
     await refreshAdminLocalCache({ pb }).catch(() => {})
     const products = await getAllProducts()
-    const [cloudSales, cloudSaleItems] = await Promise.all([
+    const [cloudSales, cloudSaleItems, cloudAdjustments] = await Promise.all([
       pb.collection('sales').getFullList({
         requestKey: null,
       }).catch(() => []),
@@ -1908,6 +1950,10 @@ export const desktopAdminApi = {
         expand: 'product_id',
         requestKey: null,
       }).catch(() => []),
+      // sale_adjustments may not exist on an un-migrated PocketBase (M1's
+      // schema migration is additive and applied separately) -- degrade to
+      // un-netted figures rather than failing the whole dashboard.
+      pb.collection('sale_adjustments').getFullList({ requestKey: null }).catch(() => []),
     ])
 
     const overriddenTransactionNos = new Set(
@@ -1928,8 +1974,12 @@ export const desktopAdminApi = {
       ...cloudSaleItems,
       ...localSalesForDashboard.flatMap(localSaleItems),
     ]
+    const adjustments = [
+      ...cloudAdjustments,
+      ...localAdjustmentsNotYetSynced(localSalesForDashboard, cloudAdjustments),
+    ]
 
-    return buildDashboardFromRecords(products, sales, saleItems, new Date(), options)
+    return buildDashboardFromRecords(products, sales, saleItems, new Date(), options, adjustments)
   },
   async syncNow() {
     await startAdminRuntime()

@@ -34,3 +34,33 @@ export function netSaleUnits(sale = {}) {
   const refunded = numberOrZero(sale.refundedUnits ?? sale.refunded_units)
   return Math.max(0, total - refunded)
 }
+
+function firstRelationValue(value) {
+  return Array.isArray(value) ? value[0] : value
+}
+
+// sale_adjustments.items carries the same {productId, quantity, ...} shape
+// queued locally by the cashier terminal (quantity is selling units, the
+// same unit as sale_items.quantity_sold). Netting happens at the (sale,
+// product) level, not per cart line: FSN/topProducts metrics are already
+// aggregated per product, so there is nothing to gain from attributing a
+// refund to one specific line over another of the same product in the same
+// sale. Shared between server/index.js (the web admin's Express routes) and
+// src/admin-page/services/desktopApi.js (the Tauri admin app's own,
+// independent dashboard/FSN builders) so both surfaces net refunds the same
+// way -- see POS_AUDIT_REGISTER.md M1.
+export function refundedUnitsBySaleAndProduct(adjustments = []) {
+  const map = new Map()
+  for (const adjustment of adjustments) {
+    const saleId = firstRelationValue(adjustment.sale_id ?? adjustment.saleId)
+    if (!saleId) continue
+    const items = Array.isArray(adjustment.items) ? adjustment.items : []
+    for (const item of items) {
+      const productId = String(item.productId || item.id || '')
+      if (!productId) continue
+      const key = `${saleId}:${productId}`
+      map.set(key, (map.get(key) || 0) + (Number(item.quantity) || 0))
+    }
+  }
+  return map
+}

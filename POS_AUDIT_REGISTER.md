@@ -386,20 +386,37 @@ negative), a fully refunded sale drops out of `lastSoldAt`, refunds don't cross-
 products or other sales of the same product, voided sales stay excluded regardless of refund data.
 `npm run test:offline` (189/189) and `npm run test:vercel` (3/3) pass; `npm run build` clean.
 
-**⚠️ Gap found, NOT yet fixed: the netting above only reaches the web (Vercel) admin dashboard —
-the desktop (Tauri) admin app, the client's primary app, computes its own dashboard/FSN figures
-independently and does not net refunds at all.**
-`src/admin-page/services/desktopApi.js`'s `buildDashboardFromRecords` (~line 989) and
-`buildFsnMetrics` (~line 1153) are a **separate, parallel implementation** — not a call into the
-Express `/api/dashboard`/`/api/inventory/fsn` routes fixed above — that sums raw
-`total_amount`/`quantity_sold` with no refund awareness, merging local (not-yet-synced) sales with
-cloud PocketBase records for offline-first support. This is real, scoped follow-up work, not
-something to retrofit blind: it needs the same `sale_adjustments` join as the server-side fix, but
-applied against a dataset that already merges local-Dexie and cloud sales with its own
-override/dedup logic (`fsnInventory()`/`dashboard()`, ~lines 1811-1926) — a legacy local sale's
-refund state needs checking too, which the server-side fix never had to consider.
-**Until this lands, refund data recorded via M1's cloud write is not reflected in the dashboard the
-client actually looks at day to day** (only in the secondary Vercel web admin, if used).
+**✅ Now fully FIXED (follow-up session): the Tauri admin app's own, independent dashboard/FSN
+builders net refunds too, matching the web admin.**
+Was: `src/admin-page/services/desktopApi.js`'s `buildDashboardFromRecords` and `buildFsnMetrics`
+are a **separate, parallel implementation** — not a call into the Express `/api/dashboard`/
+`/api/inventory/fsn` routes fixed above — summing raw `total_amount`/`quantity_sold` with no
+refund awareness, merging local (not-yet-synced) sales with cloud PocketBase records for
+offline-first support. Since the Tauri app is the client's primary app, refund data recorded via
+M1's cloud write was reaching the cloud but not reflected in the dashboard actually looked at day
+to day — only the secondary Vercel web admin, if used, showed netted figures.
+Fix: extracted the server-side `refundedUnitsBySaleAndProduct` into shared
+`src/utils/saleTotals.js` (now imported by both `server/index.js` and the admin desktop app, so
+the two dashboards can never silently drift apart on how refunds are netted) and applied the same
+revenue (`netSaleAmount`) and per-(sale,product) unit netting to `buildDashboardFromRecords` and
+`buildFsnMetrics`. The harder half was the local/cloud merge this offline-first dashboard already
+does: a local, not-yet-synced sale carries its refund data inline (`sale.adjustments[]`), while a
+cloud sale carries `refunded_amount`/`refunded_units` directly and its per-product detail in the
+separate `sale_adjustments` collection — new `src/utils/localSaleAdjustments.js`
+(`refundedAmountAndUnits`, `localAdjustmentsNotYetSynced`) bridges the two shapes and, critically,
+**deduplicates by `adjustment_id`** so a refund that has since synced to the cloud is never counted
+from both its local and cloud copies at once (which would double-net it). Wired into all three
+branches of `dashboard()` (local-only, cloud-unreachable fallback, full cloud merge) and
+`fsnInventory()`.
+New `tests/local-sale-adjustments.test.js` (6 cases) and a `tests/sale-totals.test.js` addition for
+the camelCase `saleId` variant local adjustments use (vs. cloud's snake_case `sale_id`). The
+`buildDashboardFromRecords`/`buildFsnMetrics` wiring itself has no automated test coverage — same
+`import.meta.env` limitation as elsewhere in this file (`desktopApi.js` can't be imported directly
+in a plain Node test); verified via `esbuild` bundle-check and the full regression suite instead.
+`npm run test:offline` (233/233) and `npm run test:vercel` (7/7) pass; `npm run build`,
+`npm run build:vercel`, and `npm run build:cashier` all clean.
+
+**M2. HIGH — Refund restock under-restocks every multi-unit product. ✅ FIXED (this session,
 together with M3).**
 Was: `adjustLocalSale` rebuilt `returnedItems` and dropped `conversion`
 (`src/cashier-pos/offline/saleRepository.js:267-291`), so `restoreProductStock` hit

@@ -7,7 +7,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import 'dotenv/config'
-import { netSaleAmount } from '../src/utils/saleTotals.js'
+import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleTotals.js'
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import {
   authenticateAdminUser,
@@ -665,31 +665,6 @@ function resolveSaleItemProduct(item, lookup) {
     || lookup.byBarcode.get(barcode)
     || lookup.byName.get(name)
     || null
-}
-
-// M1: sale_adjustments.items carries the same {productId, quantity, ...}
-// shape queued locally by the cashier terminal (quantity is selling units,
-// the same unit as sale_items.quantity_sold). Refunds/exchanges net out of
-// both revenue (sales.refunded_amount, read via netSaleAmount) and
-// units-sold/FSN analytics (this) -- a locked-in decision, see
-// POS_AUDIT_REGISTER.md M1. Netting happens at the (sale, product) level,
-// not per cart line: FSN/topProducts metrics are already aggregated per
-// product, so there is nothing to gain from attributing a refund to one
-// specific line over another of the same product in the same sale.
-function refundedUnitsBySaleAndProduct(adjustments = []) {
-  const map = new Map()
-  for (const adjustment of adjustments) {
-    const saleId = productRelationId(adjustment.sale_id)
-    if (!saleId) continue
-    const items = Array.isArray(adjustment.items) ? adjustment.items : []
-    for (const item of items) {
-      const productId = String(item.productId || item.id || '')
-      if (!productId) continue
-      const key = `${saleId}:${productId}`
-      map.set(key, (map.get(key) || 0) + (Number(item.quantity) || 0))
-    }
-  }
-  return map
 }
 
 // Groups raw (unnetted) sale_items by (saleId, productId), carrying enough

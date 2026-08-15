@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { netSaleAmount, netSaleUnits } from '../src/utils/saleTotals.js'
+import { netSaleAmount, netSaleUnits, refundedUnitsBySaleAndProduct } from '../src/utils/saleTotals.js'
 
 // M1: a legacy sale row created before refunded_amount/refunded_units
 // existed must report its full original total/units, completely unchanged
@@ -40,4 +40,18 @@ test('accepts raw PocketBase snake_case field names as well as camelCase', () =>
 test('a sale with no items array reports zero units, not a crash', () => {
   const sale = { totalAmount: 100 }
   assert.equal(netSaleUnits(sale), 0)
+})
+
+// The Tauri admin app's own dashboard/FSN builders (a separate,
+// independent implementation from the Express /api/dashboard route --
+// see POS_AUDIT_REGISTER.md M1) pass local-sale-derived adjustment entries
+// keyed by camelCase saleId (src/utils/localSaleAdjustments.js), alongside
+// real cloud sale_adjustments records keyed by snake_case sale_id.
+test('refundedUnitsBySaleAndProduct accepts a camelCase saleId as well as sale_id', () => {
+  const map = refundedUnitsBySaleAndProduct([
+    { saleId: 'local-1', items: [{ productId: 'p1', quantity: 2 }] },
+    { sale_id: 'cloud-1', items: [{ productId: 'p1', quantity: 3 }] },
+  ])
+  assert.equal(map.get('local-1:p1'), 2)
+  assert.equal(map.get('cloud-1:p1'), 3)
 })
