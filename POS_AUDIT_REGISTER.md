@@ -580,31 +580,49 @@ proceeding to log a success. No component test harness exists in this repo for `
 test:offline` (126/126) and `npm run test:vercel` (3/3) pass.
 
 **M9. HIGH — Deleting a product with sale/stock history silently fails cloud-side and the product
-reappears. ✅ FIXED (this session).** New finding, not in the prior tracker or register — surfaced
-by the client noticing products they'd deleted coming back after "sometime, or the next day."
-Was: any product that has ever been sold or had a stock movement is referenced by PocketBase
-relation fields (`sale_items.product_id`, `stock_movements.product_id`), so a hard
-`products.delete()` against it is rejected with a relation-constraint error — true for essentially
-every real, in-use product. Both delete paths (`src/admin-page/offline/syncEngine.js`'s
-`deleteProduct` op handler for the Tauri app, and `server/index.js`'s `DELETE /api/products/:id`
-for the Vercel web admin) caught that specific error and treated it as success: the product was
-marked deleted only in the *local* terminal's own cache (`adminDb.products`), while the cloud
-record was left fully live and untouched. The very next full catalog pull that didn't carry that
-local tombstone — a different terminal, a reinstall, a cleared cache, or simply the passage of
-time — re-fetched the still-live cloud record and the product reappeared, exactly as reported.
-Fix: on a relation-constraint failure, both paths now fall back to setting the cloud record's
-`lifecycle_status: 'archived'` instead of silently no-opping. This reuses the existing Archive
-feature already wired everywhere in the app (cashier catalog filters, product listings, low-stock
-reports all already respect `lifecycleStatus !== 'active'`) rather than inventing a new mechanism
-— the outcome the admin wants ("this product is gone from active use") is now durable on the
-record itself, not a fragile per-device local flag. A genuine hard delete (a product with no
-sale/stock history at all) is unaffected and still removes the record outright. New
-`tests/product-delete-relation-constraint.test.js` (2 cases): a relation-constraint failure
-archives the cloud record and clears the pending op rather than leaving it queued forever; a
-product with nothing referencing it still gets a real hard delete. `npm run test:offline`
-(235/235) and `npm run test:vercel` (7/7) pass. Verified against a genuinely clean `npm ci`
-checkout as well as the local sandbox, since this session's CI run separately surfaced that the
-local sandbox's `node_modules` had drifted enough to mask real lint failures.
+reappears. ✅ FIXED (this session, two layers).** New finding, not in the prior tracker or
+register — surfaced by the client noticing products they'd deleted coming back after "sometime,
+or the next day." Had two independent causes; the first fix was real but insufficient on its own,
+found out only because the client re-tested and reported the product still coming back
+*immediately* after the first fix landed.
+
+Layer 1 — the hard delete itself was silently failing. Any product that has ever been sold or had
+a stock movement is referenced by PocketBase relation fields (`sale_items.product_id`,
+`stock_movements.product_id`), so a hard `products.delete()` against it is rejected with a
+relation-constraint error — true for essentially every real, in-use product. Both delete paths
+(`src/admin-page/offline/syncEngine.js`'s `deleteProduct` op handler for the Tauri app, and
+`server/index.js`'s `DELETE /api/products/:id` for the Vercel web admin) caught that specific
+error and treated it as success: the product was marked deleted only in the *local* terminal's own
+cache (`adminDb.products`), while the cloud record was left fully live and untouched. Fixed by
+falling back to setting the cloud record's `lifecycle_status: 'archived'` instead of silently
+no-opping, reusing the existing Archive feature already wired everywhere in the app (cashier
+catalog filters, product listings, low-stock reports all already respect
+`lifecycleStatus !== 'active'`). A genuine hard delete (a product with no sale/stock history at
+all) is unaffected and still removes the record outright.
+
+Layer 2 — the deeper, pre-existing bug, unrelated to delete specifically, that made Layer 1's fix
+(and the already-existing, separate Archive button) both look broken: confirmed by asking the
+client to test the *pre-existing* Archive feature in isolation, which also failed the same way —
+proving the problem was never really about delete. Root cause in
+`src/admin-page/offline/productSyncUtils.js`'s `mergeProductWithCloudRecord`: when a periodic full
+catalog pull (`CLOUD_PULL_INTERVAL_MS`, runs regularly during normal use) lands while an
+`updateProduct` op for that same product is still queued and not yet uploaded, the merge's
+"preserve local changes" branch only ever preserved `qty` — it spread the *stale, pre-edit* cloud
+record first and kept nothing else from the pending local edit. Any field changed by an edit that
+hadn't synced yet (name, price, category, and critically `lifecycle_status`) silently reverted to
+its pre-edit value the moment that pull landed — which given how often periodic pulls run, was
+often within seconds of the edit. This is why Archive (and Delete, once routed through the same
+archive mechanism) appeared to instantly "undo itself." Fixed by checking for a queued
+`createProduct`/`updateProduct` op on the product *before* falling into the qty-only preserve
+branch, and if one exists, keeping the entire local record as-is rather than cherry-picking a
+single field — the cloud snapshot cannot be trusted for this product at all until that op syncs.
+New `tests/product-delete-relation-constraint.test.js` (2 cases, Layer 1) and a new case in the
+pre-existing `tests/product-delete-sync.test.js` (Layer 2, alongside its existing qty-preservation
+tests) proving a queued lifecycle/name/price edit survives an intervening stale cloud pull.
+`npm run test:offline` (236/236) and `npm run test:vercel` (7/7) pass. Verified against a
+genuinely clean `npm ci` checkout as well as the local sandbox, since this session's CI run
+separately surfaced that the local sandbox's `node_modules` had drifted enough to mask real lint
+failures.
 
 ---
 
