@@ -183,10 +183,15 @@ function formatTransactionDate(value) {
   });
 }
 
-function returnedQuantityForItem(sale, productId) {
+// Keyed by lineId, not productId: two cart lines of the same product (one
+// sold as a case, one sold loose, say) used to share a single productId
+// key here, so a refund against one line silently affected the "available"
+// figure shown for the other. Falls back to productId only for a sale/
+// adjustment recorded before lineId existed (T3).
+function returnedQuantityForItem(sale, lineKey) {
   return (sale?.adjustments || [])
     .flatMap((adjustment) => adjustment.items || [])
-    .filter((item) => String(item.productId || item.id || '') === String(productId || ''))
+    .filter((item) => String(item.lineId || item.productId || item.id || '') === String(lineKey || ''))
     .reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
 }
 
@@ -1860,11 +1865,13 @@ const Cashier = ({ onLogout, user }) => {
     return (lookupSale.items || [])
       .map((item) => {
         const productId = String(item.productId || item.id || '');
+        const lineKey = String(item.lineId || productId);
         return {
           ...item,
           productId,
+          lineId: item.lineId || '',
           price: lookupDiscountedUnitPrice(item.price),
-          quantity: Math.max(0, Number(lookupReturnQty[productId]) || 0),
+          quantity: Math.max(0, Number(lookupReturnQty[lineKey]) || 0),
         };
       })
       .filter((item) => item.quantity > 0);
@@ -2088,6 +2095,7 @@ const Cashier = ({ onLogout, user }) => {
             type: lookupMode,
             items: selectedLookupReturnItems().map((item) => ({
               productId: item.productId,
+              lineId: item.lineId,
               name: item.name,
               barcode: item.barcode,
               quantity: item.quantity,
@@ -4912,14 +4920,21 @@ const Cashier = ({ onLogout, user }) => {
                 <span>Amount</span>
                 {(lookupMode === 'refund' || lookupMode === 'exchange') && <span>Return Qty</span>}
               </div>
-              {(lookupSale.items || []).map((item) => {
+              {(lookupSale.items || []).map((item, itemIndex) => {
                 const productId = String(item.productId || item.id || '');
-                const returnedQty = returnedQuantityForItem(lookupSale, productId);
+                // lineId gives each cart line its own identity so two lines
+                // of the same product (a case and a loose piece, say) don't
+                // share one return-quantity input or one "available" figure
+                // -- see saleRepository.js's adjustLocalSale for the deeper
+                // half of this fix (the actual refund used to collapse both
+                // lines together the same way).
+                const lineKey = String(item.lineId || productId);
+                const returnedQty = returnedQuantityForItem(lookupSale, lineKey);
                 const soldQty = Number(item.quantity) || 0;
                 const availableQty = Math.max(0, quantizeQty(soldQty - returnedQty));
                 const itemFractional = isFractional(products.find((product) => product.id === productId));
                 return (
-                  <div key={productId || item.name} className={styles['lookup-item-row']}>
+                  <div key={lineKey || `${productId}:${itemIndex}`} className={styles['lookup-item-row']}>
                     <span>{item.name}</span>
                     <span>{formatQty(soldQty)}</span>
                     <span>{formatQty(availableQty)}</span>
@@ -4930,12 +4945,12 @@ const Cashier = ({ onLogout, user }) => {
                         min="0"
                         step={itemFractional ? '0.001' : '1'}
                         max={availableQty}
-                        value={lookupReturnQty[productId] || ''}
+                        value={lookupReturnQty[lineKey] || ''}
                         onChange={(e) => {
                           const requested = itemFractional ? quantizeQty(e.target.value) : Math.floor(Number(e.target.value) || 0);
                           setLookupReturnQty((current) => ({
                             ...current,
-                            [productId]: Math.max(0, Math.min(availableQty, requested)),
+                            [lineKey]: Math.max(0, Math.min(availableQty, requested)),
                           }));
                         }}
                         disabled={availableQty <= 0}

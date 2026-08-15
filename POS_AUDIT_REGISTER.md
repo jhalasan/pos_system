@@ -658,6 +658,38 @@ needed), not a mechanical swap. Scoped as a distinct follow-up; the correctness 
 originally paired with is now independently fixed. `npm run test:offline` (154/154) and `npm run
 test:vercel` (3/3) pass.
 
+**Gap found and fixed (follow-up session): the same two-lines-same-product ambiguity T3 fixed for
+cloud stock-movement bookkeeping was still live in the refund-quantity-selection UI and logic
+itself.** Reported by the client with a screenshot: refunding one line of a product (e.g. 3 loose
+pieces) showed the same return quantity on a *separate* line of the same product (e.g. a case of
+10) in the Receipt Lookup refund screen.
+Was: this went deeper than the UI. `lookupReturnQty` (`src/cashier-pos/pages/Cashier.jsx`) — the
+state backing each line's return-quantity input — was keyed by `productId`, so two lines of the
+same product shared one input value; the row `key` and `returnedQuantityForItem` (computing each
+line's remaining refundable balance) had the same productId-only issue. Worse, the actual
+refund-processing function, `adjustLocalSale` (`src/cashier-pos/offline/saleRepository.js:298-303`,
+predates this session), matched the caller's requested quantities against the sale's stored lines
+by productId only — meaning even a UI fix alone would not have been sufficient: a requested
+quantity on one line would still have silently applied to *every* stored line of that product, at
+the layer that actually decides how much stock and money to return. This is a correctness bug, not
+just a display glitch — it could over-restock, under-refund, or misattribute an amount to the
+wrong line.
+Fix: `Cashier.jsx` now keys `lookupReturnQty`, the row `key`, `returnedQuantityForItem`, and the
+adjustment submission payload by `item.lineId || productId`, and includes `lineId` in each
+submitted return item. `adjustLocalSale` now matches by two maps — an exact `lineId` match when the
+caller supplies one (the cashier UI, post-fix, always does), falling back to a `productId` match
+only when it doesn't (a sale with a single line of that product, or an older/simpler caller) —
+rather than requiring an exact key match on both sides, which would have wrongly rejected the
+legitimate single-line case (every *stored* line always has a real `lineId` once finalized, per
+T3, even when a caller's request doesn't supply one — an existing regression test caught this
+exact mismatch during development). The "already refunded" balance calculation gets the same
+lineId-first treatment, so a partial refund of one line no longer reduces the refundable balance
+shown for a different line of the same product.
+New `tests/return-disposition.test.js` cases: refunding one line of a two-line-same-product sale
+leaves the other line's stock/balance untouched in both directions (refund the case, the loose-
+piece line's full balance is still available; and vice versa). `npm run test:offline` (226/226)
+pass; `npm run build:cashier` clean.
+
 ---
 
 ## H — Hygiene / non-POS

@@ -297,18 +297,42 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
 
   const type = adjustment.type === 'exchange' ? 'exchange' : 'refund'
   const selectedItems = Array.isArray(adjustment.items) ? adjustment.items : []
-  const selectedByProduct = new Map(selectedItems.map((item) => [
-    String(item.productId || item.id || ''),
-    Math.max(0, quantizeQty(item.quantity)),
-  ]))
+  // Two maps, not one: two cart lines of the same product (e.g. one sold as
+  // a case, one sold loose) used to share a single productId-keyed entry
+  // here, so a requested return quantity on one line silently applied to
+  // every line of that product in the sale. A caller that disambiguates by
+  // lineId (the cashier UI, post-fix) is matched precisely via
+  // selectedByLineId; a caller that only ever sends productId (older/
+  // simpler callers, or a sale with a single line of that product) still
+  // works via selectedByProductId -- every sale's *stored* line always has
+  // a lineId once finalized (T3), even when the caller's request doesn't
+  // supply one, so requiring an exact key match on both sides would wrongly
+  // reject that legitimate, unambiguous case.
+  const selectedByLineId = new Map()
+  const selectedByProductId = new Map()
+  for (const item of selectedItems) {
+    const qty = Math.max(0, quantizeQty(item.quantity))
+    const lineId = String(item.lineId || '')
+    const productId = String(item.productId || item.id || '')
+    if (lineId) selectedByLineId.set(lineId, qty)
+    else if (productId) selectedByProductId.set(productId, qty)
+  }
 
   const returnedItems = sale.items
     .map((item) => {
       const productId = String(item.productId || item.id || '')
-      const requestedQty = selectedByProduct.get(productId) || 0
+      const lineId = String(item.lineId || '')
+      const lineKey = String(lineId || productId)
+      const requestedQty = (lineId && selectedByLineId.has(lineId))
+        ? selectedByLineId.get(lineId)
+        : (selectedByProductId.get(productId) || 0)
+      // Same lineId-first matching for what's already been refunded off
+      // this specific line -- otherwise a partial refund of one line would
+      // incorrectly reduce the refundable balance shown for a different
+      // line of the same product.
       const alreadyAdjusted = quantizeQty((sale.adjustments || [])
         .flatMap((entry) => entry.items || [])
-        .filter((entry) => String(entry.productId || entry.id || '') === productId)
+        .filter((entry) => String(entry.lineId || entry.productId || entry.id || '') === lineKey)
         .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0))
       const availableQty = Math.max(0, quantizeQty((Number(item.quantity) || 0) - alreadyAdjusted))
       const quantity = Math.min(availableQty, requestedQty)

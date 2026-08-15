@@ -119,3 +119,83 @@ test('adjustLocalSale queues a cloud op atomically, clamped to what is actually 
   assert.equal(queuedOps[0].payload.approverId, 'approver-id-000')
   await cashierDb.delete()
 })
+
+// T3, continued: two cart lines of the same product (one sold as a case,
+// one sold loose) used to collapse into a single productId-keyed entry when
+// selecting how much to refund from each -- a requested quantity on one
+// line silently applied to *every* line of that product in the sale.
+// lineId gives each line its own identity here too, not just in the cloud
+// stock-movement bookkeeping T3 originally fixed.
+test('refunding one line of a product does not affect a separate line of the same product', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+  await cashierDb.products.put({ id: 'product-1', barcode: '1001', name: 'Sample Product', qty: 0, quantity: 0, unit: 'Piece' })
+  await cashierDb.completedSales.put({
+    clientSaleId: 'DUAL-LINE',
+    cashierId: 'cashier-1',
+    transactionNo: 'DUAL-LINE',
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    items: [
+      { lineId: 'line-case', productId: 'product-1', name: 'Sample Product', barcode: '1001', quantity: 1, price: 150, conversion: 10 },
+      { lineId: 'line-piece', productId: 'product-1', name: 'Sample Product', barcode: '1001', quantity: 3, price: 15, conversion: 1 },
+    ],
+    adjustments: [],
+  })
+
+  // Refund all 3 loose pieces; the case line is untouched.
+  const adjusted = await adjustLocalSale('DUAL-LINE', {
+    type: 'refund',
+    items: [{ productId: 'product-1', lineId: 'line-piece', quantity: 3 }],
+    reason: 'Customer changed mind',
+    restock: true,
+  })
+
+  const returnedItems = adjusted.adjustments.at(-1).items
+  assert.equal(returnedItems.length, 1, 'only the requested line should be refunded, not both lines of the same product')
+  assert.equal(returnedItems[0].lineId, 'line-piece')
+  assert.equal(returnedItems[0].quantity, 3)
+  // 3 loose pieces (conversion 1) restocked, the case (conversion 10) left
+  // alone -- a productId-only match would have restocked the case too (or
+  // instead), converting at the wrong ratio.
+  assert.equal((await cashierDb.products.get('product-1')).quantity, 3)
+  await cashierDb.delete()
+})
+
+test('refunding the case line does not consume the loose-piece line\'s available balance', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+  await cashierDb.products.put({ id: 'product-1', barcode: '1001', name: 'Sample Product', qty: 0, quantity: 0, unit: 'Piece' })
+  await cashierDb.completedSales.put({
+    clientSaleId: 'DUAL-LINE-2',
+    cashierId: 'cashier-1',
+    transactionNo: 'DUAL-LINE-2',
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    items: [
+      { lineId: 'line-case', productId: 'product-1', name: 'Sample Product', barcode: '1001', quantity: 1, price: 150, conversion: 10 },
+      { lineId: 'line-piece', productId: 'product-1', name: 'Sample Product', barcode: '1001', quantity: 3, price: 15, conversion: 1 },
+    ],
+    adjustments: [],
+  })
+
+  await adjustLocalSale('DUAL-LINE-2', {
+    type: 'refund',
+    items: [{ productId: 'product-1', lineId: 'line-case', quantity: 1 }],
+    reason: 'Case was damaged',
+    restock: true,
+  })
+
+  // The loose-piece line must still show its full, untouched quantity as
+  // refundable -- a productId-only "already adjusted" lookup would have
+  // wrongly counted the case's 1 unit against the piece line's balance too.
+  const secondRefund = await adjustLocalSale('DUAL-LINE-2', {
+    type: 'refund',
+    items: [{ productId: 'product-1', lineId: 'line-piece', quantity: 3 }],
+    reason: 'Customer changed mind',
+    restock: true,
+  })
+  const latestItems = secondRefund.adjustments.at(-1).items
+  assert.equal(latestItems[0].quantity, 3, 'the full 3 loose pieces must still be refundable after only the case line was refunded')
+  await cashierDb.delete()
+})
