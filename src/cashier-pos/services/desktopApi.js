@@ -900,23 +900,18 @@ export const desktopCashierApi = {
     await initializeCashierDb()
     let product = await getProductByBarcode(barcode)
 
-    let fallbackProduct = await adminCachedProductByBarcode(barcode)
-    if (fallbackProduct) {
-      product = fallbackProduct
-      await cashierDb.products.put(product)
-    }
-
+    // True cache miss on this terminal's own catalog only -- this used to
+    // run unconditionally on every single scan (opening a second, separate
+    // local database and, on a barcode that isn't a product's primary
+    // barcode, falling back to a full table scan of it), even when the line
+    // above already found the product. adminCachedProductByBarcode's own
+    // indexed-lookup-then-scan fallback already covers what a second,
+    // separately-implemented "check admin cache" pass used to redo here.
     if (!product) {
-      const adminProducts = await adminCachedProducts()
-      if (adminProducts.length) {
-        fallbackProduct = adminProducts.find((candidate) => (
-          barcodesMatch(candidate.barcode, barcode)
-          || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => barcodesMatch(unit.barcode, barcode)))
-        ))
-        if (fallbackProduct) {
-          product = normalizeProduct(fallbackProduct)
-          await cashierDb.products.put(product)
-        }
+      const fallbackProduct = await adminCachedProductByBarcode(barcode)
+      if (fallbackProduct) {
+        product = fallbackProduct
+        await cashierDb.products.put(product)
       }
     }
 

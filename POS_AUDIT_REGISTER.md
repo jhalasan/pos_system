@@ -844,6 +844,38 @@ M11's note above) keeps this out of the plain-`node --test` suite. Verified by d
 a fresh-clone `npm run lint` (0 errors), and `npm run build` (clean). `npm run test:offline`
 (262/262) unaffected, confirming no regression elsewhere.
 
+**M13. MEDIUM — Every cashier barcode scan did redundant local work, regardless of catalog
+freshness. ✅ FIXED (follow-up session).** Reported by the client: barcode scanning in the
+Cashier screen "is not that fast."
+Was: `productByBarcode` (`src/cashier-pos/services/desktopApi.js`) ran a second, separately-
+implemented product lookup against an *entirely different* local database (the admin app's own
+cache, via `adminCachedProductByBarcode`) unconditionally on every scan, including on the common
+path where the cashier's own lookup (`getProductByBarcode`, which already has its own indexed-then-
+scan fallback for selling-unit barcodes) had already succeeded. On a barcode that wasn't a
+product's primary barcode -- e.g. scanning a case/bulk barcode, a routine scenario in this catalog
+-- `adminCachedProductByBarcode` falls back to a full table scan of the admin catalog, checking
+every product's `sellingUnits` array. Every scan also unconditionally wrote the (often unchanged)
+result back to IndexedDB via `cashierDb.products.put(...)`. Confirmed via git history
+(`git log -S`) that this was introduced 2026-07-11 in an unrelated, undocumented commit ("fix bugs
+in scan product") over a month before this session's work and unconnected to any rate-limiting
+fix -- an accidental performance regression, not an intentional design tradeoff. Immediately below
+this same block, the *network* fallback already correctly used a `!product` ("true cache miss")
+guard before paying for a live PocketBase round-trip -- this admin-cache block was the one path
+that had lost its equivalent guard.
+Fix: gated the admin-cache fallback (and its IndexedDB write) behind the same `!product` check the
+network fallback already used, and removed a second, now-fully-redundant admin-cache lookup a few
+lines below it (`adminCachedProducts()` + a manual `.find()` loop) that duplicated the same "check
+admin cache on a true miss" responsibility less efficiently (`adminCachedProductByBarcode` already
+tries an indexed lookup before its own full-scan fallback). Net effect: a scan that already resolves
+from the cashier's own local catalog -- the overwhelming majority of scans -- no longer touches the
+admin database, does no full-catalog scan, and writes to IndexedDB only when something actually
+changed. Downloading the latest catalog for offline use (Settings) remains separately good advice
+for a different reason: it reduces how often a scan falls into the genuinely-network-bound "true
+cache miss" branch further down the same function, unaffected by this fix.
+**Not automatically tested:** same `import.meta.env` constraint as M11/M12 above. Verified by
+direct code trace and git-history review, a fresh-clone `npm run lint` (0 errors), and
+`npm run build:cashier` (clean). `npm run test:offline` (262/262) unaffected.
+
 ---
 
 ## T — Sync / request-volume
