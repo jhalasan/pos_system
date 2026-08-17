@@ -46,8 +46,16 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
         ? { tone: 'online', label: 'Online', detail: 'Remote admin portal connected.' }
         : { tone: 'offline', label: 'Offline', detail: 'Remote changes require an internet connection.' }
     }
-    if (!online || ['offline', 'auth-required'].includes(syncStatus?.state)) {
+    if (!online || syncStatus?.state === 'offline') {
       return { tone: 'offline', label: 'Offline', detail: 'Changes are saved locally and will sync later.' }
+    }
+    // Distinct from "Offline" on purpose -- the network is fine here, the
+    // cashier's saved login has expired. Labeling this "Offline" (as this
+    // used to) tells a cashier with a working internet connection that
+    // their internet is the problem, when it's actually an expired session
+    // that needs a fresh email/password login.
+    if (syncStatus?.state === 'auth-required') {
+      return { tone: 'warning', label: 'Login required', detail: syncStatus.message || 'This session needs one online login before it can sync.' }
     }
     if (syncStatus?.state === 'running') return { tone: 'syncing', label: 'Syncing', detail: syncStatus.message || 'Sending local changes to cloud.' }
     if (['failed', 'waiting'].includes(syncStatus?.state)) return { tone: 'warning', label: 'Sync pending', detail: syncStatus.message || 'Cloud sync will retry automatically.' }

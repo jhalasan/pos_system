@@ -876,6 +876,42 @@ cache miss" branch further down the same function, unaffected by this fix.
 direct code trace and git-history review, a fresh-clone `npm run lint` (0 errors), and
 `npm run build:cashier` (clean). `npm run test:offline` (262/262) unaffected.
 
+**M14. HIGH — A cashier whose session expired had no reachable way to fix it, and one status
+indicator actively told them the wrong problem. ✅ FIXED (follow-up session).** New finding,
+reported by the client: a cashier terminal showed "the internet is connected, but this cashier
+session has no cloud authorization," and separately looked "offline" -- confusing, since the two
+signals contradicted each other and neither told the cashier what to actually do.
+Was two compounding bugs, both in `src/cashier-pos` UI code (not the sync engine, which already
+detects and reports this correctly):
+1. The interactive re-auth popup (`showCloudAuth`, with email/password fields,
+   `Cashier.jsx`) only ever opened from the manual "Sync Now" button's own result-handling
+   (`handleSyncNow`). The far more common path -- the periodic ~60s *automatic* background sync
+   hitting the exact same "no cloud authorization" condition (`syncEngine.js:459-469`) -- had no
+   listener wired to open it at all. A cashier who never happened to click "Sync Now" themselves
+   after their session expired had no discoverable way to reach the fix that already existed in
+   the code; the only visible signal was a small, non-interactive status badge
+   (`SyncStatusIndicator.jsx`).
+2. `ConnectionStatusBar.jsx` explicitly grouped `auth-required` together with `offline`, labeling
+   it "Offline" with the message "Changes are saved locally and will sync later." That's actively
+   wrong -- this isn't a connectivity problem (a normal cashier or barcode login mints a session
+   token; barcode-login tokens specifically last only 12 hours vs. a password login's 7 days, by
+   design -- see S1 -- so any barcode-login session left open past 12 hours will eventually hit
+   this), and telling a cashier with a working internet connection that their internet is the
+   problem sends them to check the WiFi instead of logging back in.
+Fix: `Cashier.jsx` now listens for the `nexa-sync-status` event directly (the same event both
+status components already listen to) and opens the re-auth popup itself whenever `auth-required`
+fires for the cashier scope, regardless of whether a manual or automatic sync triggered it.
+Dismissing the popup without fixing it (Cancel, or closing it) sets a 10-minute cooldown so it
+doesn't immediately reopen on the very next automatic sync tick if the cashier can't deal with it
+mid-transaction. `ConnectionStatusBar.jsx` now gives `auth-required` its own distinct, correctly-
+worded state ("Login required," warning tone -- reusing the `warning` CSS class already used for
+`failed`/`waiting`, no new styles needed) instead of folding it into "Offline."
+**Not automatically tested:** same `import.meta.env`/Dexie constraints as M11-M13 keep
+`Cashier.jsx` out of the plain-`node --test` suite; `ConnectionStatusBar.jsx` has no existing test
+harness either. Verified by direct code trace of both the event-listener wiring and the status-
+label logic, a fresh-clone `npm run lint` (0 errors), and `npm run build`/`npm run build:cashier`
+(both clean). `npm run test:offline` (262/262) unaffected.
+
 ---
 
 ## T — Sync / request-volume

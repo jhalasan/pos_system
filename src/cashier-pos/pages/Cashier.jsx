@@ -521,6 +521,10 @@ const Cashier = ({ onLogout, user }) => {
   const [cloudAuthPassword, setCloudAuthPassword] = useState('');
   const [cloudAuthError, setCloudAuthError] = useState('');
   const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
+  // Dismissing the popup without fixing it (e.g. mid-sale, not a good time)
+  // shouldn't reopen it again on the very next ~60s automatic sync tick --
+  // back off for a while before it's allowed to auto-open again.
+  const cloudAuthCooldownUntilRef = useRef(0);
   const [supportOpen, setSupportOpen] = useState(false);
   const [showReceiptLookup, setShowReceiptLookup] = useState(false);
   const [lookupQuery, setLookupQuery] = useState('');
@@ -1678,6 +1682,27 @@ const Cashier = ({ onLogout, user }) => {
     loadNextTransactionNumber();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The interactive re-auth popup used to only ever open from the manual
+  // "Sync Now" button's own result-handling -- the far more common case,
+  // the periodic ~60s automatic background sync hitting the same
+  // "no cloud authorization" condition, had no listener wired to open it at
+  // all. A cashier who never happened to click Sync Now themselves after
+  // their session expired had no way to reach the popup that already
+  // existed in the code to fix it.
+  useEffect(() => {
+    function handleSyncStatus(event) {
+      const detail = event.detail || {};
+      if (detail.scope !== 'cashier' || detail.state !== 'auth-required') return;
+      if (showCloudAuth || Date.now() < cloudAuthCooldownUntilRef.current) return;
+      setCloudAuthEmail(user?.email || '');
+      setCloudAuthPassword('');
+      setCloudAuthError('');
+      setShowCloudAuth(true);
+    }
+    globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus);
+    return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus);
+  }, [showCloudAuth, user?.email]);
 
   useEffect(() => {
     barcodeInputRef.current?.focus();
@@ -4028,11 +4053,11 @@ const Cashier = ({ onLogout, user }) => {
 
       <Modal
         isOpen={showCloudAuth}
-        onClose={() => !cloudAuthBusy && setShowCloudAuth(false)}
+        onClose={() => { if (!cloudAuthBusy) { setShowCloudAuth(false); cloudAuthCooldownUntilRef.current = Date.now() + 10 * 60 * 1000; } }}
         title="Connect Cashier to Cloud"
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-outline" disabled={cloudAuthBusy} onClick={() => setShowCloudAuth(false)}>Cancel</button>
+            <button className="btn btn-outline" disabled={cloudAuthBusy} onClick={() => { setShowCloudAuth(false); cloudAuthCooldownUntilRef.current = Date.now() + 10 * 60 * 1000; }}>Cancel</button>
             <button className="btn btn-primary" disabled={cloudAuthBusy} onClick={connectCashierToCloud}>
               {cloudAuthBusy ? 'Connecting...' : 'Connect & Sync'}
             </button>
