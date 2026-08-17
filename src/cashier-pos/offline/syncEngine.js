@@ -29,6 +29,14 @@ const REACHABILITY_FAILURE_TTL_MS = 8_000
 // running several terminals doesn't have them all call PocketHost in the
 // same second. Fixed once per engine instance, not re-rolled per tick.
 const SCHEDULE_JITTER_MS = 15_000
+// M14: a catalog refresh that fails specifically because the session token
+// expired used to be indistinguishable from any other refresh failure (a
+// network blip, a genuine 500) -- both surfaced as a generic "Product
+// catalog could not refresh: <raw error>" waiting-state message, which for
+// an auth failure specifically reads as opaque ("Something went wrong")
+// and never routes the cashier to the fix (the same message and UI path
+// the pre-emptive queued-writes guard below already uses).
+const CLOUD_AUTH_REQUIRED_MESSAGE = 'Internet is connected, but this cashier session has no cloud authorization. Sign out, sign in once with the cashier email and password, then press Sync.'
 
 function numberFieldValue(value) {
   const number = Number(value)
@@ -457,13 +465,12 @@ export class CashierSyncEngine extends EventTarget {
     }
 
     if ((queuedSales.length > 0 || queuedOps.length > 0) && this.pb.authStore && !this.pb.authStore.isValid) {
-      const warning = 'Internet is connected, but this cashier session has no cloud authorization. Sign out, sign in once with the cashier email and password, then press Sync.'
-      emitSyncStatus('auth-required', warning)
+      emitSyncStatus('auth-required', CLOUD_AUTH_REQUIRED_MESSAGE)
       return {
         uploaded: 0,
         failed: 0,
         products: 0,
-        warnings: [warning],
+        warnings: [CLOUD_AUTH_REQUIRED_MESSAGE],
         pending: await this.pendingCount(),
       }
     }
@@ -484,6 +491,7 @@ export class CashierSyncEngine extends EventTarget {
     let products = 0
     let rateLimited = false
     let catalogRefreshFailed = false
+    let catalogRefreshAuthFailed = false
     const warnings = []
 
     if (shouldRefreshProducts && !isPocketBaseRateLimited()) {
@@ -495,6 +503,17 @@ export class CashierSyncEngine extends EventTarget {
         rememberPocketBaseRateLimit(error)
         if (Number(error?.status) === 429) rateLimited = true
         catalogRefreshFailed = true
+        // A 401, or the SDK having already invalidated the auth store in
+        // response to this same request, means the session token expired --
+        // the identical root cause the pre-emptive guard above already
+        // detects, just discovered mid-request instead of before it. Route
+        // it through the same auth-required message and UI path rather than
+        // the generic "could not refresh: <raw error>" text below, which for
+        // this specific cause is opaque (often literally "Something went
+        // wrong") and never told the cashier what to actually do.
+        if (Number(error?.status) === 401 || (this.pb.authStore && !this.pb.authStore.isValid)) {
+          catalogRefreshAuthFailed = true
+        }
         // A transient error should self-heal quickly rather than waiting out
         // the full 5-minute interval — but retrying on every single tick
         // forever (this used to just set lastProductRefreshAt = 0, making
@@ -506,7 +525,7 @@ export class CashierSyncEngine extends EventTarget {
         // normal interval.
         this.catalogRefreshFailures += 1
         this.lastProductRefreshAt = Date.now() - PRODUCT_REFRESH_INTERVAL_MS + retryDelay(this.catalogRefreshFailures)
-        warnings.push(errorMessage(error))
+        warnings.push(catalogRefreshAuthFailed ? CLOUD_AUTH_REQUIRED_MESSAGE : errorMessage(error))
         this.dispatchEvent(new CustomEvent('catalogrefresherror', {
           detail: { error },
         }))
@@ -581,16 +600,20 @@ export class CashierSyncEngine extends EventTarget {
       detail: { uploaded, failed, warnings },
     }))
     emitSyncStatus(
-      failed > 0 ? 'failed' : (rateLimited || pending > 0 || catalogRefreshFailed) ? 'waiting' : 'succeeded',
-      failed > 0
-        ? `Auto-Sync Finished with ${failed} Failed`
-        : rateLimited
-          ? `${pocketBaseRateLimitMessage()} ${pending} pending.`
-          : catalogRefreshFailed
-            ? `Product catalog could not refresh: ${warnings[warnings.length - 1]}`
-            : pending > 0
-              ? `Auto-Sync Waiting — ${pending} pending`
-              : 'Auto-Sync Succeeded — 0 pending',
+      catalogRefreshAuthFailed
+        ? 'auth-required'
+        : failed > 0 ? 'failed' : (rateLimited || pending > 0 || catalogRefreshFailed) ? 'waiting' : 'succeeded',
+      catalogRefreshAuthFailed
+        ? CLOUD_AUTH_REQUIRED_MESSAGE
+        : failed > 0
+          ? `Auto-Sync Finished with ${failed} Failed`
+          : rateLimited
+            ? `${pocketBaseRateLimitMessage()} ${pending} pending.`
+            : catalogRefreshFailed
+              ? `Product catalog could not refresh: ${warnings[warnings.length - 1]}`
+              : pending > 0
+                ? `Auto-Sync Waiting — ${pending} pending`
+                : 'Auto-Sync Succeeded — 0 pending',
     )
     return { uploaded, failed, products, warnings, pending }
   }

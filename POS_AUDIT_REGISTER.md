@@ -881,8 +881,10 @@ indicator actively told them the wrong problem. ✅ FIXED (follow-up session).**
 reported by the client: a cashier terminal showed "the internet is connected, but this cashier
 session has no cloud authorization," and separately looked "offline" -- confusing, since the two
 signals contradicted each other and neither told the cashier what to actually do.
-Was two compounding bugs, both in `src/cashier-pos` UI code (not the sync engine, which already
-detects and reports this correctly):
+Was three compounding bugs, two in `src/cashier-pos` UI code and one in the sync engine itself
+(the client's report described both symptoms in the same message -- "product catalog not
+refresh, something went wrong" *and* "no cloud authorization" -- because both are the same root
+cause surfacing through two different, separately-broken paths):
 1. The interactive re-auth popup (`showCloudAuth`, with email/password fields,
    `Cashier.jsx`) only ever opened from the manual "Sync Now" button's own result-handling
    (`handleSyncNow`). The far more common path -- the periodic ~60s *automatic* background sync
@@ -898,6 +900,16 @@ detects and reports this correctly):
    design -- see S1 -- so any barcode-login session left open past 12 hours will eventually hit
    this), and telling a cashier with a working internet connection that their internet is the
    problem sends them to check the WiFi instead of logging back in.
+3. **Found investigating the "product catalog not refresh" half of the report specifically:** the
+   pre-emptive "no cloud authorization" guard only runs when there are queued sales/ops waiting
+   (`syncEngine.js:459`). A terminal with nothing queued -- just a periodic catalog refresh coming
+   due -- skips that guard entirely, attempts the refresh, and if the session has expired the
+   request fails with a 401. That failure was indistinguishable from any other refresh failure
+   (a network blip, a genuine 500): both produced a generic `"Product catalog could not refresh:
+   <raw error>"` message -- for an expired session specifically, PocketBase's raw error text is
+   often just `"Something went wrong."`, exactly matching the client's report -- with `state:
+   'waiting'`, never `'auth-required'`, so neither of the two UI fixes above would have caught it
+   either.
 Fix: `Cashier.jsx` now listens for the `nexa-sync-status` event directly (the same event both
 status components already listen to) and opens the re-auth popup itself whenever `auth-required`
 fires for the cashier scope, regardless of whether a manual or automatic sync triggered it.
@@ -905,12 +917,23 @@ Dismissing the popup without fixing it (Cancel, or closing it) sets a 10-minute 
 doesn't immediately reopen on the very next automatic sync tick if the cashier can't deal with it
 mid-transaction. `ConnectionStatusBar.jsx` now gives `auth-required` its own distinct, correctly-
 worded state ("Login required," warning tone -- reusing the `warning` CSS class already used for
-`failed`/`waiting`, no new styles needed) instead of folding it into "Offline."
-**Not automatically tested:** same `import.meta.env`/Dexie constraints as M11-M13 keep
-`Cashier.jsx` out of the plain-`node --test` suite; `ConnectionStatusBar.jsx` has no existing test
-harness either. Verified by direct code trace of both the event-listener wiring and the status-
-label logic, a fresh-clone `npm run lint` (0 errors), and `npm run build`/`npm run build:cashier`
-(both clean). `npm run test:offline` (262/262) unaffected.
+`failed`/`waiting`, no new styles needed) instead of folding it into "Offline." `syncEngine.js`'s
+catalog-refresh catch block now detects specifically whether the failure was a 401 (or the SDK
+having already invalidated `pb.authStore` in response to the same request) and, only in that case,
+reports it through the exact same `'auth-required'` state and message as the pre-emptive guard --
+routing it through both fixes above -- instead of the generic, opaque "could not refresh" text. A
+genuine non-auth refresh failure (network blip, a real 500) is unaffected and still reports
+normally.
+New `tests/cashier-catalog-refresh-auth-required.test.js` (2 cases): a 401 during catalog refresh
+is reported with the same "no cloud authorization" message the pre-emptive guard uses; a non-401
+failure with a still-valid token keeps the generic message and is not misreported as an expired
+session.
+**Not automatically tested (UI half only):** same `import.meta.env`/Dexie constraints as M11-M13
+keep `Cashier.jsx` out of the plain-`node --test` suite; `ConnectionStatusBar.jsx` has no existing
+test harness either -- verified by direct code trace for those two. The sync-engine half (3, above)
+*is* covered by the new test file, since `syncEngine.js` itself has no `import.meta.env` reference
+at module scope. `npm run test:offline` (264/264), a fresh-clone `npm run lint` (0 errors), and
+`npm run build`/`npm run build:cashier` (both clean) all pass.
 
 ---
 
