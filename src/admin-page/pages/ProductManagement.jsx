@@ -12,10 +12,7 @@ import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
 import { formatQty, pluralizeUnit, floorQty, isFractional } from '../../utils/quantity'
-
-function getProductBarcodes(product) {
-  return [...new Set(normalizeSellingUnits(product).map((unit) => unit.barcode).filter(Boolean))]
-}
+import { findArchivedBarcodeOwner, getProductBarcodes, releasedBarcodePayload } from '../../utils/productLifecycle'
 
 function getInventoryBreakdown(product) {
   const baseQty = Number(product.qty) || 0
@@ -194,15 +191,34 @@ export default function ProductManagement() {
   async function handleSave(data) {
     try {
       if (modal.mode === 'edit') {
+        const submittedBarcodes = getProductBarcodes(data)
+        const archivedOwner = findArchivedBarcodeOwner(list, submittedBarcodes, modal.product.id)
+        if (archivedOwner) {
+          // Unlike the add-new case below, restoring archivedOwner here would
+          // mean abandoning the edits already made to modal.product and
+          // switching to editing a different record instead -- not what an
+          // admin who's mid-edit on a specific product wants. The correct
+          // move is to release the barcode from the retired product (it
+          // stays fully findable by name/SKU, just no longer by scan) and
+          // let this edit proceed.
+          const collidingBarcode = submittedBarcodes.find((barcode) => getProductBarcodes(archivedOwner).includes(barcode))
+          const shouldRelease = await dialog.confirm(
+            `Barcode ${collidingBarcode} belongs to archived product “${archivedOwner.name}”.\n\nRelease it from that product and assign it here?`,
+            { title: 'Archived product found', confirmLabel: 'Release & assign', cancelLabel: 'Use another barcode' },
+          )
+          if (!shouldRelease) return
+          await api.updateProduct(archivedOwner.id, { ...archivedOwner, ...releasedBarcodePayload(archivedOwner) })
+        }
         const updated = await api.updateProduct(modal.product.id, data)
-        setList(list.map((p) => (p.id === modal.product.id ? updated : p)))
+        setList(list.map((p) => {
+          if (p.id === modal.product.id) return updated
+          if (archivedOwner && p.id === archivedOwner.id) return { ...p, ...releasedBarcodePayload(archivedOwner) }
+          return p
+        }))
         flash('Product updated.')
       } else {
         const submittedBarcodes = getProductBarcodes(data)
-        const archivedOwner = list.find((product) => (
-          ['archived', 'deleted'].includes(product.lifecycleStatus || 'active')
-          && getProductBarcodes(product).some((barcode) => submittedBarcodes.includes(barcode))
-        ))
+        const archivedOwner = findArchivedBarcodeOwner(list, submittedBarcodes)
         if (archivedOwner) {
           const shouldRestore = await dialog.confirm(
             `Barcode ${submittedBarcodes.find((barcode) => getProductBarcodes(archivedOwner).includes(barcode))} belongs to archived product “${archivedOwner.name}”.\n\nRestore and edit this product?`,

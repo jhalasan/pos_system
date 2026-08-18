@@ -93,6 +93,25 @@ function printerStatusMessage(status) {
   return queueCount > 0 ? `${detail} Windows queue has ${queueCount} job(s).` : detail
 }
 
+const PRINTER_STATUS_TIMEOUT_MS = 8000
+
+// A network printer with a dead print server, or one stuck mid-error, can
+// leave the Win32 spooler calls behind `printer_status` (OpenPrinterW /
+// GetPrinterW / EnumJobsW) hanging indefinitely -- there is no timeout on
+// the Rust side. Without a client-side bound here, that hang propagates all
+// the way up through printReceiptCopy's awaited call chain and its
+// receiptPrintLocksRef entry is only released in a `finally` once this
+// promise settles, so the cashier is stuck unable to print that receipt
+// again (with no real recourse but restarting the app) for as long as the
+// spooler call is wedged.
+function withTimeout(promise, ms, message) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 export async function getReceiptPrinterStatus(options = {}) {
   const printerName = receiptPrinterName(options)
   const invoke = tauriInvoke()
@@ -107,7 +126,34 @@ export async function getReceiptPrinterStatus(options = {}) {
     }
   }
 
-  return invoke('printer_status', { printerName })
+  return withTimeout(
+    invoke('printer_status', { printerName }),
+    PRINTER_STATUS_TIMEOUT_MS,
+    'Printer status check timed out. Check the printer connection and power, then try again.',
+  )
+}
+
+// print_receipt covers three very different jobs through the same Rust
+// command -- a full receipt, a Z-read, and a bare cash-drawer kick -- and
+// all three make the identical synchronous, un-timed Win32 spooler calls
+// (OpenPrinterW/StartDocPrinterW/WritePrinter/EndDocPrinter) that motivated
+// the printer_status timeout above. Wrapping only the status pre-check and
+// leaving this one bare meant a printer that reports "ready" but then
+// hangs mid-job (a dropped network-printer connection, a wedge in the
+// spooler, a stuck paper feed) still hung forever -- and this call sits
+// under printReceiptCopy's receiptPrintLocksRef (blocking all further
+// reprints of that receipt) and, via openCashDrawer, under checkout's
+// paymentFlow.busy (blocking the Confirm button for every future sale on
+// the terminal), which is strictly worse than the status-check hang this
+// file already guards against.
+const PRINT_JOB_TIMEOUT_MS = 20000
+
+function invokePrintReceipt(invoke, args) {
+  return withTimeout(
+    invoke('print_receipt', args),
+    PRINT_JOB_TIMEOUT_MS,
+    'Print job timed out. Check the printer connection and power, then try again.',
+  )
 }
 
 export async function cancelReceiptPrinterJob(jobId, options = {}) {
@@ -141,6 +187,7 @@ export function buildShiftCloseReceiptText({
   closedAt,
   openingAmount,
   cashSales,
+  gcashSales,
   cashIn,
   cashOut,
   expectedCash,
@@ -169,6 +216,12 @@ export function buildShiftCloseReceiptText({
     columns('Expected Cash', moneyValue(expectedCash)),
     columns('Counted Cash', moneyValue(actualCash)),
     columns('Variance', moneyValue(variance)),
+    line(),
+    // GCash never touches the physical drawer, so it's deliberately kept out
+    // of the cash-count block above (Expected/Counted/Variance) -- this is a
+    // separate, informational-only line for transparency on how much of the
+    // shift's sales came in via GCash.
+    columns('GCash Sales', moneyValue(gcashSales)),
     line(),
     center(`Counting Method: ${countMode === 'denomination' ? 'By Denomination' : 'Manual Total'}`),
     ...breakdown.map((item) => columns(`${item.denomination} x ${item.count}`, moneyValue((Number(item.count) || 0) * Number(item.denomination || 0)))),
@@ -456,7 +509,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
     // the repeat count belongs only to `copies`.
     const contents = buildReceiptText(receiptData)
     try {
-      return await invoke('print_receipt', {
+      return await invokePrintReceipt(invoke, {
         printerName,
         contents,
         copies: receipts.length,
@@ -469,7 +522,7 @@ export async function printCompletedReceipt(receiptData, options = {}) {
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || ''
       if (printerName && /deleted|1905|open printer/i.test(message)) {
-        return invoke('print_receipt', {
+        return invokePrintReceipt(invoke, {
           printerName: '',
           contents,
           copies: receipts.length,
@@ -499,7 +552,7 @@ export async function printShiftCloseReceipt(shiftCloseData, options = {}) {
   if (invoke) {
     await assertReceiptPrinterReady({ ...options, printerName })
     try {
-      return await invoke('print_receipt', {
+      return await invokePrintReceipt(invoke, {
         printerName,
         contents,
         copies: 1,
@@ -511,7 +564,7 @@ export async function printShiftCloseReceipt(shiftCloseData, options = {}) {
     } catch (error) {
       const message = typeof error === 'string' ? error : error?.message || ''
       if (printerName && /deleted|1905|open printer/i.test(message)) {
-        return invoke('print_receipt', {
+        return invokePrintReceipt(invoke, {
           printerName: '',
           contents,
           copies: 1,
@@ -550,7 +603,7 @@ export async function openCashDrawer(options = {}) {
   const drawerPulseMs = clampNumber(options.drawerPulseMs ?? savedDrawerPulseMs(), 50, 2, 500)
 
   try {
-    return await invoke('print_receipt', {
+    return await invokePrintReceipt(invoke, {
       printerName,
       contents: '',
       copies: 1,
@@ -563,7 +616,7 @@ export async function openCashDrawer(options = {}) {
   } catch (error) {
     const message = typeof error === 'string' ? error : error?.message || ''
     if (printerName && /deleted|1905|open printer/i.test(message)) {
-      return invoke('print_receipt', {
+      return invokePrintReceipt(invoke, {
         printerName: '',
         contents: '',
         copies: 1,

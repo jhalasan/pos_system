@@ -17,7 +17,7 @@ import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { getDeveloperModeSettings } from '../../utils/developerMode';
 import { getAvailableStockUnits } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
-import { getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
+import { getCashSalesAmountFromSources, getGcashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { restoreCashierTransactions } from '../utils/transactionRestore';
 import { reservedQuantityDetail } from '../utils/cartReservation';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
@@ -521,6 +521,7 @@ const Cashier = ({ onLogout, user }) => {
   const [cloudAuthPassword, setCloudAuthPassword] = useState('');
   const [cloudAuthError, setCloudAuthError] = useState('');
   const [cloudAuthBusy, setCloudAuthBusy] = useState(false);
+  const [cloudAuthProgress, setCloudAuthProgress] = useState(null);
   // Dismissing the popup without fixing it (e.g. mid-sale, not a good time)
   // shouldn't reopen it again on the very next ~60s automatic sync tick --
   // back off for a while before it's allowed to auto-open again.
@@ -531,6 +532,7 @@ const Cashier = ({ onLogout, user }) => {
   const [lookupSale, setLookupSale] = useState(null);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState('');
+  const [lookupReprintBusy, setLookupReprintBusy] = useState(false);
   const [lookupMode, setLookupMode] = useState('verify');
   const lookupApproval = useApproval('barcode');
   const [lookupReason, setLookupReason] = useState('');
@@ -692,6 +694,29 @@ const Cashier = ({ onLogout, user }) => {
       !currentSessionId || String(sale?.sessionId || sale?.session_id || '') === currentSessionId
     ));
     return getCashSalesAmountFromSources({
+      retainedSales: salesForCurrentSession(retainedCompletedSales),
+      currentSales: salesForCurrentSession(transactionSales),
+      cashierId: user?.id,
+    });
+  }, [retainedCompletedSales, transactions, shiftSession, user?.id]);
+
+  // Informational only, for the Z-read's GCash transparency line -- GCash
+  // never touches the physical drawer, so this must stay entirely separate
+  // from completedCashSales and the cash-count reconciliation math above.
+  const completedGcashSales = useMemo(() => {
+    const transactionSales = transactions
+      .filter((txn) => txn?.status === 'completed')
+      .map((txn) => ({
+        ...(txn?.completedSale || {}),
+        status: txn?.completedSale?.status || 'completed',
+        rawStatus: txn?.completedSale?.rawStatus || 'completed',
+      }))
+      .filter(Boolean);
+    const currentSessionId = String(shiftSession?.id || '');
+    const salesForCurrentSession = (sales) => sales.filter((sale) => (
+      !currentSessionId || String(sale?.sessionId || sale?.session_id || '') === currentSessionId
+    ));
+    return getGcashSalesAmountFromSources({
       retainedSales: salesForCurrentSession(retainedCompletedSales),
       currentSales: salesForCurrentSession(transactionSales),
       cashierId: user?.id,
@@ -879,8 +904,20 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const cancelQueuedReceiptPrint = (jobId) => {
+    // Marking the job cancelled and dropping it from the visible queue used
+    // to be the whole story -- but receiptPrintLocksRef (keyed by jobKey,
+    // not jobId) was only ever cleared in printReceiptCopy's own `finally`,
+    // which doesn't run until the in-flight printer-status/print call
+    // settles. If that call is hung, "Cancel" removed the row from view
+    // while the lock underneath stayed held, so any retry on the same
+    // receipt still failed with "already in the print queue" -- the cancel
+    // button looked like it worked but didn't actually free anything.
     cancelledReceiptPrintJobsRef.current.add(jobId);
-    setReceiptPrintQueue((current) => current.filter((job) => job.id !== jobId));
+    setReceiptPrintQueue((current) => {
+      const job = current.find((item) => item.id === jobId);
+      if (job) receiptPrintLocksRef.current.delete(job.key);
+      return current.filter((item) => item.id !== jobId);
+    });
   };
 
   const refreshPrinterQueue = async () => {
@@ -1207,6 +1244,7 @@ const Cashier = ({ onLogout, user }) => {
       closedAt: closed.closedAt,
       openingAmount: shiftOpeningCash,
       cashSales: completedCashSales,
+      gcashSales: completedGcashSales,
       cashIn: shiftCashIn,
       cashOut: shiftCashOut,
       expectedCash: expectedShiftCash,
@@ -1704,6 +1742,21 @@ const Cashier = ({ onLogout, user }) => {
     return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus);
   }, [showCloudAuth, user?.email]);
 
+  // The backlog drain that connectCashierToCloud awaits (see its own
+  // comment) can take a while on a terminal that queued up a real backlog --
+  // syncEngine emits a running/progress event after each queued sale or op,
+  // so the modal can show real movement instead of a static "Connecting..."
+  // that looks frozen.
+  useEffect(() => {
+    function handleSyncProgress(event) {
+      const detail = event.detail || {};
+      if (detail.scope !== 'cashier' || detail.state !== 'running' || !detail.progress) return;
+      setCloudAuthProgress(detail.progress);
+    }
+    globalThis.addEventListener?.('nexa-sync-status', handleSyncProgress);
+    return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncProgress);
+  }, []);
+
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, [activeTransaction]);
@@ -1948,6 +2001,8 @@ const Cashier = ({ onLogout, user }) => {
   const handleLookupReprint = async () => {
     if (!lookupSale) return;
     if (!can('receipt_reprint')) return setLookupError('Your account does not have permission to reprint receipts.');
+    if (lookupReprintBusy) return;
+    setLookupReprintBusy(true);
     try {
       const result = await printCompletedReceipt({
         transactionNo: lookupSale.transactionNo,
@@ -1977,6 +2032,8 @@ const Cashier = ({ onLogout, user }) => {
       }).catch(() => {});
     } catch (err) {
       setLookupError((typeof err === 'string' ? err : err.message) || 'Unable to reprint receipt.');
+    } finally {
+      setLookupReprintBusy(false);
     }
   };
 
@@ -2852,6 +2909,7 @@ const Cashier = ({ onLogout, user }) => {
   const connectCashierToCloud = async () => {
     setCloudAuthBusy(true);
     setCloudAuthError('');
+    setCloudAuthProgress(null);
     try {
       const result = await cashierApi.reauthenticate({
         cashierId: user?.id,
@@ -2867,6 +2925,7 @@ const Cashier = ({ onLogout, user }) => {
       setCloudAuthError(err.message || 'Unable to authenticate this cashier account.');
     } finally {
       setCloudAuthBusy(false);
+      setCloudAuthProgress(null);
     }
   };
 
@@ -4084,6 +4143,29 @@ const Cashier = ({ onLogout, user }) => {
           }}
           autoFocus
         />
+        {cloudAuthBusy && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ height: 8, background: '#e5e7eb', borderRadius: 4, overflow: 'hidden' }}>
+              <div
+                style={{
+                  height: '100%',
+                  width: cloudAuthProgress
+                    ? `${Math.min(100, Math.round((cloudAuthProgress.completed / Math.max(1, cloudAuthProgress.total)) * 100))}%`
+                    : '15%',
+                  background: '#2563eb',
+                  transition: 'width 0.2s ease',
+                  ...(cloudAuthProgress ? {} : { animation: 'nexa-cloud-auth-indeterminate 1.2s ease-in-out infinite' }),
+                }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+              {cloudAuthProgress
+                ? `Syncing ${cloudAuthProgress.completed} of ${cloudAuthProgress.total}...`
+                : 'Verifying...'}
+            </div>
+            <style>{`@keyframes nexa-cloud-auth-indeterminate { 0% { margin-left: 0%; } 50% { margin-left: 70%; width: 25% !important; } 100% { margin-left: 0%; } }`}</style>
+          </div>
+        )}
         {cloudAuthError && <div style={{ color: '#dc2626', marginTop: 10 }}>{cloudAuthError}</div>}
       </Modal>
 
@@ -4427,6 +4509,10 @@ const Cashier = ({ onLogout, user }) => {
             <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>
             <div><span>Cash Out</span><strong>{money(shiftCashOut)}</strong></div>
             <div><span>Expected Cash</span><strong>{money(expectedShiftCash)}</strong></div>
+            {/* Informational only -- GCash never touches the physical
+                drawer, so it's shown separately from the cash-count fields
+                above and does not feed into Expected Cash. */}
+            <div><span>GCash Sales</span><strong>{money(completedGcashSales)}</strong></div>
           </div>
         </div>
         <div style={{ marginBottom: '18px' }}>
@@ -4878,8 +4964,8 @@ const Cashier = ({ onLogout, user }) => {
               >
                 Verify
               </button>
-              <button type="button" onClick={handleLookupReprint}>
-                Reprint
+              <button type="button" onClick={handleLookupReprint} disabled={lookupReprintBusy}>
+                {lookupReprintBusy ? 'Printing...' : 'Reprint'}
               </button>
               {receiptSettings.showPdfTestButton && (
                 <button type="button" onClick={handleLookupPrintPdf}>

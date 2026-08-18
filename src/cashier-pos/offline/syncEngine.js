@@ -55,12 +55,13 @@ function numberOrZero(value) {
   return Number.isFinite(number) ? number : 0
 }
 
-function emitSyncStatus(state, message) {
+function emitSyncStatus(state, message, extra = {}) {
   globalThis.dispatchEvent?.(new CustomEvent('nexa-sync-status', {
     detail: {
       scope: 'cashier',
       state,
       message,
+      ...extra,
     },
   }))
 }
@@ -514,6 +515,18 @@ export class CashierSyncEngine extends EventTarget {
     let catalogRefreshAuthFailed = false
     const warnings = []
 
+    // Progress feedback for callers awaiting a full backlog drain (e.g. the
+    // cashier reauth modal) -- a queue of any real size otherwise looks
+    // frozen for the whole duration, with only a start and an end event.
+    const totalQueued = queuedSales.length + queuedOps.length
+    let processedQueued = 0
+    const emitQueueProgress = () => {
+      if (totalQueued <= 0) return
+      emitSyncStatus('running', `Syncing ${processedQueued} of ${totalQueued}...`, {
+        progress: { completed: processedQueued, total: totalQueued },
+      })
+    }
+
     if (shouldRefreshProducts && !isPocketBaseRateLimited()) {
       try {
         products = await refreshLocalProductCatalog({ pb: this.pb })
@@ -586,6 +599,8 @@ export class CashierSyncEngine extends EventTarget {
           detail: { clientSaleId: sale.clientSaleId, error },
         }))
       }
+      processedQueued += 1
+      emitQueueProgress()
     }
 
     for (const op of queuedOps) {
@@ -616,6 +631,8 @@ export class CashierSyncEngine extends EventTarget {
           nextAttemptAt: Date.now() + retryDelay(attempts),
         })
       }
+      processedQueued += 1
+      emitQueueProgress()
     }
 
     if (rateLimited && !warnings.length) warnings.push(pocketBaseRateLimitMessage())
@@ -625,15 +642,15 @@ export class CashierSyncEngine extends EventTarget {
       detail: { uploaded, failed, warnings },
     }))
     emitSyncStatus(
-      peakProtectionStatus().active
-        ? 'peak-protection'
-        : catalogRefreshAuthFailed
+      catalogRefreshAuthFailed
         ? 'auth-required'
+        : peakProtectionStatus().active
+        ? 'peak-protection'
         : failed > 0 ? 'failed' : (rateLimited || pending > 0 || catalogRefreshFailed) ? 'waiting' : 'succeeded',
-      peakProtectionStatus().active
-        ? `Peak Protection Active — checkout is operating normally. ${pending} transaction(s) safely queued.`
-        : catalogRefreshAuthFailed
+      catalogRefreshAuthFailed
         ? CLOUD_AUTH_REQUIRED_MESSAGE
+        : peakProtectionStatus().active
+        ? `Peak Protection Active — checkout is operating normally. ${pending} transaction(s) safely queued.`
         : failed > 0
           ? `Auto-Sync Finished with ${failed} Failed`
           : rateLimited

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getCashSalesAmount, getCashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../src/cashier-pos/utils/cashSales.js';
+import { getCashSalesAmount, getCashSalesAmountFromSources, getGcashSalesAmount, getGcashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../src/cashier-pos/utils/cashSales.js';
 
 test('counts completed cash and split sales even when the transaction tab is closed', () => {
   const sales = [
@@ -130,4 +130,45 @@ test('persists retained completed sales to local storage and restores them for t
 
   assert.deepEqual(loadRetainedCompletedSales('cashier-a'), [{ ...sales[0], cashierId: 'cashier-a' }]);
   assert.deepEqual(loadRetainedCompletedSales('cashier-b'), []);
+});
+
+test('counts completed gcash and the gcash portion of split sales, kept separate from cash', () => {
+  const sales = [
+    {
+      status: 'completed',
+      paymentMethod: 'gcash',
+      totalAmount: 200,
+    },
+    {
+      status: 'completed',
+      paymentMethod: 'split',
+      splitPayments: { cash: 40, gcash: 60, gcashRef: 'ref' },
+    },
+    {
+      status: 'completed',
+      paymentMethod: 'cash',
+      totalAmount: 999,
+    },
+  ];
+
+  assert.equal(getGcashSalesAmount(sales), 260, 'gcash total must not include the pure-cash sale');
+  assert.equal(getCashSalesAmount(sales), 40 + 999, 'cash total must not include the gcash-only sale');
+});
+
+test('ignores voided sales when calculating gcash sales', () => {
+  const sales = [
+    { status: 'voided', paymentMethod: 'gcash', totalAmount: 500 },
+    { status: 'completed', paymentMethod: 'gcash', totalAmount: 150 },
+  ];
+
+  assert.equal(getGcashSalesAmount(sales), 150);
+});
+
+test('getGcashSalesAmountFromSources dedupes retained vs current sales the same way as the cash total', () => {
+  const sale = { saleId: 'sale-gcash-1', paymentMethod: 'gcash', totalAmount: 300, rawStatus: 'completed' };
+
+  assert.equal(getGcashSalesAmountFromSources({
+    retainedSales: [sale],
+    currentSales: [sale],
+  }), 300, 'the same sale present in both sources must only be counted once');
 });

@@ -9,6 +9,7 @@ test('buildShiftCloseReceiptText includes denomination breakdown and totals', ()
     closedAt: '2026-07-08T17:30:00.000Z',
     openingAmount: 1000,
     cashSales: 2500,
+    gcashSales: 850,
     cashIn: 200,
     cashOut: 100,
     expectedCash: 3600,
@@ -32,4 +33,6 @@ test('buildShiftCloseReceiptText includes denomination breakdown and totals', ()
   assert.match(receipt, /500/);
   assert.match(receipt, /Counted Cash/);
   assert.match(receipt, /Variance/);
+  assert.match(receipt, /GCash Sales/);
+  assert.match(receipt, /850/);
 });

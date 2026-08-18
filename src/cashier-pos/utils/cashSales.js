@@ -99,9 +99,28 @@ export const getCashSalesAmount = (sales = []) => (sales || []).reduce((sum, sal
   return sum + netCashAmount;
 }, 0);
 
-export const getCashSalesAmountFromSources = ({ retainedSales = [], currentSales = [], historySales = [], cashierId = '' } = {}) => {
+// GCash never touches the physical drawer, so this is informational only
+// (shown on the Z-read for transparency on how much a shift took in via
+// GCash) -- it must never feed into the cash-count reconciliation math
+// (Expected Cash / Counted Cash / Variance) the way getCashSalesAmount does.
+// A refund is assumed paid back out of the drawer regardless of the
+// original payment method (see refundedCashAmount's own comment, and the
+// fact that a gcash sale's cashAmount already starts at 0 above and is
+// unaffected by a refund) -- so this deliberately does not subtract
+// refunds the way the cash total does; there is no separate "refunded via
+// GCash" figure tracked anywhere in this system to subtract.
+export const getGcashSalesAmount = (sales = []) => (sales || []).reduce((sum, sale) => {
+  const normalized = normalizeCompletedSale(sale);
+  if (!normalized) return sum;
+  let gcashAmount = 0;
+  if (normalized.paymentMethod === 'gcash') gcashAmount = Number(normalized.totalAmount) || 0;
+  else if (normalized.paymentMethod === 'split') gcashAmount = Number(normalized.splitPayments?.gcash ?? normalized.gcashAmount) || 0;
+  return sum + Math.max(0, gcashAmount);
+}, 0);
+
+const dedupedCompletedSales = ({ retainedSales = [], currentSales = [], historySales = [], cashierId = '' } = {}) => {
   const seen = new Set();
-  const deduped = [...retainedSales, ...currentSales, ...historySales].filter((sale) => {
+  return [...retainedSales, ...currentSales, ...historySales].filter((sale) => {
     const normalized = normalizeCompletedSale(sale);
     if (!normalized) return false;
     if (cashierId) {
@@ -113,6 +132,8 @@ export const getCashSalesAmountFromSources = ({ retainedSales = [], currentSales
     seen.add(key);
     return true;
   });
-
-  return getCashSalesAmount(deduped);
 };
+
+export const getCashSalesAmountFromSources = (sources) => getCashSalesAmount(dedupedCompletedSales(sources));
+
+export const getGcashSalesAmountFromSources = (sources) => getGcashSalesAmount(dedupedCompletedSales(sources));

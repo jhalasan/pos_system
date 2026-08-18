@@ -12,7 +12,7 @@ import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { buildStockOutText, printStockOutRecords } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
 import { formatQty, pluralizeUnit, quantizeQty, floorQty, isFractional } from '../../utils/quantity'
-import { isCatalogActive } from '../../utils/productLifecycle'
+import { findArchivedBarcodeOwner, getProductBarcodes, isCatalogActive, releasedBarcodePayload } from '../../utils/productLifecycle'
 
 const stockOutReasons = {
   expired: 'Expired goods',
@@ -741,8 +741,20 @@ export default function Inventory() {
 
   async function handleCreateProduct(data) {
     try {
+      const submittedBarcodes = getProductBarcodes(data)
+      const archivedOwner = findArchivedBarcodeOwner(products, submittedBarcodes)
+      if (archivedOwner) {
+        const collidingBarcode = submittedBarcodes.find((barcode) => getProductBarcodes(archivedOwner).includes(barcode))
+        const shouldRelease = await dialog.confirm(
+          `Barcode ${collidingBarcode} belongs to archived product “${archivedOwner.name}”.\n\nRelease it from that product and use it here?`,
+          { title: 'Archived product found', confirmLabel: 'Release & create', cancelLabel: 'Use another barcode' },
+        )
+        if (!shouldRelease) return
+        await api.updateProduct(archivedOwner.id, { ...archivedOwner, ...releasedBarcodePayload(archivedOwner) })
+        setProducts((current) => current.map((p) => (p.id === archivedOwner.id ? { ...p, ...releasedBarcodePayload(archivedOwner) } : p)))
+      }
       const created = await api.createProduct(data)
-      setProducts([created, ...products])
+      setProducts((current) => [created, ...current])
       setNewProductBarcode('')
       setBarcode('')
       setScanError('')
