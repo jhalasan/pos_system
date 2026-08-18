@@ -198,6 +198,25 @@ export default function ProductManagement() {
         setList(list.map((p) => (p.id === modal.product.id ? updated : p)))
         flash('Product updated.')
       } else {
+        const submittedBarcodes = getProductBarcodes(data)
+        const archivedOwner = list.find((product) => (
+          ['archived', 'deleted'].includes(product.lifecycleStatus || 'active')
+          && getProductBarcodes(product).some((barcode) => submittedBarcodes.includes(barcode))
+        ))
+        if (archivedOwner) {
+          const shouldRestore = await dialog.confirm(
+            `Barcode ${submittedBarcodes.find((barcode) => getProductBarcodes(archivedOwner).includes(barcode))} belongs to archived product “${archivedOwner.name}”.\n\nRestore and edit this product?`,
+            { title: 'Archived product found', confirmLabel: 'Restore & edit', cancelLabel: 'Use another barcode' },
+          )
+          if (shouldRestore) {
+            const restored = await api.updateProduct(archivedOwner.id, { ...archivedOwner, lifecycleStatus: 'active' })
+            setList(list.map((product) => product.id === restored.id ? restored : product))
+            setModal({ mode: 'edit', product: restored })
+            setLifecycleFilter('active')
+            flash('Product restored. Review its details and save your changes.')
+          }
+          return
+        }
         const created = await api.createProduct(data)
         setList([created, ...list])
         flash('Product added.')
@@ -209,14 +228,21 @@ export default function ProductManagement() {
   }
 
   async function handleDelete(p) {
-    if (await dialog.confirm(`Delete “${p.name}”?\n\nThis action cannot be undone.`, { title: 'Delete product', confirmLabel: 'Delete product' })) {
+    const confirmation = await dialog.prompt(
+      `Permanently delete “${p.name}”? This is allowed only when the product has no sales or inventory history.\n\nType DELETE to continue.`,
+      '',
+      { title: 'Permanently delete product', confirmLabel: 'Permanently delete' },
+    )
+    if (confirmation === 'DELETE') {
       try {
         await api.deleteProduct(p.id)
         setList(list.filter((x) => x.id !== p.id))
-        flash('Product deleted.')
+        flash('Product permanently deleted.')
       } catch (err) {
-        flash(err.message || 'Unable to delete product.')
+        flash(err.message || 'Unable to permanently delete product.')
       }
+    } else if (confirmation !== null) {
+      flash('Permanent deletion cancelled: type DELETE exactly to confirm.')
     }
   }
 
@@ -547,13 +573,15 @@ export default function ProductManagement() {
                           >
                             {['archived', 'deleted'].includes(p.lifecycleStatus || 'active') ? '↺' : <IconArchive size={15} />}
                           </button>
-                          <button
-                            className="icon-btn del"
-                            title="Delete"
-                            onClick={() => handleDelete(p)}
-                          >
-                            <IconTrash size={15} />
-                          </button>
+                          {['archived', 'deleted'].includes(p.lifecycleStatus || 'active') && (
+                            <button
+                              className="icon-btn del"
+                              title="Permanently delete (only if unused)"
+                              onClick={() => handleDelete(p)}
+                            >
+                              <IconTrash size={15} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

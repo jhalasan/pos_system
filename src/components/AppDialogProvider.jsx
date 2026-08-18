@@ -42,7 +42,7 @@ export function AppDialogProvider({ children }) {
               {dialog.type === 'prompt' && <input name="dialogValue" className="input" defaultValue={dialog.defaultValue} autoFocus autoComplete="off" />}
             </div>
             <div className="app-dialog-actions">
-              {dialog.type !== 'alert' && <button type="button" className="btn btn-outline" onClick={() => close(null)}>Cancel</button>}
+              {dialog.type !== 'alert' && <button type="button" className="btn btn-outline" onClick={() => close(null)}>{dialog.cancelLabel || 'Cancel'}</button>}
               <button type="submit" className={`btn ${dialog.danger ? 'btn-danger' : 'btn-primary'}`} autoFocus={dialog.type !== 'prompt'}>{dialog.confirmLabel}</button>
             </div>
           </form>

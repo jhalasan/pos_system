@@ -1705,17 +1705,25 @@ export const desktopAdminApi = {
   async deleteProduct(id) {
     assertAdmin()
     await startAdminRuntime()
-    let deletedName = ''
-    await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
-      const existing = await adminDb.products.get(id)
-      if (existing) {
-        deletedName = existing.name
-        await adminDb.products.put({ ...existing, deleted: true, pendingSync: true })
+    if (!(await isCloudReachable())) {
+      throw new Error('Permanent deletion requires an internet connection so product history can be checked. Archive the product instead.')
+    }
+    const existing = await adminDb.products.get(id)
+    if (!existing) throw new Error('Product was not found.')
+    if (!['archived', 'deleted'].includes(existing.lifecycleStatus || 'active')) {
+      throw new Error('Archive this product before permanently deleting it.')
+    }
+    try {
+      await pb.collection('products').delete(id, { requestKey: null })
+    } catch (error) {
+      const message = String(error?.message || '')
+      if (/required relation|relation reference|foreign key|dependent/i.test(message)) {
+        throw new Error('This product cannot be permanently deleted because it has sales or inventory history. Keep it archived instead.', { cause: error })
       }
-      await queueOperation('deleteProduct', id, { id })
-    })
-    if (deletedName) await recordActivity('Product', `Deleted product "${deletedName}".`)
-    syncEngine?.schedule(0)
+      throw error
+    }
+    await adminDb.products.delete(id)
+    if (existing.name) await recordActivity('Product', `Permanently deleted unused product "${existing.name}".`)
     return null
   },
 

@@ -313,6 +313,19 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     }
   }, [])
 
+  function clearForm() {
+    const cleared = buildInitialForm(null, categories, false)
+    setForm(cleared)
+    setSellingUnits(cleared.sellingUnits || [])
+    setImageFile(null)
+    setImagePreview('')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current)
+      objectUrlRef.current = ''
+    }
+  }
+
   function updateSellingRows(nextForm, currentRows = sellingUnits) {
     const baseUnitPrice = deriveSellingPrice(Number(nextForm.cost), Number(nextForm.profitMargin), 1, Number(nextForm.conversionQuantity))
 
@@ -643,6 +656,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       onClose={onClose}
       footer={
         <>
+          {!isEdit && <button className="btn btn-outline" type="button" onClick={clearForm}>Clear Form</button>}
           <button className="btn btn-outline" onClick={onClose}>Cancel</button>
           <button className="btn btn-primary" onClick={submit}>
             {isEdit ? 'Save Changes' : 'Add Product'}

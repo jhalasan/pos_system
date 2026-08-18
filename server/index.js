@@ -1444,33 +1444,28 @@ app.patch('/api/products/:id', upload.single('product_img'), asyncRoute(async (r
 }))
 
 app.delete('/api/products/:id', asyncRoute(async (req, res) => {
-  let markedDeletedInstead = false
+  const products = await pbCollection('products')
+  const product = await products.getOne(req.params.id).catch(() => null)
+  if (!product) return res.status(404).json({ error: 'Product was not found.' })
+  if (!['archived', 'deleted'].includes(product.lifecycle_status || 'active')) {
+    return res.status(409).json({ error: 'Archive this product before permanently deleting it.' })
+  }
   try {
-    await (await pbCollection('products')).delete(req.params.id)
+    await products.delete(req.params.id)
   } catch (error) {
     const message = error?.message || ''
     const isRelationConstraint = /required relation|relation reference|foreign key|dependent/i.test(message)
     if (!isRelationConstraint && error?.status !== 404) throw error
-    // A product with sale/stock history can't be hard-deleted -- PocketBase
-    // rejects it to protect referential integrity. Falling through here
-    // used to leave the cloud record fully intact while only pretending to
-    // the caller that it was gone, so it would silently reappear on the
-    // next full catalog pull. Mark it 'deleted' instead: same "gone from
-    // active views" outcome the caller wants, but durable on the record
-    // itself -- and deliberately a distinct lifecycle_status from
-    // 'archived', so Delete and the separate Archive action never look like
-    // the same button under two names.
     if (isRelationConstraint) {
-      await (await pbCollection('products')).update(req.params.id, { lifecycle_status: 'deleted' }).catch(() => {})
-      markedDeletedInstead = true
+      return res.status(409).json({
+        error: 'This product cannot be permanently deleted because it has sales or inventory history. Keep it archived instead.',
+      })
     }
   }
 
   await createLog({
     action: 'Product',
-    detail: markedDeletedInstead
-      ? `Deleted product ${req.params.id} (has sale/stock history, marked deleted rather than permanently removed)`
-      : `Deleted product ${req.params.id}`,
+    detail: `Permanently deleted unused product ${req.params.id}`,
   })
   res.status(204).end()
 }))

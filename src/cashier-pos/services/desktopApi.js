@@ -962,6 +962,9 @@ export const desktopCashierApi = {
       throw new Error(`${pocketBaseRateLimitMessage()} Product barcode "${barcode}" is not cached on this cashier yet.`)
     }
     if (!product) throw new Error(`No local product found for barcode "${barcode}".`)
+    if ((product.lifecycleStatus || 'active') !== 'active') {
+      throw new Error(`"${product.name}" is archived and cannot be sold.`)
+    }
     if (Number(product.quantity ?? product.qty ?? 0) <= 0) throw new Error(`"${product.name}" is out of stock.`)
 
     const matchingUnit = Array.isArray(product.sellingUnits)

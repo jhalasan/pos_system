@@ -695,29 +695,19 @@ export class AdminSyncEngine extends EventTarget {
       }
 
       if (isRelationConstraint) {
-        // A product with sale/stock history can't be hard-deleted --
-        // PocketBase rejects it to protect referential integrity. Marking
-        // it deleted only in this terminal's local cache used to leave the
-        // cloud record fully live, so it would silently reappear the next
-        // time any device (or this one, after a cache reset) pulled a
-        // fresh catalog. Mark it 'deleted' on the cloud record instead --
-        // durable, and already respected everywhere (cashier catalog
-        // filters, product listings) via lifecycle_status. Deliberately a
-        // distinct value from 'archived': Archive is a reversible admin
-        // action on a product still in rotation, and must stay a separate,
-        // visibly different outcome from Delete -- not the same button
-        // under two names.
-        const deletedRecord = await this.pb.collection('products').update(
+        // Legacy queued deletes must follow the current policy too: preserve
+        // the record and archive it when history prevents permanent deletion.
+        const archivedRecord = await this.pb.collection('products').update(
           op.productId,
-          { lifecycle_status: 'deleted' },
+          { lifecycle_status: 'archived' },
           { expand: 'category', requestKey: op.id },
         ).catch(() => null)
-        if (deletedRecord) {
-          await replaceLocalProductWithCloud(op.productId, deletedRecord, this.pb)
+        if (archivedRecord) {
+          await replaceLocalProductWithCloud(op.productId, archivedRecord, this.pb)
         } else {
           const existing = await adminDb.products.get(op.productId).catch(() => null)
           if (existing) {
-            await adminDb.products.put({ ...existing, deleted: true, pendingSync: false, updated: new Date().toISOString() })
+            await adminDb.products.put({ ...existing, lifecycleStatus: 'archived', deleted: false, pendingSync: false, updated: new Date().toISOString() })
           } else {
             await adminDb.products.delete(op.productId).catch(() => {})
           }
