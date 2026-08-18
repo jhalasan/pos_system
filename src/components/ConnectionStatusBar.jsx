@@ -57,6 +57,9 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
     if (syncStatus?.state === 'auth-required') {
       return { tone: 'warning', label: 'Login required', detail: syncStatus.message || 'This session needs one online login before it can sync.' }
     }
+    if (syncStatus?.state === 'peak-protection') {
+      return { tone: 'peak-protection', label: 'Peak Protection', detail: syncStatus.message || 'Checkout is local-first; cloud sync is controlled.' }
+    }
     if (syncStatus?.state === 'running') return { tone: 'syncing', label: 'Syncing', detail: syncStatus.message || 'Sending local changes to cloud.' }
     if (['failed', 'waiting'].includes(syncStatus?.state)) return { tone: 'warning', label: 'Sync pending', detail: syncStatus.message || 'Cloud sync will retry automatically.' }
     if (syncStatus?.state === 'succeeded') return { tone: 'success', label: 'Sync complete', detail: syncStatus.message || 'Everything is up to date.' }
@@ -69,7 +72,7 @@ export default function ConnectionStatusBar({ scope = 'system', compact = false,
     <div className={`connection-status-bar ${status.tone}${compact || placement === 'header' ? ' compact' : ''}${placement === 'header' ? ' connection-status-pill' : ''}`} role="status">
       <span className="connection-status-dot" />
       <strong>{status.label}</strong>
-      {!compact && status.detail && <span>{status.detail}</span>}
+      {status.detail && (!compact || status.tone === 'peak-protection') && <span>{status.detail}</span>}
     </div>
   )
 }

@@ -256,6 +256,8 @@ ul { list-style: none; }
 .connection-status-bar.syncing .connection-status-dot { background: #3b82f6; animation: connection-pulse 1s ease-in-out infinite; }
 .connection-status-bar.warning { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .connection-status-bar.warning .connection-status-dot { background: #f59e0b; }
+.connection-status-bar.peak-protection { color:#713f12; background:#fef3c7; border-color:#f59e0b; box-shadow:0 0 0 2px rgba(245,158,11,.15); font-weight:700; }
+.connection-status-bar.peak-protection .connection-status-dot { background:#f59e0b; animation:connection-pulse 1.4s ease-in-out infinite; }
 .connection-status-bar.compact { min-height: 0; padding: 0; border: 0; background: transparent; }
 .connection-status-bar.connection-status-pill { min-height:28px; padding:5px 10px; border:1px solid; border-radius:999px; white-space:nowrap; }
 .connection-status-bar.connection-status-pill.online,
@@ -263,8 +265,9 @@ ul { list-style: none; }
 .connection-status-bar.connection-status-pill.offline { border-color:#fed7aa; background:#fff7ed; }
 .connection-status-bar.connection-status-pill.syncing { border-color:#bfdbfe; background:#eff6ff; }
 .connection-status-bar.connection-status-pill.warning { border-color:#fde68a; background:#fffbeb; }
+.connection-status-bar.connection-status-pill.peak-protection { border-color:#f59e0b; background:#fef3c7; }
 @keyframes connection-pulse { 50% { opacity: .35; transform: scale(.8); } }
-@media (prefers-reduced-motion: reduce) { .connection-status-bar.syncing .connection-status-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .connection-status-bar.syncing .connection-status-dot, .connection-status-bar.peak-protection .connection-status-dot { animation: none; } }
 .card-p-sm { padding: 12px; }
 .card-p-md { padding: 16px; }
 .card-p-lg { padding: 20px; }
@@ -860,6 +863,8 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .sync-indicator.succeeded { border-color: #86efac; color: #166534; }
 .sync-indicator.waiting,
 .sync-indicator.auth-required { border-color: #fcd34d; color: #92400e; }
+.sync-indicator.peak-protection { border-color:#f59e0b; color:#713f12; background:#fef3c7; box-shadow:0 0 0 2px rgba(245,158,11,.15); }
+.sync-indicator.peak-protection .sync-indicator-dot { background:#f59e0b; }
 .sync-indicator.offline,
 .sync-indicator.failed { border-color: #fecaca; color: #b91c1c; }
 

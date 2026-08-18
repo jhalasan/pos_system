@@ -22,6 +22,11 @@ import {
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings'
 import { getDeveloperModeSettings, isDeveloperPinValid, saveDeveloperModeSettings } from '../../utils/developerMode'
 import { requestUpdateCheck } from '../../utils/desktopUpdateEvents'
+import {
+  getPeakProtectionSettings,
+  peakProtectionStatus,
+  savePeakProtectionSettings,
+} from '../../utils/peakProtection'
 
 const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
 
@@ -70,6 +75,13 @@ export default function Settings() {
   const [dataAdminLoading, setDataAdminLoading] = useState(false)
   const [importStatusError, setImportStatusError] = useState('')
   const [backupError, setBackupError] = useState('')
+  const [peakSettings, setPeakSettings] = useState(getPeakProtectionSettings)
+
+  function updatePeakSettings(patch) {
+    const saved = savePeakProtectionSettings(patch)
+    setPeakSettings(saved)
+    flash('Peak Protection settings saved on this terminal.')
+  }
 
   function flash(message) {
     setToast(message)
@@ -834,6 +846,47 @@ export default function Settings() {
             </span>
           </div>
           <div className="panel-body">
+            <div className={`peak-protection-settings ${peakProtectionStatus().active ? 'active' : ''}`}>
+              <div className="peak-protection-settings-head">
+                <div>
+                  <strong>Peak Protection</strong>
+                  <p>Keep checkout local and reduce background cloud traffic during busy periods. PocketHost safety cooldowns always remain enabled.</p>
+                </div>
+                <span>{peakProtectionStatus().active ? 'ACTIVE' : 'STANDBY'}</span>
+              </div>
+              <div className="form-grid">
+                <label className="field span-2">
+                  <span>Operating mode</span>
+                  <select className="select" value={peakSettings.mode} onChange={(event) => updatePeakSettings({ mode: event.target.value })}>
+                    <option value="automatic">Automatic (recommended)</option>
+                    <option value="on">Always on</option>
+                    <option value="off">Manual off</option>
+                  </select>
+                  <small>Manual off disables traffic-based and predicted activation. A real rate limit still pauses cloud traffic to protect transactions.</small>
+                </label>
+                <label className="field">
+                  <span>Sales trigger (within 2 minutes)</span>
+                  <input className="input" type="number" min="2" max="20" value={peakSettings.salesThreshold} onChange={(event) => updatePeakSettings({ salesThreshold: event.target.value })} disabled={peakSettings.mode !== 'automatic'} />
+                </label>
+                <label className="field">
+                  <span>Items trigger (within 2 minutes)</span>
+                  <input className="input" type="number" min="5" max="100" value={peakSettings.itemsThreshold} onChange={(event) => updatePeakSettings({ itemsThreshold: event.target.value })} disabled={peakSettings.mode !== 'automatic'} />
+                </label>
+                <label className="field">
+                  <span>Queued transactions trigger</span>
+                  <input className="input" type="number" min="2" max="50" value={peakSettings.queueThreshold} onChange={(event) => updatePeakSettings({ queueThreshold: event.target.value })} disabled={peakSettings.mode !== 'automatic'} />
+                </label>
+                <label className="field">
+                  <span>Protected sync interval (minutes)</span>
+                  <input className="input" type="number" min="1" max="15" value={peakSettings.syncIntervalMinutes} onChange={(event) => updatePeakSettings({ syncIntervalMinutes: event.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Minimum protection duration (minutes)</span>
+                  <input className="input" type="number" min="5" max="60" value={peakSettings.minimumActiveMinutes} onChange={(event) => updatePeakSettings({ minimumActiveMinutes: event.target.value })} />
+                </label>
+              </div>
+              <small className="peak-protection-terminal-note">These settings apply to this terminal. Configure the second POS separately so each terminal can use an appropriate staggered schedule.</small>
+            </div>
             {(() => {
               const steps = [
                 ['Terminal identified', Boolean(readiness.terminalId), readiness.terminalName || 'This terminal'],

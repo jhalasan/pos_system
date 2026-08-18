@@ -25,6 +25,57 @@ function fieldError(field, message) {
   return err
 }
 
+test('admin product edits never overwrite cloud stock with a stale cached quantity', { concurrency: false }, async () => {
+  await adminDb.delete()
+  await initializeAdminDb()
+
+  let updateBody
+  const cloudProduct = {
+    id: 'product1',
+    name: 'Coffee',
+    barcode: '1001',
+    category: '',
+    quantity: 25,
+    base_unit: 'Piece',
+    min_stock: 5,
+    price: 10,
+    updated: '2026-08-18 10:00:00.000Z',
+  }
+  const fakePb = {
+    autoCancellation() {},
+    files: { getURL: () => '' },
+    collection(name) {
+      assert.equal(name, 'products')
+      return {
+        async getOne() { return cloudProduct },
+        async update(_id, body) {
+          updateBody = body
+          return { ...cloudProduct, ...body, quantity: cloudProduct.quantity }
+        },
+      }
+    },
+  }
+  const localProduct = {
+    id: 'product1', name: 'Coffee', barcode: '1001', categoryId: '', qty: 10,
+    unit: 'Piece', lowStock: 5, price: 12, pendingSync: true,
+  }
+  const op = {
+    id: 'op-product-edit', type: 'updateProduct', productId: 'product1',
+    payload: { ...localProduct, baseUpdated: '2026-08-18 10:00:00.000Z' },
+    status: 'pending', attempts: 0, createdAt: Date.now(),
+  }
+  await adminDb.products.put(localProduct)
+  await adminDb.pendingOps.put(op)
+
+  const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb: fakePb })
+  await engine.uploadOperation(op)
+
+  assert.equal(Object.hasOwn(updateBody, 'quantity'), false)
+  assert.equal(updateBody.price, 12)
+  assert.equal((await adminDb.products.get('product1')).qty, 25)
+  await adminDb.delete()
+})
+
 test('admin drain loop halts on 429, does not dead-letter, and skips the catalog pull', { concurrency: false }, async () => {
   await adminDb.delete()
   await initializeAdminDb()

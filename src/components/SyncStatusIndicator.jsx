@@ -4,6 +4,7 @@ const defaultMessages = {
   running: 'Auto-Sync Running',
   succeeded: 'Auto-Sync Succeeded',
   waiting: 'Auto-Sync Waiting to Retry',
+  'peak-protection': 'Peak Protection Active',
   'auth-required': 'Cashier Online Login Required',
   offline: 'Auto-Sync Waiting for Connection',
   failed: 'Auto-Sync Failed',
@@ -37,7 +38,7 @@ export default function SyncStatusIndicator({ scope }) {
   }, [scope])
 
   useEffect(() => {
-    if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required'].includes(status.state)) return undefined
+    if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required', 'peak-protection'].includes(status.state)) return undefined
 
     const timeoutId = window.setTimeout(() => {
       setStatus(null)

@@ -107,7 +107,7 @@ async function getOrCreateCategoryId(pb, name) {
   return created.id
 }
 
-async function productBody(pb, data) {
+async function productBody(pb, data, { includeQuantity = true } = {}) {
   const qty = Number(data.qty)
   const lowStock = Number(data.lowStock)
   const price = resolveRequiredProductPrice(data)
@@ -119,7 +119,6 @@ async function productBody(pb, data) {
     name: String(data.name || '').trim(),
     barcode: String(data.barcode || '').trim(),
     category: data.categoryId || await getOrCreateCategoryId(pb, data.category),
-    quantity: numberFieldValue(qty),
     base_unit: data.unit || 'Piece',
     purchase_unit: String(data.purchaseUnit || data.purchase_unit || '').trim(),
     conversion_quantity: Number.isFinite(conversionQuantity) && conversionQuantity > 0 ? conversionQuantity : 1,
@@ -133,6 +132,10 @@ async function productBody(pb, data) {
     allow_fractional: Boolean(data.allowFractional ?? data.allow_fractional),
     lifecycle_status: ['inactive', 'archived', 'deleted'].includes(data.lifecycleStatus || data.lifecycle_status) ? (data.lifecycleStatus || data.lifecycle_status) : 'active',
   }
+  // Stock is shared mutable state. Existing products must only change it
+  // through the delta-based inventory operations below; otherwise a product
+  // edit from a client with an older cache can restore that stale quantity.
+  if (includeQuantity) payload.quantity = numberFieldValue(qty)
   // include selling units when present so desktop/admin sync preserves additional units
   if (Array.isArray(data.sellingUnits) && data.sellingUnits.length > 0) {
     payload.selling_units = data.sellingUnits
@@ -670,7 +673,9 @@ export class AdminSyncEngine extends EventTarget {
         throw conflictError
       }
 
-      const updated = await this.pb.collection('products').update(target.id, await productBody(this.pb, op.payload), {
+      const updated = await this.pb.collection('products').update(target.id, await productBody(this.pb, op.payload, {
+        includeQuantity: false,
+      }), {
         expand: 'category',
         requestKey: op.id,
       })
