@@ -1209,3 +1209,91 @@ Full rationale and step-by-step detail for the plan this session executed lives 
 `C:\Users\ASUS\.claude\plans\run-another-audit-check-golden-wave.md`. Every fix landed with a test
 written first; `npm run test:offline` is 181/181 and `npm run test:vercel` is 3/3 as of this
 register, both now wired into CI (`.github/workflows/ci.yml`).
+
+---
+
+## Re-audit pass, 2026-08-21 (fresh scan for new-terminal business interruptions)
+
+Prompted by a live client error on POS-72F1F2 (raw "Invalid key provided" toast on the Sync
+button). That led to a targeted fresh audit pass (3 parallel background reviews: sync/Dexie key
+usage, money/inventory edge cases, admin-side reliability) explicitly scoped to find things NOT
+already covered by S1-S9/M1-M14/T1-T3/H1-H5 above, all of which were re-confirmed still fixed with
+no regressions.
+
+**T4. HIGH — ✅ FIXED. `forceRetryNow` hardcoded `row.id` as the Dexie update key, but
+`cashierDb.pendingSales`'s actual primary key field is `clientSaleId`.**
+`src/utils/pendingQueueRetry.js` (shared by both apps' manual Sync button and every cashier login
+via `retryPendingCashierSync`) called `table.update(row.id, patch)`. Every `pendingSales` row has
+no `id` field at all (Dexie schema `'&clientSaleId, ...'`), so any row that needed patching (a
+failed status, or a `nextAttemptAt` more than 60s out) passed `undefined` as the key and threw
+Dexie's raw `"Invalid key provided. Keys must be of type string, number, Date or
+Array<string | number | Date>."` verbatim to the user — this is exactly the error the client saw.
+Also silently affected every cashier login (fire-and-forget, no visible error) and admin's manual
+sync, on any terminal with a queued sale in that state.
+Fix: read the table's actual key field via Dexie's own `table.schema.primKey.keyPath` instead of
+assuming `row.id`. New `tests/pending-queue-retry.test.js` case reproduces the exact production
+error pre-fix (verified via `git stash`) and passes post-fix. Follow-up audit pass confirmed no
+other Dexie call site in either app assumes the wrong key field. `npm run test:offline` (274/274)
+pass. Commit `ccd828a`.
+
+**M15. HIGH — ✅ FIXED. A refund/exchange amount for a fractional-quantity product could drift by
+fractions of a peso (unrounded money math).**
+`src/cashier-pos/offline/saleRepository.js`'s `adjustLocalSale` computed
+`quantity * price` for the refund amount with no rounding step. A fractional product (e.g. weighed
+goods, `allowFractional`) can carry 3 decimal places of quantity; multiplied against a
+centavo-rounded unit price this lands on a sub-centavo value plus raw binary-float error (e.g.
+`0.3 * 33.33 = 9.998999999999999`, not `10.00`). That unrounded figure flowed straight into
+`sale.adjustments[].amount`, the cloud `sale_adjustments.amount`, and additively into
+`sales.refunded_amount` (M1's netting field) — silently drifting every downstream revenue and
+cash-drawer-reconciliation figure by fractions of a peso over many fractional-item refunds, the
+same class of bug M-series already fixed for other paths, just missed here because the
+multiplication happens after the per-line `roundMoney` call rather than before.
+Fix: wrap the computed amount in `roundMoney(...)`. New test in `tests/return-disposition.test.js`
+(`refund amount for a fractional quantity is rounded to centavos`). `npm run test:offline`
+(275/275) pass. Commit `7edf3aa`.
+
+**M16. MEDIUM — ✅ FIXED. Staff Management's "Total Sales" column (Tauri admin only) didn't net
+refunds, disagreeing with the web admin's figure for the same cashier.**
+`src/admin-page/services/desktopApi.js`'s `salesByCashier()` summed raw `total_amount` with no
+refund netting — a third independent implementation (per the M1 pattern already documented) that
+missed the fix applied to `server/index.js`'s `getSalesByCashier` (which already used the shared
+`netSaleAmount` helper).
+Fix: `salesByCashier()` now calls `netSaleAmount(sale)` too — both admin surfaces agree again.
+Commit `7edf3aa`.
+
+**M17. HIGH — NOT YET FIXED. Sales-by-Cashier report and its CSV export silently drop every
+refunded/exchanged sale from the totals, not just fail to net them.**
+`src/admin-page/pages/CashierSalesReport.jsx`'s `generateReport()` hardcodes
+`status: 'completed'` when calling `api.receipts(...)`. Any sale that's had a refund or exchange —
+even a partial one — has its `status` flipped to `'adjusted'` (`saleRepository.js:436,445`,
+`syncEngine.js:1004`), and both the desktop (`desktopApi.js`'s `filterReceiptRecords`) and web
+(`server/index.js`'s `/api/receipts` route) receipt-filtering logic treat an explicit `status`
+value as an exact match, not "at least this status" — so an adjusted sale is filtered out
+entirely, not shown with a stale gross figure. This undercounts the report's revenue/quantity
+totals (the sale's real, still-owed remaining revenue is missing entirely), the opposite direction
+from a simple "shows gross instead of net" bug. `GCashPayments.jsx` is unaffected — it doesn't
+hardcode a status filter and defaults to showing all payments regardless of sale status.
+**Client decision (2026-08-21): hold for a dedicated pass rather than bundle into this release.**
+Fix, when picked up: `CashierSalesReport.jsx` must fetch `'adjusted'` sales alongside
+`'completed'` (voided should stay excluded), and `receiptSalesUtils.js`'s
+`summarizeSalesByProduct`/`summarizeSalesByProductFiltered` need per-(sale,product) refund netting
+via the same `refundedUnitsBySaleAndProduct`-style join M1 already built for the two dashboards —
+receipts as currently built (`receiptRecordFromCloudSale`/`receiptRecordFromSale`) carry no
+per-product refund attribution, only the sale-level `refunded_amount`/`refunded_units` fields, so
+this needs `sale_adjustments` plumbed into the receipt-fetch path in both `desktopApi.js` and
+`server/index.js`, not just a one-line status-filter change.
+
+**Two low-severity non-atomic Dexie write findings, tracked but not fixed this pass (cosmetic,
+no money/stock risk):**
+- `src/cashier-pos/offline/syncEngine.js:1042-1045,1133-1136` — `finalizeVoidedSaleUpload`/
+  `uploadSale` delete the `pendingSales` row and update `completedSales` as two separate awaits,
+  not one Dexie transaction (unlike the equivalent paths in `saleRepository.js`, which correctly
+  wrap these). If interrupted between the two, a sale's local "still syncing" badge can get stuck
+  even though the cloud write already succeeded — a display-only staleness, not a money/stock
+  risk, since the cloud write itself already completed by that point.
+- `src/admin-page/offline/syncEngine.js:690-723` — the `deleteProduct` op handler's product
+  write and `pendingOps.delete()` aren't wrapped in a transaction either. Low risk: retrying the
+  op after an interruption just repeats the same idempotent delete/archive branch.
+
+`npm run test:offline` is 275/275 as of this pass's commits (`ccd828a`, `7edf3aa`); `npm run
+test:vercel` unaffected. `npm run build` and `npm run build:cashier` both clean.
