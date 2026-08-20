@@ -761,6 +761,19 @@ const Cashier = ({ onLogout, user }) => {
   const shiftCloseActualCashEnding = shiftCloseCountMode === 'denomination'
     ? shiftCloseDenominationTotal
     : Number(shiftClosingAmount || 0);
+  // Denomination mode has no way to represent "I counted and it's genuinely
+  // zero" differently from "I never entered anything" -- both leave every
+  // row at its default and sum to 0. That ambiguity, combined with the
+  // close flow's validation only rejecting a *negative* amount, let a shift
+  // close as PHP 0.00 actual with no denominations ever entered while the
+  // system expected tens of thousands -- recorded as a huge unexplained
+  // variance that reads exactly like "the day's cash sales vanished," even
+  // though the underlying sales themselves were (and always are) untouched.
+  // Only treat it as ready when either something was actually counted, or
+  // there was nothing meaningful expected to count in the first place.
+  const shiftCloseCountReady = shiftCloseCountMode === 'denomination'
+    ? (shiftCloseBreakdown.length > 0 || expectedShiftCash <= 0.01)
+    : String(shiftClosingAmount ?? '').trim() !== '';
 
   const getReservedBaseQuantity = (productId, excludedCartItemId = null, excludedTransactionId = null) => (
     reservedQuantityDetail(transactions, productId, { excludedTransactionId, excludedCartItemId }).reservedBaseQty
@@ -1143,8 +1156,18 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const confirmResumeCash = async () => {
-    const declared = Number(resumeCashAmount);
-    if (!Number.isFinite(declared) || declared < 0) {
+    // A genuinely-zero drawer is a legitimate, real answer here (unlike
+    // confirmCashFlow's amount, which must be > 0), so this can't reject
+    // on `declared <= 0`. But Number('') is 0 in JS -- an untouched or
+    // cleared field silently passed this check as if the cashier had
+    // deliberately declared an empty drawer, logging a giant phantom
+    // "Cash Out" that reconciled away the entire running expected-cash
+    // total the moment "Resume Session" was clicked with nothing typed.
+    // Trimming and requiring a non-empty string first closes that gap
+    // without changing what a real "0" entry does.
+    const trimmedInput = String(resumeCashAmount ?? '').trim();
+    const declared = Number(trimmedInput);
+    if (!trimmedInput || !Number.isFinite(declared) || declared < 0) {
       setResumeCashError('Enter a valid cash amount.');
       return;
     }
@@ -1215,6 +1238,12 @@ const Cashier = ({ onLogout, user }) => {
     );
     if (!Number.isFinite(closingAmount) || closingAmount < 0) {
       setShiftError('Enter a valid actual cash ending amount.');
+      return null;
+    }
+    if (!shouldSkipCashCount && !shiftCloseCountReady) {
+      setShiftError(shiftCloseCountMode === 'denomination'
+        ? 'Enter at least one denomination count before closing -- the drawer cannot close as PHP 0.00 uncounted while cash is expected.'
+        : 'Enter the counted cash before closing.');
       return null;
     }
 
@@ -4496,7 +4525,7 @@ const Cashier = ({ onLogout, user }) => {
           <div><strong>Closing readiness</strong><small>Pending uploads do not prevent an offline close; they remain saved on this terminal.</small></div>
           <div className={styles['end-of-day-checks']}>
             <span className={shiftSession ? styles.ready : styles.warning}><b>{shiftSession ? '✓' : '!'}</b> Drawer session open</span>
-            <span className={(shiftCloseCountMode === 'denomination' || shiftClosingAmount !== '') ? styles.ready : styles.warning}><b>{(shiftCloseCountMode === 'denomination' || shiftClosingAmount !== '') ? '✓' : '!'}</b> Cash count {shiftClosingAmount !== '' || shiftCloseCountMode === 'denomination' ? 'ready' : 'required'}</span>
+            <span className={shiftCloseCountReady ? styles.ready : styles.warning}><b>{shiftCloseCountReady ? '✓' : '!'}</b> Cash count {shiftCloseCountReady ? 'ready' : 'required'}</span>
             <span className={shiftCloseStep === 'printed' ? styles.ready : styles.warning}><b>{shiftCloseStep === 'printed' ? '✓' : '○'}</b> Z-read {shiftCloseStep === 'printed' ? 'printed' : 'not printed'}</span>
             <span className={endOfDaySync.failed === 0 ? styles.ready : styles.warning}><b>{endOfDaySync.failed === 0 ? '✓' : '!'}</b> {endOfDaySync.loading ? 'Checking sync queue…' : `${endOfDaySync.pending} pending · ${endOfDaySync.failed} failed`}</span>
           </div>
