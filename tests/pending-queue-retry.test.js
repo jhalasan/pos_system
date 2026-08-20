@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { adminDb, initializeAdminDb } from '../src/admin-page/offline/db.js'
+import { cashierDb, initializeCashierDb } from '../src/cashier-pos/offline/db.js'
 import { forceRetryNow } from '../src/utils/pendingQueueRetry.js'
 
 // T1: a manual "Sync" click (and, separately, every cashier login) used to
@@ -69,4 +70,34 @@ test('forceRetryNow leaves a row already due (nextAttemptAt in the past) untouch
   assert.equal(row.nextAttemptAt, pastValue, 'already-due rows need no change -- they are already eligible on the next tick')
 
   await adminDb.delete()
+})
+
+// Live bug reported from POS-72F1F2: clicking "Sync" threw a raw Dexie
+// "Invalid key provided" error. forceRetryNow hardcoded `row.id` as the key
+// for table.update(), but cashierDb.pendingSales' primary key field is
+// `clientSaleId` (see cashier-pos/offline/db.js's `&clientSaleId, ...`
+// schema) -- every pendingSales row has no `id` field at all, so any call
+// that needed to patch one (a failed row, or one with a far-future
+// nextAttemptAt) passed `undefined` as the key and threw. This is called
+// from both the manual Sync button and every cashier login.
+test('forceRetryNow works against a table whose primary key is not named "id"', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+
+  const clientSaleId = 'sale-clientid-1'
+  await cashierDb.pendingSales.put({
+    clientSaleId,
+    status: 'failed',
+    attempts: 3,
+    nextAttemptAt: Date.now() + 10 * 60_000,
+    createdAt: Date.now(),
+  })
+
+  await forceRetryNow(cashierDb.pendingSales)
+
+  const row = await cashierDb.pendingSales.get(clientSaleId)
+  assert.equal(row.status, 'pending', 'a failed sale must be made eligible again, not throw')
+  assert.equal(row.attempts, 3, 'attempts must survive unchanged')
+
+  await cashierDb.delete()
 })

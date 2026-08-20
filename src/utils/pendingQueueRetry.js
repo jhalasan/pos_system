@@ -15,11 +15,19 @@
 export async function forceRetryNow(table, { statuses = ['pending', 'failed'] } = {}) {
   const now = Date.now()
   const rows = await table.where('status').anyOf(statuses).toArray()
+  // Not every table's primary key is named `id` -- cashierDb.pendingSales
+  // uses `clientSaleId` (see offline/db.js's `&clientSaleId, ...` schema).
+  // Hardcoding row.id here meant every call against pendingSales passed
+  // Dexie an undefined key, throwing "Invalid key provided" the moment a
+  // row actually needed patching (a failed status, or a nextAttemptAt more
+  // than 60s out) -- reading the table's own configured key field instead
+  // works correctly regardless of which table this is called against.
+  const primaryKeyField = table.schema.primKey.keyPath
 
   for (const row of rows) {
     const patch = {}
     if (row.status === 'failed') patch.status = 'pending'
     if ((Number(row.nextAttemptAt) || 0) > now + 60_000) patch.nextAttemptAt = now
-    if (Object.keys(patch).length > 0) await table.update(row.id, patch)
+    if (Object.keys(patch).length > 0) await table.update(row[primaryKeyField], patch)
   }
 }
