@@ -4,7 +4,7 @@ import { barcodesMatch } from '../utils/barcodeUtils.js'
 import { normalizeProduct, safeBulkPutProducts } from './productRepository.js'
 import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
-import { discountedUnitPrice, quantizeQty } from '../../utils/quantity.js'
+import { discountedUnitPrice, quantizeQty, roundMoney } from '../../utils/quantity.js'
 import { mintTransactionNumber } from './transactionNumber.js'
 
 async function hasTable(name) {
@@ -367,7 +367,11 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
     throw new Error('Select at least one refundable item quantity.')
   }
 
-  const amount = returnedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0)
+  // A fractional-quantity product (e.g. 0.3 kg) times a centavo-rounded
+  // unit price can land on a sub-centavo value (and raw binary-float
+  // error), which would otherwise flow unrounded into refunded_amount and
+  // every revenue/cash-reconciliation figure derived from it.
+  const amount = roundMoney(returnedItems.reduce((sum, item) => sum + (item.quantity * item.price), 0))
   const entry = {
     id: globalThis.crypto?.randomUUID?.() || `${type}_${Date.now()}`,
     type,

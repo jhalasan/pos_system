@@ -60,6 +60,31 @@ test('refund of a discounted sale is prorated by the sale discount, not the raw 
   await cashierDb.delete()
 })
 
+// A refund/exchange amount for a fractional-quantity product (e.g. weighed
+// goods) times a centavo-rounded unit price can land on a sub-centavo value
+// plus raw binary-float error -- that unrounded figure used to flow straight
+// into refunded_amount and every downstream revenue/cash-reconciliation
+// figure derived from it.
+test('refund amount for a fractional quantity is rounded to centavos', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+  await cashierDb.products.put({ id: 'product-1', barcode: '1001', name: 'Weighed Product', qty: 5, quantity: 5, unit: 'kg', allowFractional: true })
+  await cashierDb.completedSales.put({
+    clientSaleId: 'FRACTIONAL',
+    cashierId: 'cashier-1',
+    transactionNo: 'FRACTIONAL',
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    items: [{ productId: 'product-1', name: 'Weighed Product', barcode: '1001', quantity: 1, price: 33.33 }],
+    adjustments: [],
+  })
+
+  const adjusted = await adjustLocalSale('FRACTIONAL', { type: 'refund', items: [{ productId: 'product-1', quantity: 0.3 }], reason: 'Overweighed' })
+  const lastAdjustment = adjusted.adjustments.at(-1)
+  assert.equal(lastAdjustment.amount, 10, '0.3 * 33.33 = 9.999, must round to the nearest centavo (10.00)')
+  await cashierDb.delete()
+})
+
 // M2: a refund used to drop `conversion` when rebuilding the returned items,
 // so a case-of-24 sale restocked 1 base unit instead of 24 (toBaseStockQuantity
 // falls back to conversion=1 when it's undefined).

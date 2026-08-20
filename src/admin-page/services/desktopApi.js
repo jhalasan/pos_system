@@ -405,7 +405,7 @@ async function salesByCashier() {
   for (const sale of records) {
     const cashierId = firstRelation(sale.cashier_id)
     if (!cashierId) continue
-    totals.set(cashierId, (totals.get(cashierId) || 0) + (Number(sale.total_amount) || 0))
+    totals.set(cashierId, (totals.get(cashierId) || 0) + netSaleAmount(sale))
   }
 
   return totals
