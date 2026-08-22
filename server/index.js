@@ -631,10 +631,15 @@ async function findProductByScanBarcode(barcode) {
   if (!normalizedBarcode) return null
 
   const records = await (await pbCollection('products')).getFullList({
-    fields: 'id,barcode,name,quantity,selling_units,sellingUnits',
+    fields: 'id,barcode,name,quantity,selling_units,sellingUnits,lifecycle_status',
   }).catch(() => [])
 
-  return records.find((record) => {
+  // An archived/deleted product must never be scannable at checkout -- it
+  // stays in PocketBase (for historical sales/reports) but is no longer
+  // part of the sellable catalog. The desktop cashier already enforces this
+  // via its own local catalog filtering; this web-mode route had no
+  // equivalent check at all.
+  return records.filter(isCatalogActive).find((record) => {
     if (String(record.barcode || '').trim() === normalizedBarcode) return true
     return parseSellingUnits(record.selling_units ?? record.sellingUnits)
       .some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
@@ -986,7 +991,7 @@ app.post('/api/categories', asyncRoute(async (req, res) => {
 
 app.get('/api/cashier/products', asyncRoute(async (_req, res) => {
   const records = await listRecords('products', '?sort=name&expand=category&perPage=500')
-  res.json(records.map(toProduct))
+  res.json(records.filter(isCatalogActive).map(toProduct))
 }))
 
 app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) => {
@@ -1255,6 +1260,12 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   const productRecords = []
   for (const item of items) {
     const product = await products.getOne(item.productId)
+    // Defense in depth: the barcode lookup that populates the cart already
+    // excludes archived/deleted products, but a sale request built from a
+    // stale cached productId must not slip past that check entirely.
+    if (!isCatalogActive(product)) {
+      return res.status(409).json({ error: `"${product.name}" is archived and cannot be sold.` })
+    }
     const quantity = Number(item.quantity) || 0
     if (quantity <= 0) return res.status(400).json({ error: `Invalid quantity for "${product.name}".` })
 
