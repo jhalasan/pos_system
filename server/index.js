@@ -1251,7 +1251,11 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
 
   if (!cashierId) return res.status(400).json({ error: 'Cashier is required.' })
   if (items.length === 0) return res.status(400).json({ error: 'Sale must have at least one item.' })
-  if (totalAmount <= 0) return res.status(400).json({ error: 'Sale total must be greater than zero.' })
+  // A manager-approved 100% discount is a legitimate, fully-comped sale
+  // (e.g. senior/PWD + promo stacking, an employee freebie, a documented
+  // damaged-goods write-off) -- only a negative total indicates a real
+  // pricing error.
+  if (totalAmount < 0) return res.status(400).json({ error: 'Sale total cannot be negative.' })
 
   const products = await pbCollection('products')
   const saleItems = await pbCollection('sale_items')
@@ -2128,9 +2132,9 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     recentTransactions: [...completedSales].sort((a, b) => saleDate(b) - saleDate(a)).slice(0, 5).map((sale) => ({ id: sale.id, transactionNo: sale.transaction_no || sale.id, amount: netSaleAmount(sale), paymentMethod: sale.payment_method || 'cash', createdAt: saleDate(sale).toISOString() })),
     topCategories: [...topCategoryMap].map(([name, units]) => ({ name, units })).sort((a, b) => b.units - a.units).slice(0, 5),
     dataQuality: {
-      generatedBarcodes: products.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
-      uncategorized: products.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
-      nonPositivePrices: products.filter((p) => Number(p.price) <= 0).length,
+      generatedBarcodes: catalogProducts.filter((p) => !p.barcode || String(p.barcode).startsWith('LEGACY-')).length,
+      uncategorized: catalogProducts.filter((p) => !p.category || /uncategorized/i.test(p.category)).length,
+      nonPositivePrices: catalogProducts.filter((p) => Number(p.price) <= 0).length,
     },
   })
 }))

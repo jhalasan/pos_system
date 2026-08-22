@@ -40,11 +40,24 @@ function newClientSaleId() {
 
 function validateSale(sale) {
   if (!sale.cashierId) throw new Error('Cashier is required.')
+  // Mirrors Cashier.jsx's own can('process_sales') gate (empty/missing
+  // permissions means unrestricted, matching this app's default-full-access
+  // convention). This is a second, independent check on the actual
+  // sale-writing function itself, not just the checkout button -- the UI
+  // gate alone left this function callable directly with no restriction.
+  if (Array.isArray(sale.cashierPermissions) && sale.cashierPermissions.length > 0
+    && !sale.cashierPermissions.includes('process_sales')) {
+    throw new Error('This cashier account is not permitted to process sales.')
+  }
   if (!Array.isArray(sale.items) || sale.items.length === 0) {
     throw new Error('Sale must contain at least one item.')
   }
-  if (!(Number(sale.totalAmount) > 0)) {
-    throw new Error('Sale total must be greater than zero.')
+  // A manager-approved 100% discount is a legitimate, fully-comped sale
+  // (e.g. senior/PWD + promo stacking, an employee freebie, a documented
+  // damaged-goods write-off) -- only a negative total indicates a real
+  // pricing error.
+  if (!(Number(sale.totalAmount) >= 0)) {
+    throw new Error('Sale total cannot be negative.')
   }
 }
 

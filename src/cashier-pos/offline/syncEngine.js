@@ -983,10 +983,31 @@ export class CashierSyncEngine extends EventTarget {
             if (error?.status !== 404 && error?.status !== 400) throw error
           })
 
-          const nextRefundedAmount = numberFieldValue(numberOrZero(sale.refunded_amount) + numberOrZero(payload.amount))
+          // Recompute from the sale_adjustments ledger (the durable,
+          // idempotent audit trail) instead of incrementing this stale read
+          // of sale.refunded_amount: two terminals refunding the same sale
+          // around the same time would otherwise each read the same
+          // pre-refund total and whichever write lands last would silently
+          // clobber the other's contribution, with nothing to self-heal it
+          // (unlike stock, which reconcileProductStock already recomputes
+          // from stock_movements). Resumming the full ledger here means any
+          // later refund/exchange on this sale corrects a prior drift too.
+          const adjustments = await this.pb.collection('sale_adjustments').getFullList({
+            filter: this.pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
+            requestKey: null,
+          }).catch((error) => {
+            if (error?.status === 404 || error?.status === 400) return []
+            throw error
+          })
+          const nextRefundedAmount = numberFieldValue(
+            adjustments.reduce((sum, adjustment) => sum + numberOrZero(adjustment.amount), 0),
+          )
           const nextRefundedUnits = numberFieldValue(
-            numberOrZero(sale.refunded_units)
-            + (payload.items || []).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
+            adjustments.reduce((sum, adjustment) => (
+              sum + (Array.isArray(adjustment.items)
+                ? adjustment.items.reduce((lineSum, item) => lineSum + (Number(item.quantity) || 0), 0)
+                : 0)
+            ), 0),
           )
           await this.pb.collection('sales').update(sale.id, {
             refunded_amount: nextRefundedAmount,

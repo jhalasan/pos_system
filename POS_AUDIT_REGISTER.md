@@ -1297,3 +1297,146 @@ no money/stock risk):**
 
 `npm run test:offline` is 275/275 as of this pass's commits (`ccd828a`, `7edf3aa`); `npm run
 test:vercel` unaffected. `npm run build` and `npm run build:cashier` both clean.
+
+---
+
+## Live-support fixes, 2026-08-21/22 (client-reported symptoms, not yet logged)
+
+Four fixes landed in direct response to live client reports between the previous section and the
+next audit pass below. Documented here for the record since they never got a register entry at
+the time.
+
+**M18. HIGH — ✅ FIXED. Stock Count silently froze a product's quantity forever once it accumulated
+more than 50 lifetime stock movements.** `src/admin-page/offline/stockMovementReconciler.js`'s
+`reconcileProductStock` fetched page 1 of `stock_movements` sorted **ascending** — once a product
+passes the 50-record window size, page 1 of an ascending sort is the OLDEST page, not a recent
+one, so every reconciliation silently anchored on a stale, frozen-in-time total and overwrote every
+subsequent legitimate operation's correct quantity back to it. Confirmed live on production: every
+one of MARLBORO RED ORIGINAL's 74 lifetime movements showed the same stale `previous_quantity`.
+15 production products were found affected; the client chose to let the client re-run Stock Count
+on each once fixed, rather than a batch correction script. Fix: fetch descending
+(`-created,-created_at`) and reverse before feeding into `stockQuantityFromMovements`. Commit
+`c615f10`.
+
+**M19. HIGH — ✅ FIXED. A physical Stock Count was folded as a delta instead of an absolute value,
+so duplicate/retried count attempts compounded instead of converging.** Symptom: entering "1600"
+during a Stock Count on Marlboro Red Original showed 0 pieces, then 1589 on a retry with the same
+input — this was a second, independent bug exposed once M18's fix let a backlog of stale queued
+ops finally drain. `src/admin-page/offline/syncEngine.js`'s `adjustInventoryCount` handler computed
+`previousQuantity + delta` at apply time instead of using the op's own `countedQty` (an absolute
+target, not a relative adjustment) — several queued/duplicate count attempts, each computed against
+a possibly-stale baseline, compounded (1600 → 908 → 216) instead of all landing on 1600. Fix: apply
+`countedQty` directly, both in the main op handler and in the pending-ops replay fold (new
+`applyPendingStockOps` helper). New `tests/stock-count-absolute-application.test.js` (7 tests).
+Commit `72983dc`.
+
+**M20. HIGH — ✅ FIXED. Archived/deleted products could still be scanned, listed, and sold through
+the web-mode (Express/Vercel) cashier routes.** `server/index.js`'s `findProductByScanBarcode`
+fetched with no `lifecycle_status` field and no filtering at all; `GET /api/cashier/products`
+returned every product unfiltered; `POST /api/cashier/sales` had no lifecycle check anywhere.
+Fixed all three using the existing `isCatalogActive` helper (already used elsewhere in this same
+file for dashboard stats per M10). This is the web-mode path only, used when running the server
+directly rather than via Tauri; see M21 for the same class of gap in the desktop app. Commit
+`ad9a4a6`.
+
+**M21. HIGH — ✅ FIXED. Archived/deleted products could bypass the desktop cashier's own protection
+by searching by name instead of scanning a barcode.** The barcode-scan path
+(`desktopApi.js`'s `productByBarcode`) already correctly rejected an archived/deleted product, but
+`Cashier.jsx`'s `filteredProducts` (the product-search-by-name dropdown) had zero lifecycle
+filtering — the only protection against archived/deleted products entering a new transaction was
+the barcode-scan path, and it was entirely bypassable by typing a name instead of scanning. This is
+the real bug behind the client's continued reports even after M20 shipped, since both of their
+terminals (POS-25A2EE, POS-72F1F2) run the Tauri desktop app, not the web-mode path. Fixed by
+importing `isCatalogActive` into `Cashier.jsx` and filtering `filteredProducts`, plus a
+defense-in-depth check in `handleAddToCart` (the single choke point every add-to-cart flow —
+search, scan, Quick Add — funnels through, confirmed by exhaustively tracing every call site of
+`openInitialQuantityPrompt`/`commitProductToCart`). Also fixed two related gaps in the cashier's
+own `desktopApi.js` admin-cache-fallback lookups (`adminCachedProducts`, `adminCachedProductByBarcode`)
+that checked only the legacy `deleted` boolean flag, not the modern `lifecycleStatus` field. Note:
+this deliberately does NOT affect looking up a product in a past/historical sale (void, refund,
+reprint) — that resolution path is intentionally not lifecycle-filtered per the existing M9/M10
+design; this fix is only about preventing a NEW sale/scan/search from surfacing an archived/deleted
+product. Commit `dfa0e04`.
+
+`npm run test:offline` 283/283, `npm run test:vercel` 7/7, all three builds clean as of these four
+commits.
+
+---
+
+## Re-audit pass, 2026-08-22 (fresh full-system scan, three parallel reviews)
+
+Three parallel background audits (cashier checkout flow; admin/reporting parity between the Tauri
+admin and web admin; offline-sync/Dexie layer), each explicitly scoped to skip everything already
+covered above. Every finding below was independently re-verified against the actual pre-fix code
+(via `git diff`) before being treated as real, not just taken on the audit agent's word.
+
+**M22. MEDIUM — ✅ FIXED. Web admin dashboard's "data quality" warnings counted archived/deleted
+products; the Tauri admin dashboard didn't.** `server/index.js`'s `GET /api/dashboard` route
+correctly filters to `catalogProducts` (via `isCatalogActive`) for `currentStockUnits`,
+`criticalStockProducts`, and `inventoryHealth` — matching M10's fix — but the `dataQuality` block
+(generated-barcode count, uncategorized count, non-positive-price count) still filtered from the
+raw, unfiltered `products` list. The Tauri admin's equivalent (`desktopApi.js`'s
+`buildDashboardFromRecords`) already filtered correctly. Both surfaces feed the same shared
+`Dashboard.jsx` "N data-quality warnings" banner, so the web admin's count was permanently inflated
+by every archived/deleted product's stale data and disagreed with the desktop admin for the same
+store. Cosmetic/diagnostic only — no money or stock impact. Fix: swap `products` for
+`catalogProducts` in the three `dataQuality` lines.
+
+**M23. MEDIUM — ✅ FIXED. Two terminals refunding the same sale around the same time could silently
+lose one refund's contribution to the sale's reported totals.** `src/cashier-pos/offline/syncEngine.js`'s
+`adjustCompletedSale`/`voidCompletedSale` handler computed
+`nextRefundedAmount = sale.refunded_amount + payload.amount` from a single, non-atomic read of the
+`sales` record — a classic read-modify-write race. If Terminal 1 and Terminal 2 each process a
+different partial refund/exchange on the *same* sale within the same sync window, both read the
+same pre-refund total and whichever write lands last silently overwrites the other's increment. The
+`sale_adjustments` audit-trail record itself is unaffected (correctly deduped by `adjustment_id`),
+but `sales.refunded_amount`/`refunded_units` — which `netSaleAmount`/`netSaleUnits` read directly,
+feeding every dashboard and report — permanently overstates net revenue by the lost amount, with no
+self-healing (unlike stock, which `reconcileProductStock` already recomputes from the
+`stock_movements` ledger). Needs two genuinely concurrent refund actions on the same sale from
+different terminals to trigger — narrow but real, and undetectable once it happens.
+Fix: recompute `refunded_amount`/`refunded_units` as the sum over the full `sale_adjustments`
+ledger for that sale (fetched fresh) rather than incrementing the stale read — mirrors
+`reconcileProductStock`'s recompute-from-ledger approach. This also means any *later* refund on the
+same sale self-corrects a prior drift, since it resums the whole ledger. New test in
+`tests/sale-adjustment-cloud-sync.test.js` ("two concurrent refunds on the same sale both land
+instead of one clobbering the other") reproduces the exact race pre-fix and passes post-fix.
+
+**S10. MEDIUM — ✅ FIXED. The `process_sales` staff capability was enforced only in the checkout
+UI, not in the function that actually records a sale.** `Cashier.jsx`'s `openPaymentFlow` correctly
+blocks checkout via `can('process_sales')`, but `saleRepository.js`'s `finalizeSaleLocally` (the
+function `cashierApi.completeSale` actually calls) had no equivalent check — unlike void/refund/
+exchange, which are independently gated by mandatory manager approval regardless of the UI
+capability check. A cashier account with `process_sales` explicitly excluded from its permissions
+(e.g. a restricted trainee account) could still complete a sale by invoking the underlying function
+directly. Note: on this offline-first desktop app, no client-side check can fully close a
+determined devtools-console bypass (the terminal itself has full script execution) — this fix
+closes the accidental/incidental gap (any future code path that calls `finalizeSaleLocally`
+directly without going through the UI's gate) and matches this codebase's established
+defense-in-depth pattern of checking critical rules at more than one layer, the same way
+archived-product exclusion is checked at multiple layers (M20/M21). A true server-side-enforced
+permission system would require PocketBase API-rule changes, a separate, larger design question.
+Fix: `Cashier.jsx` now passes the cashier's `permissions` array through to `completeSale`;
+`validateSale` rejects the sale if `process_sales` is explicitly excluded, using the same
+default-full-access convention as `can()` (empty/missing permissions = unrestricted).
+
+**M24. MEDIUM — ✅ FIXED. A fully-discounted (₱0.00) sale could not actually be completed.** The
+discount modal explicitly allows a manager-approved 100% discount (or a peso discount equal to the
+full subtotal) — a real, reachable flow (senior/PWD + promo stacking, an employee freebie, a
+documented damaged-goods write-off) — but nothing checked for a zero total until the very last
+step: `validateSale` rejected any sale whose total wasn't strictly greater than zero, so the
+cashier could go through the entire payment flow only to have it fail at the end with a raw,
+unexplained error, with no way to actually record the transaction. Fix: `validateSale` (desktop)
+and the twin check in `server/index.js`'s `POST /api/cashier/sales` (web-mode) now only reject a
+**negative** total, not a zero one.
+
+**Also reviewed this pass, no new issues found:** `salesByCashier`/`getSalesByCashier` netting
+parity; GCash payment mapping on both surfaces; FSN metrics' deliberate non-filtering of archived
+products (consistent with M10's documented scope); manager/void-barcode approval enforcement across
+routes; every other `getList(1, N, ...)` pagination call in both offline directories (none share
+M18's ascending-sort bug); every Dexie table's declared primary key against every call site in both
+apps (none share T4's key-mismatch bug); non-atomic multi-step Dexie writes (no new gaps beyond the
+two already tracked above); sync-tick concurrency (both engines correctly single-flight).
+
+`npm run test:offline` 289/289, `npm run test:vercel` 7/7, all three builds (`build`,
+`build:cashier`, `build:vercel`) clean as of this pass.
