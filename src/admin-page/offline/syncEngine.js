@@ -201,12 +201,40 @@ async function createCloudProductFromLocal(pb, productId, payload = {}, requestK
   })
 }
 
+// Relative (add/subtract) ops only. adjustInventoryCount is deliberately NOT
+// handled here -- it's an absolute physical count, not a delta, and is
+// special-cased in applyPendingStockOps below instead.
 function stockDeltaForOp(op) {
   const qty = Math.max(0, Number(op?.payload?.qty) || 0)
   if (op?.type === 'scanInventory') return qty
   if (op?.type === 'stockOutInventory') return -qty
-  if (op?.type === 'adjustInventoryCount') return Number(op?.payload?.delta) || 0
   return 0
+}
+
+const STOCK_AFFECTING_OP_TYPES = ['scanInventory', 'stockOutInventory', 'adjustInventoryCount']
+
+// scanInventory/stockOutInventory are relative (add/subtract a delta).
+// adjustInventoryCount is a physical stock COUNT and is therefore ABSOLUTE
+// ("set the quantity to X"), never a delta layered on top of whatever the
+// cloud happens to hold when it's finally applied. Folding it as a delta
+// meant every retry or duplicate-queued Stock Count attempt re-applied its
+// own (possibly stale) delta on top of the previous op's result instead of
+// converging on the same intended value -- three queued "count = 1600"
+// attempts landed on 1600 -> 908 -> 216 instead of 1600 three times over.
+// Ops are replayed in creation order so a later absolute count correctly
+// supersedes an earlier one, and any scan/stock-out queued after it stacks
+// on top of the count's value, not the original cloud baseline.
+export function applyPendingStockOps(baseQty, ops) {
+  return ops
+    .slice()
+    .sort((a, b) => (Number(a?.createdAt) || 0) - (Number(b?.createdAt) || 0))
+    .reduce((qty, op) => {
+      if (op?.type === 'adjustInventoryCount') {
+        const counted = Number(op?.payload?.countedQty)
+        return Number.isFinite(counted) ? Math.max(0, counted) : qty
+      }
+      return Math.max(0, qty + stockDeltaForOp(op))
+    }, baseQty)
 }
 
 async function createStockMovement(pb, product, op, previousQuantity, nextQuantity) {
@@ -238,9 +266,8 @@ async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, opt
     const localProduct = await adminDb.products.get(localProductId)
     const laterOps = await adminDb.pendingOps.where('productId').equals(localProductId).toArray()
     const remainingOps = laterOps.filter((laterOp) => laterOp.id !== options.currentOpId)
-    const remainingStockDelta = remainingOps.reduce((sum, laterOp) => sum + stockDeltaForOp(laterOp), 0)
-    const hasLaterStockOps = remainingOps.some((laterOp) => stockDeltaForOp(laterOp) !== 0)
-    const replayedQty = Math.max(0, (Number(normalized.qty) || 0) + remainingStockDelta)
+    const hasLaterStockOps = remainingOps.some((laterOp) => STOCK_AFFECTING_OP_TYPES.includes(laterOp?.type))
+    const replayedQty = applyPendingStockOps(Number(normalized.qty) || 0, remainingOps)
     const nextProduct = options.preservePendingStock && hasLaterStockOps && localProduct
       ? {
           ...normalized,
@@ -779,7 +806,11 @@ export class AdminSyncEngine extends EventTarget {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
       const previousQuantity = quantizeQty(product.quantity)
-      const nextQuantity = Math.max(0, quantizeQty(previousQuantity + (Number(op.payload.delta) || 0)))
+      // A physical count is an ABSOLUTE target, not a delta on top of
+      // whatever the cloud happens to hold when this op finally applies --
+      // see applyPendingStockOps' comment for why delta-based application
+      // here made retries/duplicates compound instead of converge.
+      const nextQuantity = Math.max(0, quantizeQty(Number(op.payload.countedQty)))
       const updated = await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { expand: 'category', requestKey: op.id })
       await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
       await replaceLocalProductWithCloud(op.productId, updated, this.pb, { preservePendingStock: true, currentOpId: op.id })
