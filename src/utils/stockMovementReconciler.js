@@ -118,11 +118,19 @@ export function stockQuantityFromMovements(movements = []) {
 }
 
 export async function reconcileProductStock(pb, productId) {
-  const { items: movements } = await pb.collection('stock_movements').getList(1, WINDOW_SIZE, {
+  // Page 1 must be sorted DESCENDING (newest first). Page 1 of an ASCENDING
+  // sort is the OLDEST page once a product has accumulated more than
+  // WINDOW_SIZE lifetime movements -- that silently anchors every
+  // reconciliation on a stale, frozen-in-time total and overwrites every
+  // subsequent correct products.update() back to it. Fetch newest-first,
+  // then reverse to the ascending order stockQuantityFromMovements expects
+  // (movements[0] as the window's baseline anchor).
+  const { items: recentDescending } = await pb.collection('stock_movements').getList(1, WINDOW_SIZE, {
     filter: pb.filter('product_id = {:productId}', { productId }),
-    sort: 'created,created_at',
+    sort: '-created,-created_at',
     requestKey: null,
   })
+  const movements = recentDescending.slice().reverse()
   const quantity = stockQuantityFromMovements(movements)
   if (quantity === null) return null
   const product = await pb.collection('products').getOne(productId, { requestKey: null })
