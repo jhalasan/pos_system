@@ -142,6 +142,7 @@ export default function BarcodeTools() {
   const [selectedBarcodeIds, setSelectedBarcodeIds] = useState([])
   const [printingBarcode, setPrintingBarcode] = useState('')
   const [toast, setToast] = useState('')
+  const [barcodeSearchQuery, setBarcodeSearchQuery] = useState('')
 
   const printableBarcodes = useMemo(() => [
     ...generatedBarcodes,
@@ -159,6 +160,18 @@ export default function BarcodeTools() {
     const selected = new Set(selectedBarcodeIds)
     return printableBarcodes.filter((barcode) => selected.has(barcode.id))
   }, [printableBarcodes, selectedBarcodeIds])
+
+  const filteredGeneratedBarcodes = useMemo(() => {
+    const query = barcodeSearchQuery.trim().toLowerCase()
+    if (!query) return generatedBarcodes
+    return generatedBarcodes.filter((barcode) => (
+      String(barcode.title || '').toLowerCase().includes(query)
+      || String(barcode.value || '').toLowerCase().includes(query)
+    ))
+  }, [generatedBarcodes, barcodeSearchQuery])
+
+  const allGeneratedBarcodesSelected = generatedBarcodes.length > 0
+    && generatedBarcodes.every((barcode) => selectedBarcodeIds.includes(barcode.id))
 
   useEffect(() => {
     listBarcodePrinters().then((availablePrinters) => {
@@ -244,7 +257,15 @@ export default function BarcodeTools() {
   }
 
   function selectAllBarcodes() {
-    setSelectedBarcodeIds(printableBarcodes.map((barcode) => barcode.id))
+    const generatedIds = generatedBarcodes.map((barcode) => barcode.id)
+    setSelectedBarcodeIds((current) => {
+      if (allGeneratedBarcodesSelected) {
+        return current.filter((id) => !generatedIds.includes(id))
+      }
+      const merged = new Set(current)
+      generatedIds.forEach((id) => merged.add(id))
+      return Array.from(merged)
+    })
   }
 
   async function handlePrintBarcode(id, title, value, meta = '') {
@@ -365,8 +386,8 @@ export default function BarcodeTools() {
             aria-label="Barcode labels to print"
           />
         </label>
-        <button className="btn btn-outline" onClick={selectAllBarcodes} disabled={printableBarcodes.length === 0}>
-          Select All
+        <button className="btn btn-outline" onClick={selectAllBarcodes} disabled={generatedBarcodes.length === 0}>
+          {allGeneratedBarcodesSelected ? 'Deselect All' : 'Select All'}
         </button>
         <button className="btn btn-primary" onClick={handlePrintSelected} disabled={selectedBarcodes.length === 0 || printingBarcode === 'selected'}>
           {printingBarcode === 'selected' ? 'Saving...' : `Print Selected (${selectedBarcodes.length})`}
@@ -395,6 +416,18 @@ export default function BarcodeTools() {
             </div>
 
             <div className="section-sub">Generated Product Barcodes</div>
+            {generatedBarcodes.length > 0 && (
+              <div className="field barcode-search-field">
+                <input
+                  className="input"
+                  type="search"
+                  value={barcodeSearchQuery}
+                  onChange={(event) => setBarcodeSearchQuery(event.target.value)}
+                  placeholder="Search by product name or barcode..."
+                  aria-label="Search generated barcodes"
+                />
+              </div>
+            )}
             {generatedLoading ? (
               <BrandedLoader compact message="Loading generated barcodes…" />
             ) : generatedError ? (
@@ -411,7 +444,13 @@ export default function BarcodeTools() {
                   <h4>No generated product barcodes yet</h4>
                   <p>Use the generate button to create a printable code. It will not add a product.</p>
                 </div>
-              ) : generatedBarcodes.map((barcode) => (
+              ) : filteredGeneratedBarcodes.length === 0 ? (
+                <div className="empty" style={{ padding: '34px 20px' }}>
+                  <div className="em-icon"><IconTag size={24} /></div>
+                  <h4>No matching barcodes</h4>
+                  <p>No generated barcode matches "{barcodeSearchQuery}".</p>
+                </div>
+              ) : filteredGeneratedBarcodes.map((barcode) => (
                 <div className="barcode-row" key={barcode.id}>
                   <label className="barcode-select-check" title="Select barcode">
                     <input
