@@ -4,6 +4,7 @@ import { cashierDb } from '../offline/db'
 import { refreshLocalProductCatalog } from '../offline/cloudBootstrap'
 import { copyAdminProductCatalogToCashier } from '../offline/catalogCache'
 import { getAllProducts, getProductByBarcode, normalizeProduct, safeBulkPutProducts, isCatalogIncomplete } from '../offline/productRepository'
+import { isCatalogActive } from '../../utils/productLifecycle'
 import { barcodesMatch } from '../utils/barcodeUtils'
 import {
   adjustLocalSale,
@@ -181,8 +182,12 @@ function toCashierProduct(product) {
 async function adminCachedProducts() {
   try {
     await initializeAdminDb()
+    // The admin app's own cache deliberately keeps archived/deleted products
+    // visible for its own management screens, so `!product.deleted` alone
+    // (the legacy flag) is not enough here -- lifecycleStatus is the modern,
+    // authoritative field (archived products have deleted: false).
     const products = await adminDb.products
-      .filter((product) => !product.deleted)
+      .filter((product) => !product.deleted && isCatalogActive(product))
       .toArray()
 
     return products.map((product) => ({
@@ -638,11 +643,12 @@ async function adminCachedProductByBarcode(barcode) {
   try {
     await initializeAdminDb()
     const indexedMatch = await adminDb.products.where('barcode').equals(normalizedBarcode).first()
-    if (indexedMatch && !indexedMatch.deleted) return normalizeProduct(indexedMatch)
+    if (indexedMatch && !indexedMatch.deleted && isCatalogActive(indexedMatch)) return normalizeProduct(indexedMatch)
 
     const record = await adminDb.products
       .filter((candidate) => (
         !candidate.deleted
+        && isCatalogActive(candidate)
         && (
           barcodesMatch(candidate.barcode, normalizedBarcode)
           || (Array.isArray(candidate.sellingUnits) && candidate.sellingUnits.some((unit) => (

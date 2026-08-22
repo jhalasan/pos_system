@@ -22,6 +22,7 @@ import { restoreCashierTransactions } from '../utils/transactionRestore';
 import { reservedQuantityDetail } from '../utils/cartReservation';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
+import { isCatalogActive } from '../../utils/productLifecycle';
 import styles from '../styles/Cashier.module.css';
 
 function stockState(item) {
@@ -657,13 +658,19 @@ const Cashier = ({ onLogout, user }) => {
         ));
       return matchesProduct;
     };
+    // Searching by name (as opposed to scanning a barcode) used to have no
+    // lifecycle check at all -- an archived/deleted product still sitting in
+    // the local catalog (e.g. before the next refresh) or in a stale
+    // admin-cache fallback would show up here and be fully addable to cart,
+    // even though the barcode-scan path already correctly rejects it.
+    const activeProducts = products.filter(isCatalogActive);
     const matches = [];
-    for (const product of products) {
+    for (const product of activeProducts) {
       const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
       if (availableStock > 0 && matchesQuery(product)) matches.push(product);
       if (matches.length === 8) return matches;
     }
-    for (const product of products) {
+    for (const product of activeProducts) {
       const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
       if (availableStock <= 0 && matchesQuery(product)) matches.push(product);
       if (matches.length === 8) break;
@@ -2669,6 +2676,13 @@ const Cashier = ({ onLogout, user }) => {
   const handleAddToCart = (product, preferredUnit = null) => {
     if (isLockedTxn) {
       showNotification('This transaction is already completed. Start a new transaction to continue selling.');
+      return;
+    }
+    // Last line of defense regardless of how `product` got here (search,
+    // barcode scan, or any future entry point) -- an archived/deleted
+    // product must never be addable to a cart.
+    if (product && !isCatalogActive(product)) {
+      showNotification(`"${product.name}" is archived and cannot be sold.`);
       return;
     }
 
