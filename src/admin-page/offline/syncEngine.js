@@ -764,6 +764,26 @@ export class AdminSyncEngine extends EventTarget {
         return
       }
 
+      // Check BEFORE writing, not just when creating the audit-trail
+      // movement afterward: if this exact op's cloud write already
+      // succeeded on a previous attempt but the app closed/crashed before
+      // the local queue entry could be cleared, replaying it here would
+      // silently add the same delta to the cloud's CURRENT (already
+      // updated) quantity a second time. The old ordering only guarded the
+      // stock_movements audit record against duplication -- the quantity
+      // itself had already been double-incremented by the time that check
+      // ran, so the books showed one movement while the number was
+      // inflated. Root-caused from a live "Stock In enters wrong quantity"
+      // report (POS_AUDIT_REGISTER.md).
+      if (await findStockMovement(this.pb, product.id, op.id)) {
+        await replaceLocalProductWithCloud(op.productId, product, this.pb, {
+          preservePendingStock: true,
+          currentOpId: op.id,
+        })
+        await adminDb.pendingOps.delete(op.id)
+        return
+      }
+
       const previousQuantity = quantizeQty(product.quantity)
       const nextQuantity = quantizeQty(previousQuantity + Number(op.payload.qty || 0))
       const updated = await this.pb.collection('products').update(product.id, {
@@ -785,6 +805,16 @@ export class AdminSyncEngine extends EventTarget {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.barcode || op.productId}" was not found in PocketBase.`)
 
+      // Same pre-write idempotency check as scanInventory above.
+      if (await findStockMovement(this.pb, product.id, op.id)) {
+        await replaceLocalProductWithCloud(op.productId, product, this.pb, {
+          preservePendingStock: true,
+          currentOpId: op.id,
+        })
+        await adminDb.pendingOps.delete(op.id)
+        return
+      }
+
       const previousQuantity = quantizeQty(product.quantity)
       const nextQuantity = Math.max(0, quantizeQty(previousQuantity - Number(op.payload.qty || 0)))
       const updated = await this.pb.collection('products').update(product.id, {
@@ -805,6 +835,17 @@ export class AdminSyncEngine extends EventTarget {
     if (op.type === 'adjustInventoryCount') {
       const product = await resolveCloudProductForLocalProduct(this.pb, op.productId, op.payload)
       if (!product) throw new Error(`Product "${op.payload?.name || op.payload?.barcode || op.productId}" was not found in PocketBase.`)
+
+      // adjustInventoryCount is already immune to double-application (an
+      // absolute value replayed twice is the same value), but the pre-write
+      // check is added here too for consistency and to skip a wasted
+      // network write + reconcile pass on a replay.
+      if (await findStockMovement(this.pb, product.id, op.id)) {
+        await replaceLocalProductWithCloud(op.productId, product, this.pb, { preservePendingStock: true, currentOpId: op.id })
+        await adminDb.pendingOps.delete(op.id)
+        return
+      }
+
       const previousQuantity = quantizeQty(product.quantity)
       // A physical count is an ABSOLUTE target, not a delta on top of
       // whatever the cloud happens to hold when this op finally applies --
