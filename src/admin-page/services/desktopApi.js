@@ -28,7 +28,7 @@ import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
 import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTotals'
-import { isCatalogActive } from '../../utils/productLifecycle'
+import { getProductBarcodes, isCatalogActive } from '../../utils/productLifecycle'
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 import { accountDeletionError } from '../../utils/accountDeletionGuard'
 
@@ -1660,13 +1660,22 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const product = await localProductFromForm(data)
     assertRequiredProductFields(product)
-    const existing = product.barcode ? await getProductByBarcode(product.barcode) : null
-    if (existing && !existing.deleted) {
-      throw new Error(`Barcode ${product.barcode} already belongs to "${existing.name}". Edit that product instead of adding a duplicate.`)
+    // Check every barcode this product carries -- its own main barcode AND
+    // every selling-unit barcode -- not just the main one. Checking only
+    // product.barcode let a selling-unit barcode (e.g. a Case/Tie price
+    // tier) silently collide with a totally different product's barcode,
+    // which is exactly how real cross-product collisions accumulated in
+    // production undetected (see POS_AUDIT_REGISTER.md).
+    const deletedOwnerIds = new Set()
+    for (const barcode of getProductBarcodes(product)) {
+      const owner = await getProductByBarcode(barcode)
+      if (!owner) continue
+      if (owner.deleted) { deletedOwnerIds.add(owner.id); continue }
+      throw new Error(`Barcode ${barcode} already belongs to "${owner.name}". Edit that product instead of adding a duplicate.`)
     }
 
     await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
-      if (existing?.deleted) await adminDb.products.delete(existing.id)
+      for (const ownerId of deletedOwnerIds) await adminDb.products.delete(ownerId)
       await adminDb.products.put(product)
       await queueOperation('createProduct', product.id, product)
     })
@@ -1689,9 +1698,13 @@ export const desktopAdminApi = {
       baseUpdated: existing?.baseUpdated && existing?.pendingSync ? existing.baseUpdated : (existing?.updated || null),
     }
     assertRequiredProductFields(product)
-    const barcodeOwner = product.barcode ? await getProductByBarcode(product.barcode) : null
-    if (barcodeOwner && barcodeOwner.id !== id) {
-      throw new Error(`Barcode ${product.barcode} already belongs to "${barcodeOwner.name}". Choose a different barcode.`)
+    // Same as createProduct: check every barcode this product carries, not
+    // just the main one.
+    for (const barcode of getProductBarcodes(product)) {
+      const barcodeOwner = await getProductByBarcode(barcode)
+      if (barcodeOwner && barcodeOwner.id !== id) {
+        throw new Error(`Barcode ${barcode} already belongs to "${barcodeOwner.name}". Choose a different barcode.`)
+      }
     }
     await adminDb.transaction('rw', adminDb.products, adminDb.pendingOps, async () => {
       await adminDb.products.put(product)

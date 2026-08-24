@@ -11,7 +11,7 @@ import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleT
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import { accountDeletionError } from '../src/utils/accountDeletionGuard.js'
 import { isSameHost } from '../src/utils/corsOrigin.js'
-import { isCatalogActive } from '../src/utils/productLifecycle.js'
+import { getProductBarcodes, isCatalogActive } from '../src/utils/productLifecycle.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -1436,11 +1436,42 @@ app.post('/api/cashier/sales/:id/void', asyncRoute(async (req, res) => {
   })
 }))
 
+// Checks a product's full barcode set (its main barcode AND every
+// selling-unit barcode) against every OTHER product's barcode set. Only the
+// main `barcode` field is protected by a database-level unique index
+// (idx_products_barcode_nonempty) -- selling-unit barcodes have no such
+// constraint anywhere, so a case/tie/pack price tier could silently reuse a
+// different product's barcode with nothing to catch it. This is the same
+// gap the Tauri admin's createProduct/updateProduct already close locally;
+// the web admin route had no equivalent check at all.
+function matchProductBarcodeOwner(records, barcodes, excludeId = null) {
+  const wanted = new Set((barcodes || []).filter(Boolean))
+  if (!wanted.size) return null
+  for (const record of records) {
+    if (record.id === excludeId) continue
+    const hit = getProductBarcodes(record).find((barcode) => wanted.has(barcode))
+    if (hit) return { product: record, barcode: hit }
+  }
+  return null
+}
+
+async function findProductBarcodeOwner(barcodes, excludeId = null) {
+  const records = await (await pbCollection('products')).getFullList({
+    fields: 'id,name,barcode,selling_units,sellingUnits',
+  })
+  return matchProductBarcodeOwner(records, barcodes, excludeId)
+}
+
 app.post('/api/products', upload.single('product_img'), asyncRoute(async (req, res) => {
   const body = productRequestBody(req)
   const categoryId = await getOrCreateCategoryId(body.category)
   const payload = productRecordPayload(body, categoryId, req.file)
   if (!String(body.name || '').trim()) return res.status(400).json({ error: 'Product name is required.' })
+
+  const collision = await findProductBarcodeOwner(getProductBarcodes(payload))
+  if (collision) {
+    return res.status(409).json({ error: `Barcode ${collision.barcode} already belongs to "${collision.product.name}". Edit that product instead of adding a duplicate.` })
+  }
 
   const created = await (await pbCollection('products')).create(payload, { expand: 'category' })
   await createLog({ action: 'Product', detail: `Added product "${body.name}"` })
@@ -1452,6 +1483,11 @@ app.patch('/api/products/:id', upload.single('product_img'), asyncRoute(async (r
   const categoryId = await getOrCreateCategoryId(body.category)
   const payload = productRecordPayload(body, categoryId, req.file)
   if (!String(body.name || '').trim()) return res.status(400).json({ error: 'Product name is required.' })
+
+  const collision = await findProductBarcodeOwner(getProductBarcodes(payload), req.params.id)
+  if (collision) {
+    return res.status(409).json({ error: `Barcode ${collision.barcode} already belongs to "${collision.product.name}". Choose a different barcode.` })
+  }
 
   const updated = await (await pbCollection('products')).update(req.params.id, payload, { expand: 'category' })
   await createLog({ action: 'Product', detail: `Updated product "${body.name}"` })
@@ -2294,7 +2330,7 @@ app.use((error, _req, res, next) => {
   })
 })
 
-export { app, buildSalesMetrics, refundedUnitsBySaleAndProduct }
+export { app, buildSalesMetrics, matchProductBarcodeOwner, refundedUnitsBySaleAndProduct }
 
 if (!process.env.VERCEL) {
   const listeningServer = app.listen(PORT, () => {
