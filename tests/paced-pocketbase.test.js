@@ -139,6 +139,46 @@ test('createPacedPocketBase: $priority overrides the default classification and 
   assert.equal(sendOptions.method, 'GET', 'other options must pass through untouched')
 })
 
+test('createPacedPocketBase: a stalled request times out instead of hanging forever', async () => {
+  // Reproduces the live "system hangs" complaint: neither the PocketBase SDK
+  // nor any caller in this app previously set a request timeout, so a
+  // stalled connection (simulated here with a promise that never settles)
+  // left the caller awaiting forever. The wrapper must now race it against
+  // a timeout and reject with a clearly-marked, retriable error instead.
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-timeout' })
+
+  const originalSetTimeout = globalThis.setTimeout
+  // The real timeout is 20s -- fire it immediately so this test doesn't
+  // actually wait 20 seconds, without touching the governor's own pacing
+  // (a fresh governor's first call needs no wait regardless).
+  globalThis.setTimeout = (fn) => originalSetTimeout(fn, 0)
+  try {
+    const fakePb = {
+      send() { return new Promise(() => {}) }, // never settles -- a stalled connection
+    }
+    const paced = createPacedPocketBase(fakePb, governor)
+
+    await assert.rejects(
+      paced.send('/api/collections/products/records', { method: 'GET' }),
+      (err) => err.isTimeout === true && /timed out/.test(err.message),
+    )
+  } finally {
+    globalThis.setTimeout = originalSetTimeout
+  }
+})
+
+test('createPacedPocketBase: a request that completes before the timeout is unaffected', async () => {
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-timeout-fast' })
+
+  const fakePb = { send: () => Promise.resolve({ ok: true }) }
+  const paced = createPacedPocketBase(fakePb, governor)
+
+  const result = await paced.send('/api/collections/products/records', { method: 'GET' })
+  assert.deepEqual(result, { ok: true })
+})
+
 test('createPacedPocketBase: default classification is used when $priority is absent', async () => {
   const clock = makeClock()
   const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-default-classification' })

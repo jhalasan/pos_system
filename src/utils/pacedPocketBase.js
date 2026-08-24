@@ -12,6 +12,40 @@
 
 const HEALTH_PATH = '/api/health'
 
+// Neither the PocketBase SDK nor any caller in this app sets a request
+// timeout -- a stalled/degraded connection to PocketHost (slow response,
+// half-open TCP connection) leaves the awaiting code hanging indefinitely,
+// with no error and no recovery. Confirmed live: a cashier scanning a
+// barcode not yet in the local catalog, or clicking the manual Sync button,
+// both directly await a network call with nothing to bound how long they
+// wait -- this is what surfaces to a cashier as "the system hangs."
+// Racing every request against this timeout (rather than passing an
+// AbortSignal into the SDK's own options) is deliberate: the SDK builds its
+// own internal AbortController and overwrites `options.signal` whenever
+// auto-cancellation is active (i.e. whenever a call does NOT pass
+// `requestKey: null`), which would silently make an externally-supplied
+// signal a no-op for most calls in this codebase. A promise race works
+// regardless of the SDK's internal signal handling.
+const REQUEST_TIMEOUT_MS = 20_000
+
+function withTimeout(promise, path) {
+  let timeoutId
+  const timeout = new Promise((_resolve, reject) => {
+    timeoutId = setTimeout(() => {
+      const error = new Error(`Request to PocketHost timed out after ${REQUEST_TIMEOUT_MS / 1000}s (${path}).`)
+      error.isTimeout = true
+      reject(error)
+    }, REQUEST_TIMEOUT_MS)
+  })
+  // If the timeout wins, the underlying request is still running in the
+  // background (this SDK gives no reliable way to actually abort it once
+  // auto-cancellation's own controller owns the signal). Attach a silent
+  // catch so its eventual settlement doesn't surface as an unhandled
+  // promise rejection nobody is listening for anymore.
+  promise.catch(() => {})
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId))
+}
+
 /**
  * Pure classification of a request's pacing priority from its path/options.
  * Exported standalone so it's independently testable without a real (or
@@ -63,7 +97,7 @@ export function createPacedPocketBase(pb, governor) {
     delete opts.$priority
 
     return governor.schedule(
-      () => rawSend(path, opts).then(
+      () => withTimeout(rawSend(path, opts), path).then(
         (result) => {
           governor.recordSuccess()
           return result
