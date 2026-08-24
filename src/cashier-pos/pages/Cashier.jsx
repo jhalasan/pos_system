@@ -1376,7 +1376,13 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Shift Close',
-        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${shouldSkipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
+        // gcashSales is printed on the physical Z-read receipt but, before
+        // this, was never written anywhere durable -- there was no way to
+        // later verify what a Z-read actually showed for GCash against the
+        // underlying sale records (see the "SYRA MAE ENARIO gcash mismatch"
+        // investigation: the only way to reconstruct it was recomputing from
+        // sales directly, with nothing to check that reconstruction against).
+        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, gcash sales PHP ${completedGcashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${shouldSkipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
       }).catch(() => {});
       appendCashCountHistory({
         type: shouldSkipCashCount ? 'admin-override-close' : 'shift-close',
