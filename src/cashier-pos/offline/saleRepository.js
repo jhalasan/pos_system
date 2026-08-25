@@ -6,6 +6,7 @@ import { toBaseStockQuantity } from './stockUtils.js'
 import { getTerminalId, getTerminalName } from '../../utils/terminalIdentity.js'
 import { discountedUnitPrice, quantizeQty, roundMoney } from '../../utils/quantity.js'
 import { mintTransactionNumber } from './transactionNumber.js'
+import { getCashSalesAmount, getGcashSalesAmount } from '../utils/cashSales.js'
 
 async function hasTable(name) {
   await initializeCashierDb()
@@ -458,5 +459,47 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
     status: 'adjusted',
     adjustments: [...(sale.adjustments || []), entry],
     adjustedAt: entry.createdAt,
+  }
+}
+
+// A sale that used the split-payment flow is stored with paymentMethod
+// coerced to 'cash' (see finalizeSaleLocally / Cashier.jsx's
+// completeActiveTransaction -- PocketBase's payment_method field is a
+// locked cash/gcash enum with no 'split' value), with the true cash/gcash
+// breakdown surviving in splitPayments. getCashSalesAmount/
+// getGcashSalesAmount only consult splitPayments when paymentMethod is
+// literally 'split' -- so a raw completedSales row for a split sale must be
+// relabeled before netting, or its entire total gets counted as cash,
+// overcounting by the gcash portion. A non-split sale always has
+// splitPayments.gcash parsed to 0 (the split-payment form's default state),
+// so this check cannot misfire on a genuine pure-cash or pure-gcash sale.
+function withTrueSplitPaymentMethod(sale) {
+  if (Number(sale?.splitPayments?.gcash) > 0) {
+    return { ...sale, paymentMethod: 'split' }
+  }
+  return sale
+}
+
+// Recomputes a shift's Cash Sales/GCash Sales totals directly from
+// cashierDb.completedSales -- the same durable, transactional local table
+// every sale, void, and refund already writes to (see finalizeSaleLocally,
+// voidLocalSale, adjustLocalSale above) -- rather than trusting a separate
+// running cache that can silently drift or get lost across a crash/restart.
+// `sinceISO` is always the current shift's `openedAt`; resuming a shift
+// reloads the same persisted session object rather than creating a new one,
+// so a plain time-window filter correctly scopes "this shift's sales"
+// without needing a dedicated sessionId field on the row.
+export async function getShiftLedgerTotals(cashierId, sinceISO) {
+  if (!cashierId) return { cashSales: 0, gcashSales: 0 }
+  if (!(await hasTable('completedSales'))) return { cashSales: 0, gcashSales: 0 }
+
+  const since = String(sinceISO || '')
+  const sales = (await cashierDb.completedSales.where('cashierId').equals(cashierId).toArray())
+    .filter((sale) => String(sale.createdAt || '') >= since)
+    .map(withTrueSplitPaymentMethod)
+
+  return {
+    cashSales: getCashSalesAmount(sales),
+    gcashSales: getGcashSalesAmount(sales),
   }
 }
