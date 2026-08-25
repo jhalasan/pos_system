@@ -507,12 +507,8 @@ function productRequestBody(req) {
 }
 
 async function nextTransactionNumber() {
-  const now = new Date()
-  const datePrefix = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0'),
-  ].join('')
+  const { year, month, day } = phDateParts(new Date())
+  const datePrefix = [year, String(month + 1).padStart(2, '0'), String(day).padStart(2, '0')].join('')
 
   const sales = await pbCollection('sales')
   const records = await sales.getFullList({
@@ -596,12 +592,54 @@ function saleDate(sale) {
   return new Date(sale.created_at || sale.created)
 }
 
+// The shop operates in the Philippines (UTC+8), but this server is deployed
+// as a Vercel serverless function (see vercel.json), which runs in UTC by
+// default. `new Date(`${dateStr}T00:00:00`)` -- with no timezone suffix --
+// resolves to midnight in whatever timezone the Node process itself runs in,
+// not the shop's. On a UTC host that silently shifts every "day" boundary 8
+// hours later than the shop's actual midnight, moving each morning's
+// transactions into the *previous* day's report. Anchoring the parse to an
+// explicit +08:00 offset makes the boundary correct regardless of host TZ.
+function phDateStringToUtcMillis(dateStr, endOfDay = false) {
+  const trimmed = String(dateStr || '').trim()
+  if (!trimmed) return null
+  const suffix = endOfDay ? 'T23:59:59.999+08:00' : 'T00:00:00.000+08:00'
+  return new Date(`${trimmed}${suffix}`).getTime()
+}
+
+const PH_UTC_OFFSET_MS = 8 * 60 * 60 * 1000
+
+// Reads year/month(0-based)/day/hour/day-of-week as seen in Philippines
+// local time for the instant `date` represents, independent of the host
+// process's own timezone. Every calendar-boundary computation below (today,
+// this week, this month, this year, and the dashboard's trend-chart
+// bucketing) must go through this rather than Date's local getters
+// (getFullYear/getMonth/getDate/getHours/getDay/setHours/toLocaleString
+// without an explicit timeZone) -- those reflect the HOST's timezone, which
+// is correct on the shop's own PH-timezone PC (the Tauri desktop admin) but
+// wrong on this app's Vercel deployment (UTC by default, see vercel.json).
+function phDateParts(date) {
+  const shifted = new Date(date.getTime() + PH_UTC_OFFSET_MS)
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth(),
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    dow: shifted.getUTCDay(),
+  }
+}
+
+// The UTC instant of Philippines-local midnight for the given PH calendar
+// date parts. Date.UTC normalizes out-of-range month/day values correctly
+// (e.g. day 0 or a negative day rolls back into the previous month), so
+// callers can freely do calendar arithmetic like `day - 1` or `month - 90`.
+function phMidnight(year, month, day) {
+  return new Date(Date.UTC(year, month, day) - PH_UTC_OFFSET_MS)
+}
+
 function dateKey(date) {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-')
+  const { year, month, day } = phDateParts(date)
+  return [year, String(month + 1).padStart(2, '0'), String(day).padStart(2, '0')].join('-')
 }
 
 function productRelationId(value) {
@@ -780,35 +818,43 @@ function classifyFsnProduct(product, metric, now = new Date()) {
   }
 }
 
+// Every label below passes `timeZone: 'Asia/Manila'` explicitly so the
+// displayed month/day name also matches the PH calendar date the key
+// represents, regardless of host TZ -- toLocaleString without that option
+// would format using the host's local time even though `date` is already a
+// deliberately-computed PH-midnight instant.
+const PH_LOCALE_TZ = 'Asia/Manila'
+
 function lastMonths(count, now = new Date()) {
+  const { year, month } = phDateParts(now)
   return Array.from({ length: count }, (_, index) => {
-    const date = new Date(now.getFullYear(), now.getMonth() - (count - 1 - index), 1)
+    const totalMonth = month - (count - 1 - index)
+    const y = year + Math.floor(totalMonth / 12)
+    const m = ((totalMonth % 12) + 12) % 12
+    const date = phMidnight(y, m, 1)
     return {
-      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
-      label: date.toLocaleString('en-US', { month: 'short' }),
+      key: `${y}-${String(m + 1).padStart(2, '0')}`,
+      label: date.toLocaleString('en-US', { month: 'short', timeZone: PH_LOCALE_TZ }),
       value: 0,
     }
   })
 }
 
 function lastDays(count, now = new Date()) {
+  const { year, month, day } = phDateParts(now)
   return Array.from({ length: count }, (_, index) => {
-    const date = new Date(now)
-    date.setHours(0, 0, 0, 0)
-    date.setDate(date.getDate() - (count - 1 - index))
+    const date = phMidnight(year, month, day - (count - 1 - index))
     return {
       key: dateKey(date),
-      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: PH_LOCALE_TZ }),
       value: 0,
     }
   })
 }
 
 function weekStart(date) {
-  const start = new Date(date)
-  start.setHours(0, 0, 0, 0)
-  start.setDate(start.getDate() - start.getDay())
-  return start
+  const { year, month, day, dow } = phDateParts(date)
+  return phMidnight(year, month, day - dow)
 }
 
 function weekKey(date) {
@@ -818,22 +864,22 @@ function weekKey(date) {
 function lastWeeks(count, now = new Date()) {
   const currentWeek = weekStart(now)
   return Array.from({ length: count }, (_, index) => {
-    const date = new Date(currentWeek)
-    date.setDate(date.getDate() - (7 * (count - 1 - index)))
+    const date = new Date(currentWeek.getTime() - (7 * (count - 1 - index)) * 24 * 60 * 60 * 1000)
     return {
       key: dateKey(date),
-      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric' }),
+      label: date.toLocaleString('en-US', { month: 'short', day: 'numeric', timeZone: PH_LOCALE_TZ }),
       value: 0,
     }
   })
 }
 
 function lastYears(count, now = new Date()) {
+  const { year } = phDateParts(now)
   return Array.from({ length: count }, (_, index) => {
-    const year = now.getFullYear() - (count - 1 - index)
+    const y = year - (count - 1 - index)
     return {
-      key: String(year),
-      label: String(year),
+      key: String(y),
+      label: String(y),
       value: 0,
     }
   })
@@ -1115,8 +1161,8 @@ app.get('/api/cashier/sales', asyncRoute(async (req, res) => {
   const cashierId = String(req.query?.cashierId || '').trim()
   const search = String(req.query?.q || '').trim().toLowerCase()
 
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+  const { year: todayYear, month: todayMonth, day: todayDay } = phDateParts(new Date())
+  const todayStart = phMidnight(todayYear, todayMonth, todayDay)
 
   const sales = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
@@ -1197,8 +1243,8 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
   const fromDate = String(req.query?.fromDate || '').trim()
   const toDate = String(req.query?.toDate || '').trim()
 
-  const fromTime = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : null
-  const toTime = toDate ? new Date(`${toDate}T23:59:59.999`).getTime() : null
+  const fromTime = phDateStringToUtcMillis(fromDate, false)
+  const toTime = phDateStringToUtcMillis(toDate, true)
 
   const dateFilterParts = []
   if (fromTime !== null) dateFilterParts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: new Date(fromTime).toISOString() }))
@@ -1962,8 +2008,8 @@ app.post('/api/audit-reviews', asyncRoute(async (req, res) => {
   const reviewedAt = new Date().toISOString()
   const created = await (await pbCollection('audit_reviews')).create({
     reviewed_by: reviewedBy,
-    date_from: fromDate ? `${fromDate}T00:00:00.000Z` : reviewedAt,
-    date_to: toDate ? `${toDate}T23:59:59.999Z` : reviewedAt,
+    date_from: fromDate ? new Date(phDateStringToUtcMillis(fromDate, false)).toISOString() : reviewedAt,
+    date_to: toDate ? new Date(phDateStringToUtcMillis(toDate, true)).toISOString() : reviewedAt,
     row_count: Math.max(0, Math.floor(Number(req.body?.rowCount) || 0)),
     note: String(req.body?.note || '').trim(),
     reviewed_at: reviewedAt,
@@ -1998,8 +2044,10 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   // to no netting rather than failing the whole dashboard.
   let adjustments = await listRecords('sale_adjustments', '?perPage=500').catch(() => [])
   const source = String(req.query.source || 'all')
-  const from = req.query.from ? new Date(`${req.query.from}T00:00:00`) : null
-  const to = req.query.to ? new Date(`${req.query.to}T23:59:59.999`) : null
+  const fromMillis = phDateStringToUtcMillis(req.query.from, false)
+  const toMillis = phDateStringToUtcMillis(req.query.to, true)
+  const from = fromMillis === null ? null : new Date(fromMillis)
+  const to = toMillis === null ? null : new Date(toMillis)
   sales = sales.filter((sale) => (source === 'all' || dashboardSaleSource(sale) === source)
     && (!from || saleDate(sale) >= from) && (!to || saleDate(sale) <= to))
   const filteredSaleIds = new Set(sales.map((sale) => sale.id))
@@ -2007,12 +2055,11 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   adjustments = adjustments.filter((adjustment) => filteredSaleIds.has(productRelationId(adjustment.sale_id)))
   const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
   const now = new Date()
-  const todayStart = new Date(now)
-  todayStart.setHours(0, 0, 0, 0)
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-  const yesterdayStart = new Date(todayStart)
-  yesterdayStart.setDate(yesterdayStart.getDate() - 1)
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const { year: todayYear, month: todayMonth, day: todayDay } = phDateParts(now)
+  const todayStart = phMidnight(todayYear, todayMonth, todayDay)
+  const monthStart = phMidnight(todayYear, todayMonth, 1)
+  const yesterdayStart = phMidnight(todayYear, todayMonth, todayDay - 1)
+  const lastMonthStart = phMidnight(todayYear, todayMonth - 1, 1)
 
   const completedSales = sales.filter((sale) => (sale.status || 'completed') !== 'voided')
   const dailySales = completedSales
@@ -2107,7 +2154,7 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
   for (const sale of completedSales) {
     const created = saleDate(sale)
     if (created < todayStart) continue
-    hourlySales[created.getHours()].value += netSaleAmount(sale)
+    hourlySales[phDateParts(created).hour].value += netSaleAmount(sale)
   }
   const monthlyTrend = lastMonths(8, now)
   const dailyTrend = lastDays(7, now)
@@ -2124,10 +2171,11 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     if (day) day.value += amount
     const week = weeklyTrendByKey.get(weekKey(created))
     if (week) week.value += amount
-    const key = `${created.getFullYear()}-${String(created.getMonth() + 1).padStart(2, '0')}`
+    const { year: createdYear, month: createdMonth } = phDateParts(created)
+    const key = `${createdYear}-${String(createdMonth + 1).padStart(2, '0')}`
     const month = monthlyTrendByKey.get(key)
     if (month) month.value += amount
-    const year = yearlyTrendByKey.get(String(created.getFullYear()))
+    const year = yearlyTrendByKey.get(String(createdYear))
     if (year) year.value += amount
   }
   const trend = (current, previous) => {
@@ -2330,7 +2378,21 @@ app.use((error, _req, res, next) => {
   })
 })
 
-export { app, buildSalesMetrics, matchProductBarcodeOwner, refundedUnitsBySaleAndProduct }
+export {
+  app,
+  buildSalesMetrics,
+  dateKey,
+  lastDays,
+  lastMonths,
+  lastWeeks,
+  lastYears,
+  matchProductBarcodeOwner,
+  phDateParts,
+  phDateStringToUtcMillis,
+  refundedUnitsBySaleAndProduct,
+  weekKey,
+  weekStart,
+}
 
 if (!process.env.VERCEL) {
   const listeningServer = app.listen(PORT, () => {
