@@ -510,6 +510,18 @@ const Cashier = ({ onLogout, user }) => {
   const [showHistory, setShowHistory] = useState(false);
   const [historyRecords, setHistoryRecords] = useState([]);
   const [retainedCompletedSales, setRetainedCompletedSales] = useState(() => loadRetainedCompletedSales(user?.id));
+  // Authoritative override from the Dexie-backed ledger (desktop only --
+  // see cashierApi.getShiftLedgerTotals). null means "no override yet, use
+  // the existing retainedCompletedSales-based calculation below." Never
+  // reset to null on a query failure -- only a fresh successful result or a
+  // new/closed shift session replaces it, so a transient error can never
+  // make a correct number disappear.
+  const [shiftLedgerOverride, setShiftLedgerOverride] = useState(null);
+  // Guards confirmResumeCash and the shift-close Z-read preview/print
+  // against acting on a total that hasn't had its one chance yet to be
+  // corrected by the override -- see the effect below. Does not otherwise
+  // affect normal ringing-up during a shift.
+  const [shiftLedgerReady, setShiftLedgerReady] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -687,7 +699,7 @@ const Cashier = ({ onLogout, user }) => {
     );
   }, [historyRecords, historySearch]);
 
-  const completedCashSales = useMemo(() => {
+  const completedCashSalesFallback = useMemo(() => {
     const transactionSales = transactions
       .filter((txn) => txn?.status === 'completed')
       .map((txn) => ({
@@ -710,7 +722,7 @@ const Cashier = ({ onLogout, user }) => {
   // Informational only, for the Z-read's GCash transparency line -- GCash
   // never touches the physical drawer, so this must stay entirely separate
   // from completedCashSales and the cash-count reconciliation math above.
-  const completedGcashSales = useMemo(() => {
+  const completedGcashSalesFallback = useMemo(() => {
     const transactionSales = transactions
       .filter((txn) => txn?.status === 'completed')
       .map((txn) => ({
@@ -729,6 +741,47 @@ const Cashier = ({ onLogout, user }) => {
       cashierId: user?.id,
     });
   }, [retainedCompletedSales, transactions, shiftSession, user?.id]);
+
+  // The fallback above is kept running unconditionally (it is web-mode's
+  // ONLY source of this number, and costs nothing extra to compute on
+  // desktop) -- these two are what every other part of this file actually
+  // reads. On desktop, shiftLedgerOverride will hold the Dexie-backed
+  // authoritative value on essentially every render; on web-mode it stays
+  // null forever (cashierApi.getShiftLedgerTotals resolves to null there),
+  // so these are provably identical to today's completedCashSales/
+  // completedGcashSales for that build.
+  const completedCashSales = shiftLedgerOverride ? shiftLedgerOverride.cashSales : completedCashSalesFallback;
+  const completedGcashSales = shiftLedgerOverride ? shiftLedgerOverride.gcashSales : completedGcashSalesFallback;
+
+  // Recomputes the authoritative Dexie-backed totals every time a sale
+  // completes, voids, or is refunded within this shift (transactions
+  // changes at every one of those points already) -- see
+  // getShiftLedgerTotals's own comment for why this is trustworthy where
+  // the fallback above is not. A thrown error or a null result (web-mode)
+  // leaves shiftLedgerOverride untouched, so the fallback value already
+  // showing is never replaced with something worse.
+  useEffect(() => {
+    let cancelled = false;
+    if (!shiftSession || !user?.id) {
+      setShiftLedgerOverride(null);
+      setShiftLedgerReady(true);
+      return () => { cancelled = true; };
+    }
+    setShiftLedgerReady(false);
+    Promise.resolve(cashierApi.getShiftLedgerTotals?.(user.id, shiftSession.openedAt))
+      .then((result) => {
+        if (cancelled || !result) return;
+        setShiftLedgerOverride(result);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        showNotification(`Unable to verify cash sales against the local ledger (${err?.message || err}). Showing the last known total.`);
+      })
+      .finally(() => {
+        if (!cancelled) setShiftLedgerReady(true);
+      });
+    return () => { cancelled = true; };
+  }, [transactions, shiftSession, user?.id]);
 
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
@@ -1237,6 +1290,10 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const buildShiftCloseDraft = (skipCashCount = false) => {
+    if (!shiftLedgerReady) {
+      setShiftError('Verifying today\'s sales against the local ledger — try again in a moment.');
+      return null;
+    }
     const shouldSkipCashCount = skipCashCount === true;
     const closingAmount = shouldSkipCashCount ? expectedShiftCash : (
       shiftCloseCountMode === 'denomination'
@@ -1405,6 +1462,7 @@ const Cashier = ({ onLogout, user }) => {
       clearCashierTransactions(user?.id);
       setRetainedCompletedSales([]);
       saveRetainedCompletedSales([], user?.id);
+      setShiftLedgerOverride(null);
       setShiftSession(null);
       setShowShiftClose(false);
       setShowAdminLogout(false);
@@ -4450,8 +4508,8 @@ const Cashier = ({ onLogout, user }) => {
         closeButton={false}
         footer={
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-            <button className="btn btn-primary" onClick={confirmResumeCash} disabled={resumeCashSaving}>
-              {resumeCashSaving ? 'Confirming...' : 'Resume Session'}
+            <button className="btn btn-primary" onClick={confirmResumeCash} disabled={resumeCashSaving || !shiftLedgerReady}>
+              {resumeCashSaving ? 'Confirming...' : !shiftLedgerReady ? 'Verifying sales…' : 'Resume Session'}
             </button>
           </div>
         }
