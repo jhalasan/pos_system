@@ -13,6 +13,7 @@ import {
   findLocalSaleByTransactionNo,
   getCompletedSales,
   getPendingSales,
+  getShiftLedgerTotals,
   voidLocalSale,
 } from '../offline/saleRepository'
 import { peakProtectionStatus, recordCompletedSale } from '../../utils/peakProtection'
@@ -1299,5 +1300,9 @@ export const desktopCashierApi = {
     })
 
     return toCashierSale(adjustedSale)
+  },
+
+  async getShiftLedgerTotals(cashierId, sinceISO) {
+    return getShiftLedgerTotals(cashierId, sinceISO)
   },
 }

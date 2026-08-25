@@ -103,6 +103,13 @@ const webCashierApi = {
   adjustCompletedSale: () => {
     throw new Error('Refund and exchange adjustments are available in the desktop cashier app.')
   },
+  // Web-mode has no local database to reconcile against (every sale goes
+  // straight to the server, no offline queue) -- returning null signals
+  // "not supported here" so Cashier.jsx falls back to its existing
+  // localStorage-based calculation, unchanged from today's behavior. See
+  // the design spec's "Out of scope" section: web-mode's own accuracy is a
+  // deliberate, documented non-goal of this fix.
+  getShiftLedgerTotals: async () => null,
 }
 
 export const cashierApi = isDesktopCashier ? desktopCashierApi : {
