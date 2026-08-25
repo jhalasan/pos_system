@@ -1440,3 +1440,61 @@ two already tracked above); sync-tick concurrency (both engines correctly single
 
 `npm run test:offline` 289/289, `npm run test:vercel` 7/7, all three builds (`build`,
 `build:cashier`, `build:vercel`) clean as of this pass.
+
+---
+
+## Live-support fix, 2026-08-26 (client-reported cashier shift discrepancy investigation)
+
+Client reported a large, recurring cash-drawer "excess": a 2nd-shift cashier's hand-tallied
+transactions (₱2,773 for August 25) far exceeded what the POS's own report showed (₱1,347) for the
+same shift. Pulled the real `sales` records for that terminal/day directly from PocketBase to
+investigate; the raw data was correct and complete (109-141 records depending on the query window,
+summing consistently) — the gap traced instead to how the **admin-facing web reports interpreted
+"a day."**
+
+**M25. HIGH — ✅ FIXED. The web admin's date-ranged reports silently used the wrong timezone,
+misattributing roughly the first 8 hours of every Philippine business day to the previous
+calendar day.** `server/index.js` (deployed as a Vercel serverless function per `vercel.json`,
+which runs in UTC by default) parsed `fromDate`/`toDate` query params with
+`new Date(`${dateStr}T00:00:00`)` — no timezone suffix, so it resolved to midnight in the
+**host's** timezone, not the shop's (Philippines, UTC+8). Requesting "August 25" therefore actually
+queried 8:00 AM Aug 25 PH through 7:59:59 AM Aug 26 PH — silently moving a cashier's entire
+early-morning shift into "August 24"'s report instead. Affected `/api/receipts` (the Sales-by-Cashier
+report's data source) and `/api/dashboard`'s custom date-range filter. The Tauri desktop admin has
+the identical code pattern but was unaffected, since it runs on the shop's own PH-timezone PC where
+unqualified `Date` parsing already resolves correctly. Fix: new `phDateStringToUtcMillis(dateStr,
+endOfDay)` helper anchors the parse to an explicit `+08:00` offset, independent of host TZ; applied
+to both routes plus `/api/audit-reviews`'s date-range stamp for consistency.
+
+**M26. HIGH — ✅ FIXED. The same host-timezone assumption also broke the admin Dashboard's
+always-on "Today's/Yesterday's/Monthly Sales" stats and every trend chart, not just custom date
+ranges.** `dateKey`, `weekStart`, `lastDays`/`lastWeeks`/`lastMonths`/`lastYears`, and
+`/api/dashboard`'s inline `todayStart`/`monthStart`/`yesterdayStart`/`lastMonthStart` all computed
+calendar boundaries via `Date`'s local getters/setters (`getFullYear`, `getMonth`, `getDate`,
+`getHours`, `getDay`, `setHours`, `setDate`) — every one of these reflects the **process's** local
+timezone (UTC on Vercel), not the shop's. This meant "Today's Sales" on the Dashboard, the hourly
+sales chart, and the daily/weekly/monthly/yearly trend charts were all silently reading a UTC day
+instead of a Philippines day, every day, not just when a client picked a specific date range. Also
+found and fixed the same pattern in `/api/cashier/sales`'s "today's transactions" filter (the
+web-mode cashier's own history lookup) and `nextTransactionNumber`'s date prefix (web-mode
+transaction numbers were tagged with the wrong calendar day). Fix: new `phDateParts(date)` /
+`phMidnight(year, month, day)` helpers compute every boundary from a fixed PH offset rather than
+host-local time; `dateKey`/`weekStart`/`lastDays`/`lastWeeks`/`lastMonths`/`lastYears` and all
+`/api/dashboard` boundary/bucketing code now route through them. Trend-chart labels also pass
+`timeZone: 'Asia/Manila'` explicitly to `toLocaleString` so displayed month/day names match the key
+they're labeling. Deliberately left unchanged: `buildSalesMetrics`'s 90-day FSN rolling window
+(a pure elapsed-time comparison, not a calendar-boundary check — an 8-hour skew doesn't move a
+90-day threshold) and `desktopApi.js`'s identical-looking date parsing (correct as-is, since it runs
+on the shop's own PH-timezone PC).
+
+New tests: `tests/ph-date-range.test.js` (4 tests, `phDateStringToUtcMillis`) and
+`tests/ph-date-trend.test.js` (9 tests, `phDateParts`/`dateKey`/`weekStart`/`weekKey`/`lastDays`/
+`lastWeeks`/`lastMonths`/`lastYears`), both written first and confirmed failing pre-fix.
+`npm run test:offline` 314/314, `npm run test:vercel` 7/7, all three builds clean as of this fix.
+
+**Not yet resolved:** the client's original ₱1,347 vs ₱2,773 comparison still needs to be re-run
+now that the report queries the correct PH day boundary — this fix corrects how the report reads a
+date range going forward, it does not retroactively prove the specific numbers reconcile. If a gap
+remains after re-running the report, the next suspect is the cashier terminal's local-only shift
+totals (`retainedCompletedSales` in `localStorage`, `Cashier.jsx`) versus the cloud's `sales`
+records, which was ruled out as the *first* cause here but not yet fully eliminated.
