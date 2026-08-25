@@ -59,16 +59,19 @@ Two options were considered:
 - **B (rejected): Dexie as a safety net only.** Keep today's in-memory `transactions`-array
   accumulation for the live running display during a normal uninterrupted shift, and only pull
   from Dexie at shift-resume and shift-close as an authoritative override.
-- **A (chosen): Dexie as the single, continuous source of truth.** `completedCashSales`/
-  `completedGcashSales` are recomputed from `cashierDb.completedSales` every time a sale
-  completes, voids, or gets refunded — for both the live display and the final shift-close number.
-  One code path, one source of truth, always.
+- **A (chosen): Dexie as the single, continuous source of truth — on the build where it exists.**
+  `completedCashSales`/`completedGcashSales` are recomputed from `cashierDb.completedSales` every
+  time a sale completes, voids, or gets refunded — for both the live display and the final
+  shift-close number, on the desktop app. (A later correction below narrows this: `Cashier.jsx`
+  turns out to be shared with a non-desktop build with no Dexie at all, which the design accounts
+  for via an additive override rather than a hard replacement — see "Nothing is removed" below.)
 
 Option B still leaves two parallel representations of the same number that can drift from each
 other, in a smaller way — which is the same structural mistake being removed. Option A means there
-is exactly one number, computed the same way, everywhere, all the time. Dexie queries here are
-cheap (`cashierId` is already an indexed field; a shift's sale count tops out in the low hundreds),
-so there is no meaningful performance cost.
+is exactly one *authoritative* number on desktop, computed the same way every time, rather than a
+value that's authoritative right after a clean start but silently degrades across a crash/restart.
+Dexie queries here are cheap (`cashierId` is already an indexed field; a shift's sale count tops
+out in the low hundreds), so there is no meaningful performance cost.
 
 ## Changes
 
@@ -82,38 +85,70 @@ stable across a resume (resuming reloads the same persisted session object; it d
 new one), so a plain time-window filter correctly scopes "this shift's sales" without needing a new
 `sessionId` field on the Dexie row.
 
-### `Cashier.jsx`: `completedCashSales`/`completedGcashSales` become async-loaded state
+### Correction after further investigation: `Cashier.jsx` is shared with a non-desktop build
 
-Replace the current synchronous `useMemo` (fed by `retainedCompletedSales` + `transactions`) with
-`useState` + a `useEffect` that calls `getShiftLedgerTotals(user.id, shiftSession.openedAt)`,
-keyed on the same dependency the old memo already used (`[transactions, shiftSession, user?.id]`)
-— `transactions` already changes at every point a sale completes, voids, or is refunded, so no new
-trigger-tracking is needed.
+`Cashier.jsx` is used by two different builds, switched via `cashierApi`
+(`src/cashier-pos/services/api.js:108`): the Tauri desktop app (`desktopCashierApi`, backed by
+Dexie) and a browser/web-mode build (`webCashierApi`, backed only by direct server calls, no local
+database at all). Per `VERCEL_DEPLOYMENT.md`, web-mode is not a real production point-of-sale
+terminal — the deployed cashier experience is desktop-only — but the code path exists (likely for
+running the cashier UI in a plain browser during development) and must not be broken. The Dexie
+table this fix relies on does not exist in that build, so the design below routes through
+`cashierApi` rather than importing Dexie access directly into `Cashier.jsx`, and treats "no Dexie
+answer" as an expected, handled case rather than an error.
 
-On query failure, **keep the last-known value** rather than resetting to 0 or an empty state, and
-surface a visible notification. A silent reset to zero here would be the exact same failure mode
-being fixed, just relocated.
+### `Cashier.jsx`: `completedCashSales`/`completedGcashSales` become async-corrected state
 
-`confirmResumeCash` must not allow confirming the physical cash count against a total that hasn't
-finished loading yet right after a restart — gate its confirm action on the ledger query's loading
-state. Comparing against a stale/zero figure at the one moment this whole fix exists to protect
-would silently recreate the bug.
+The existing synchronous computation (fed by `retainedCompletedSales` + `transactions`) is
+**kept, unchanged, as an immediate fallback value** — it already works correctly for a normal,
+uninterrupted session, and continuing to compute it synchronously means there is never a flash of
+"0" while an async query is in flight.
 
-Accepted cosmetic tradeoff: a brief `0` may render before the first query resolves on mount
-(IndexedDB reads are single-digit milliseconds for a table this size) — not a money-correctness
-issue, just a rendering one.
+On top of it, a `useEffect` (keyed on the same dependency the old memo already used —
+`[transactions, shiftSession, user?.id]`, since `transactions` already changes at every point a
+sale completes, voids, or is refunded) calls `cashierApi.getShiftLedgerTotals(user.id,
+shiftSession.openedAt)`:
 
-### Removed entirely
+- **Desktop** (`desktopCashierApi.getShiftLedgerTotals`): queries `cashierDb.completedSales`
+  (Dexie) and returns the authoritative `{ cashSales, gcashSales }`. This **overrides** the
+  fallback value already showing — it is trusted completely once it resolves.
+- **Web-mode** (`webCashierApi.getShiftLedgerTotals`): returns `null`, meaning "not supported on
+  this build." The fallback value already computed is left in place, untouched — web-mode's
+  behavior is provably identical to today's, because today's code path still runs and still owns
+  the displayed number whenever the override doesn't arrive.
+- **On any query failure** (thrown error, not a `null` response): also leave the fallback value in
+  place, and surface a visible notification. A silent reset to zero here would be the exact same
+  failure mode being fixed, just relocated.
 
-- `retainedCompletedSales` state in `Cashier.jsx`.
-- `loadRetainedCompletedSales` / `saveRetainedCompletedSales` in `cashSales.js`.
-- `syncRetainedSaleStatus` in `Cashier.jsx` — this existed only to keep the `localStorage` copy's
-  void/refund status in sync with reality; Dexie's `completedSales.put()` already does this at the
-  point of the void/refund itself, so there is no second cache left needing manual syncing.
+A separate `shiftLedgerReady` boolean starts `false` on shift open/resume and is set `true` once
+this query has resolved (successfully, as `null`, or by throwing) at least once for the current
+shift session. `confirmResumeCash`'s confirm button and the shift-close Z-read preview/print
+actions are gated on it — comparing the physical cash count against a total that hasn't had its one
+chance to be corrected yet, right after a restart, is exactly the moment this fix exists to protect.
+This does not block ongoing operation: `shiftLedgerReady` only guards the brief window right after
+shift open/resume, not every subsequent sale during the shift.
+
+### Nothing is removed — the fix is purely additive
+
+Correcting the original plan: `retainedCompletedSales` state, `loadRetainedCompletedSales`/
+`saveRetainedCompletedSales` (`cashSales.js`), `syncRetainedSaleStatus`, and every call site that
+populates or updates them (`completeActiveTransaction`, and the two void/refund handlers) **all
+stay exactly as they are today.** `syncRetainedSaleStatus` in particular is what keeps a voided/
+refunded sale's status correct in `retainedCompletedSales` — deleting it, as originally planned,
+would silently break void/refund accounting for web-mode's fallback path (which has no other way to
+learn a sale's status changed), the exact kind of regression this whole exercise is meant to avoid.
+
+On desktop, this old mechanism still runs in the background and computes a fallback value that
+gets immediately overridden by the Dexie-backed result once the effect's query resolves (which, in
+practice, is on essentially every render) — a small amount of redundant computation, not a
+correctness risk, since the fallback value it produces is never trusted or displayed once the
+override is available. On web-mode, it remains the only mechanism, completely unchanged from
+today's behavior.
 
 `getCashSalesAmount`, `getGcashSalesAmount`, `getCashSalesAmountFromSources`,
 `getGcashSalesAmountFromSources`, and `dedupedCompletedSales` in `cashSales.js` are unchanged —
-they operate on a plain array of sale-shaped objects regardless of where that array came from.
+they operate on a plain array of sale-shaped objects regardless of where that array came from, and
+are now used by both the existing fallback computation and the new Dexie-backed one.
 
 ## Testing
 
@@ -125,13 +160,17 @@ they operate on a plain array of sale-shaped objects regardless of where that ar
   several statuses, then compute the total with **no in-memory or localStorage state involved at
   all** (simulating a fresh app restart) — proving the number is correct from Dexie alone, which is
   the actual guarantee this fix provides.
-- Existing tests referencing `retainedCompletedSales`/`saveRetainedCompletedSales` updated or
-  retired to match.
+- No existing tests are removed or retired — nothing existing is deleted, per the correction above.
 
 ## Out of scope
 
-- The web-mode checkout path (`server/index.js`) has no equivalent local cache to begin with — it
-  is unaffected by this change.
+- **Web-mode's own accuracy is not fixed.** `webCashierApi.getShiftLedgerTotals` returns `null`
+  (an explicit "not supported" signal), so web-mode keeps today's `retainedCompletedSales`-based
+  calculation, with all of its existing fragility, completely unchanged. Per `VERCEL_DEPLOYMENT.md`
+  this build is not a real production point-of-sale terminal (the deployed cashier experience is
+  desktop-only), and the client's reported problem is confirmed to be on the desktop terminals — so
+  this is a deliberate scoping decision, not an oversight, made explicit here for a future session
+  to revisit if web-mode ever needs the same guarantee.
 - No changes to how `sales` are synced to the cloud, to `stock_movements`, or to any admin-facing
   report — this is purely about what the cashier terminal itself computes and prints for its own
   shift-close.
