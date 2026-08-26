@@ -1538,10 +1538,27 @@ path (including the admin override) would have blocked forever with no escape bu
 fixed by racing the query against a 5-second timeout that falls back to "no override, use the
 existing figure" rather than blocking indefinitely.
 
-New tests: `tests/shift-ledger-totals.test.js` (8 tests: correct cash/gcash summation, void
-exclusion, partial-refund netting, the split-payment edge case, the `sinceISO` boundary, per-cashier
-scoping, and a direct reconstruction-with-no-in-memory-state regression test proving the actual
-guarantee this fix provides). `npm run test:offline` 322/322, `npm run test:vercel` 7/7, all three
+A third defect was found in the final whole-branch review and fixed: `getShiftLedgerTotals` could
+not distinguish "this shift genuinely has no sales" from "the ledger was cleared underneath an open
+shift" — both returned `{cashSales: 0, gcashSales: 0}`, and `Cashier.jsx` adopted any non-null
+result as authoritative. The existing admin "Reset local terminal data" action
+(`src/admin-page/services/desktopApi.js`) clears `cashierDb.completedSales` but leaves the separate
+`nexa_retained_completed_sales` localStorage key intact, so running it mid-shift would have
+overwritten a correct total with ₱0 — reintroducing this very bug through a different door. Fixed
+by returning `null` (the same "cannot answer" signal web-mode uses, which the caller already
+handles by falling back) when the table is absent, adding `saleCount` to the result, and having
+the reconciliation effect refuse to adopt a zero-sale result while its own fallback still shows
+sales. Both admin-side sites that mutate `completedSales` (the receipt-history prune and the reset)
+now carry comments recording that this table is no longer just a receipt cache. The durable
+cash-audit write was also brought under the same `shiftLedgerReady` gate already protecting
+resume-confirm and shift-close.
+
+New tests: `tests/shift-ledger-totals.test.js` (10 tests: correct cash/gcash summation, void
+exclusion, partial-refund netting, an exchange adjustment *not* being netted out, the split-payment
+edge case, the `sinceISO` boundary, per-cashier scoping, the empty-`cashierId` case, `saleCount`
+distinguishing an emptied ledger from an empty shift, and a direct
+reconstruction-with-no-in-memory-state regression test proving the actual
+guarantee this fix provides). `npm run test:offline` 324/324, `npm run test:vercel` 7/7, all three
 builds (`build`, `build:cashier`, `build:vercel`) clean, two rounds of code review (design-time and
 post-implementation) both closed clean. Design spec:
 `docs/superpowers/specs/2026-08-26-cashier-shift-ledger-reconciliation-design.md`.

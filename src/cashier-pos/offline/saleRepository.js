@@ -491,15 +491,26 @@ function withTrueSplitPaymentMethod(sale) {
 // without needing a dedicated sessionId field on the row.
 export async function getShiftLedgerTotals(cashierId, sinceISO) {
   if (!cashierId) return { cashSales: 0, gcashSales: 0 }
-  if (!(await hasTable('completedSales'))) return { cashSales: 0, gcashSales: 0 }
+  // No table at all is "this terminal cannot answer the question", which is a
+  // different statement from "this shift has sold nothing". Return null -- the
+  // same signal web-mode uses -- so the caller keeps its existing fallback
+  // rather than adopting a zero that only means the table is absent.
+  if (!(await hasTable('completedSales'))) return null
 
   const since = String(sinceISO || '')
   const sales = (await cashierDb.completedSales.where('cashierId').equals(cashierId).toArray())
     .filter((sale) => String(sale.createdAt || '') >= since)
     .map(withTrueSplitPaymentMethod)
 
+  // saleCount lets the caller tell a genuinely empty shift apart from a
+  // ledger that was emptied underneath it -- the admin "Reset local terminal
+  // data" action clears completedSales but not the separate localStorage
+  // retained-sales cache, so a zero here mid-shift can mean either. Both
+  // totals being 0 is ambiguous on its own; 0 sales plus a non-zero fallback
+  // is storage divergence, and the caller refuses to adopt it.
   return {
     cashSales: getCashSalesAmount(sales),
     gcashSales: getGcashSalesAmount(sales),
+    saleCount: sales.length,
   }
 }

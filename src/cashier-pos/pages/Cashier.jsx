@@ -25,6 +25,20 @@ import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/
 import { isCatalogActive } from '../../utils/productLifecycle';
 import styles from '../styles/Cashier.module.css';
 
+// Resolves to `null` if `promise` has not settled within `ms`. Used by the
+// shift-ledger reconciliation effect: `.finally()` never runs on a promise
+// that never settles, so an indefinitely-hung local-database read would
+// otherwise leave the shift-close and resume-session gates stuck closed with
+// no escape but restarting the terminal. Expiry deliberately looks like "no
+// answer available" (null), not like a failure -- the caller then keeps its
+// existing fallback figure and retries on the next sale.
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
+
 function stockState(item) {
   const stockQty = Number(item.stockQty ?? item.qty) || 0;
   const lowStock = Number(item.lowStock) || 0;
@@ -761,6 +775,13 @@ const Cashier = ({ onLogout, user }) => {
   const completedCashSales = shiftLedgerOverride ? shiftLedgerOverride.cashSales : completedCashSalesFallback;
   const completedGcashSales = shiftLedgerOverride ? shiftLedgerOverride.gcashSales : completedGcashSalesFallback;
 
+  // Read by the reconciliation effect's divergence check below. Held in a ref
+  // rather than listed as a dependency on purpose: the fallback changes on
+  // every cart edit, and depending on it would undo the whole point of
+  // ledgerRefreshToken by re-firing the Dexie scan on every keystroke again.
+  const completedCashSalesFallbackRef = useRef(completedCashSalesFallback);
+  completedCashSalesFallbackRef.current = completedCashSalesFallback;
+
   // Recomputes the authoritative Dexie-backed totals every time a sale
   // completes, voids, or is refunded within this shift (ledgerRefreshToken
   // is bumped at exactly those points) -- see getShiftLedgerTotals's own
@@ -782,21 +803,20 @@ const Cashier = ({ onLogout, user }) => {
       return () => { cancelled = true; };
     }
     setShiftLedgerReady(false);
-    // .finally() only runs if the promise settles at all. If the underlying
-    // Dexie call hangs (e.g. an open() blocked behind a stuck version-change
-    // lock), shiftLedgerReady would never flip back to true and both the
-    // resume-confirm button and every shift-close path would be permanently
-    // stuck with no escape but restarting the terminal. A timeout resolves
-    // null -- i.e. "no override available, keep using the fallback" -- which
-    // is deliberately NOT the error path: taking too long is not a definite
-    // failure, and the next sale/void bumps ledgerRefreshToken and retries.
-    const withTimeout = (promise, ms) => Promise.race([
-      promise,
-      new Promise((resolve) => setTimeout(() => resolve(null), ms)),
-    ]);
+    // 5s cap so a hung local-database read can never leave the gates below
+    // stuck closed -- see withTimeout at the top of this file.
     withTimeout(Promise.resolve(cashierApi.getShiftLedgerTotals?.(user.id, shiftSession.openedAt)), 5000)
       .then((result) => {
         if (cancelled || !result) return;
+        // A zero-sale ledger while the fallback still remembers sales means
+        // the two stores have diverged -- the admin "Reset local terminal
+        // data" action clears cashierDb.completedSales but leaves the
+        // localStorage retained-sales cache intact, so adopting this would
+        // wipe a correct figure down to P0 mid-shift. That is the exact class
+        // of bug this override exists to fix, so refuse it and keep the
+        // higher, safer number. A genuinely fresh shift is unaffected: its
+        // fallback is 0 too, so the condition never trips.
+        if (result.saleCount === 0 && completedCashSalesFallbackRef.current > 0) return;
         setShiftLedgerOverride(result);
       })
       .catch((err) => {
@@ -1542,6 +1562,14 @@ const Cashier = ({ onLogout, user }) => {
     if (!shiftSession) {
       setShowShiftOpen(true);
       setCashierAuditMessage('Open a shift before saving a cash audit.');
+      return;
+    }
+    // Same protection buildShiftCloseDraft applies: auditExpectedCash is
+    // derived from completedCashSales, and this writes a durable cash-audit
+    // record, so it must not act on a total the ledger check hasn't had its
+    // chance to correct yet.
+    if (!shiftLedgerReady) {
+      setCashierAuditMessage('Verifying today\'s sales against the local ledger — try again in a moment.');
       return;
     }
     const cashBeginning = Number(cashierAuditEntry.cashBeginning);

@@ -692,6 +692,14 @@ async function fetchReceiptRecords(filters = {}) {
       await cashierDb.receiptCache.bulkPut(cloudRecords.map((record) => ({ ...record, id: record.id || record.saleId || record.transactionNo })))
     }
   }
+  // NOTE: completedSales is no longer just a receipt-history cache. It is now
+  // the authoritative local source for a cashier's live shift Cash Sales/GCash
+  // Sales figure (see getShiftLedgerTotals in
+  // src/cashier-pos/offline/saleRepository.js). Deleting a row here that
+  // belongs to an open shift removes it from that cashier's shift total. The
+  // predicate below is safe today because it only drops rows already
+  // reconciled against the cloud and not pending sync -- any future loosening
+  // of it must account for this coupling.
   if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
     await cashierDb.completedSales
       .filter((sale) => (
@@ -2302,6 +2310,15 @@ export const desktopAdminApi = {
       await cashierDb.settings.bulkDelete(credentialKeys)
     }
     if (scope === 'receipts' || scope === 'full') {
+      // NOTE: completedSales is no longer just a receipt-history cache. It is
+      // now the authoritative local source for a cashier's live shift Cash
+      // Sales/GCash Sales figure (see getShiftLedgerTotals in
+      // src/cashier-pos/offline/saleRepository.js). Running this while a shift
+      // is open empties that source without touching the separate
+      // nexa_retained_completed_sales localStorage cache, leaving the two
+      // stores divergent. Cashier.jsx defends against it (it refuses to adopt
+      // a zero-sale ledger result while its fallback still shows sales), but
+      // any change to this reset's scope needs to keep that coupling in mind.
       await Promise.all([cashierDb.receiptCache.clear(), cashierDb.completedSales.clear()])
     }
     if (scope === 'sync-status' || scope === 'full') {

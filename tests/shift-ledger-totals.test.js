@@ -143,6 +143,53 @@ test('getShiftLedgerTotals returns zeros for a missing cashierId', { concurrency
   await cashierDb.delete()
 })
 
+// Only a 'refund' adjustment takes money back out of the drawer. An
+// 'exchange' swaps goods at equal value and must leave cash sales untouched
+// -- netting it out would undercount the shift, which is the exact class of
+// bug this whole fix exists to eliminate.
+test('getShiftLedgerTotals does not net out an exchange adjustment', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+
+  await cashierDb.completedSales.put(completedSale({
+    clientSaleId: 'a',
+    status: 'adjusted',
+    totalAmount: 100,
+    cashAmount: 100,
+    adjustments: [{ type: 'exchange', amount: 40 }],
+  }))
+
+  const totals = await getShiftLedgerTotals('cashier-1', '2026-08-25T00:00:00.000Z')
+  assert.equal(totals.cashSales, 100, 'an exchange is not a refund and must not reduce cash sales')
+
+  await cashierDb.delete()
+})
+
+// The admin "Reset local terminal data" action clears completedSales but not
+// the separate localStorage retained-sales cache, so a bare {cashSales: 0}
+// mid-shift is ambiguous: genuinely no sales, or a ledger emptied underneath
+// an open shift. saleCount disambiguates it for the caller, which refuses to
+// adopt a zero-sale result while its own fallback still shows sales.
+test('getShiftLedgerTotals reports saleCount so an emptied ledger is distinguishable from an empty shift', { concurrency: false }, async () => {
+  await cashierDb.delete()
+  await initializeCashierDb()
+
+  await cashierDb.completedSales.bulkPut([
+    completedSale({ clientSaleId: 'a', totalAmount: 100, cashAmount: 100 }),
+    completedSale({ clientSaleId: 'b', totalAmount: 40, cashAmount: 40 }),
+  ])
+  const withSales = await getShiftLedgerTotals('cashier-1', '2026-08-25T00:00:00.000Z')
+  assert.equal(withSales.saleCount, 2)
+
+  // Simulates the admin reset landing mid-shift.
+  await cashierDb.completedSales.clear()
+  const afterReset = await getShiftLedgerTotals('cashier-1', '2026-08-25T00:00:00.000Z')
+  assert.equal(afterReset.cashSales, 0)
+  assert.equal(afterReset.saleCount, 0, 'zero totals must come with a zero saleCount so the caller can detect divergence')
+
+  await cashierDb.delete()
+})
+
 // This is the actual guarantee the whole fix provides: the number is
 // correct from Dexie alone, with zero dependency on any in-memory or
 // localStorage state -- i.e. it survives exactly the kind of crash/restart
