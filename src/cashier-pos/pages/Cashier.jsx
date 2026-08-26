@@ -522,6 +522,14 @@ const Cashier = ({ onLogout, user }) => {
   // corrected by the override -- see the effect below. Does not otherwise
   // affect normal ringing-up during a shift.
   const [shiftLedgerReady, setShiftLedgerReady] = useState(false);
+  // Drives the reconciliation effect below. Deliberately NOT `transactions`:
+  // that array is rebuilt on every cart mutation (adding an item, editing a
+  // quantity or discount, typing in the customer field), which would fire an
+  // unbounded Dexie scan of this cashier's whole sale history on every
+  // keystroke. This counter changes if and only if a sale actually completes,
+  // is voided, or is refunded/exchanged -- the only events that can move the
+  // ledger totals.
+  const [ledgerRefreshToken, setLedgerRefreshToken] = useState(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
@@ -754,21 +762,39 @@ const Cashier = ({ onLogout, user }) => {
   const completedGcashSales = shiftLedgerOverride ? shiftLedgerOverride.gcashSales : completedGcashSalesFallback;
 
   // Recomputes the authoritative Dexie-backed totals every time a sale
-  // completes, voids, or is refunded within this shift (transactions
-  // changes at every one of those points already) -- see
-  // getShiftLedgerTotals's own comment for why this is trustworthy where
-  // the fallback above is not. A thrown error or a null result (web-mode)
-  // leaves shiftLedgerOverride untouched, so the fallback value already
-  // showing is never replaced with something worse.
+  // completes, voids, or is refunded within this shift (ledgerRefreshToken
+  // is bumped at exactly those points) -- see getShiftLedgerTotals's own
+  // comment for why this is trustworthy where the fallback above is not. A
+  // thrown error, a null result (web-mode), or a timeout leaves
+  // shiftLedgerOverride untouched, so the fallback value already showing is
+  // never replaced with something worse.
   useEffect(() => {
     let cancelled = false;
-    if (!shiftSession || !user?.id) {
+    // A missing openedAt would make getShiftLedgerTotals' `createdAt >= ''`
+    // window match every sale this cashier has ever rung up on this terminal,
+    // silently turning a shift total into an all-time total. Not reachable
+    // today (openShift always stamps openedAt), but this is a money figure --
+    // treat it exactly like "no shift" rather than querying with an empty
+    // lower bound.
+    if (!shiftSession || !shiftSession.openedAt || !user?.id) {
       setShiftLedgerOverride(null);
       setShiftLedgerReady(true);
       return () => { cancelled = true; };
     }
     setShiftLedgerReady(false);
-    Promise.resolve(cashierApi.getShiftLedgerTotals?.(user.id, shiftSession.openedAt))
+    // .finally() only runs if the promise settles at all. If the underlying
+    // Dexie call hangs (e.g. an open() blocked behind a stuck version-change
+    // lock), shiftLedgerReady would never flip back to true and both the
+    // resume-confirm button and every shift-close path would be permanently
+    // stuck with no escape but restarting the terminal. A timeout resolves
+    // null -- i.e. "no override available, keep using the fallback" -- which
+    // is deliberately NOT the error path: taking too long is not a definite
+    // failure, and the next sale/void bumps ledgerRefreshToken and retries.
+    const withTimeout = (promise, ms) => Promise.race([
+      promise,
+      new Promise((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
+    withTimeout(Promise.resolve(cashierApi.getShiftLedgerTotals?.(user.id, shiftSession.openedAt)), 5000)
       .then((result) => {
         if (cancelled || !result) return;
         setShiftLedgerOverride(result);
@@ -781,7 +807,7 @@ const Cashier = ({ onLogout, user }) => {
         if (!cancelled) setShiftLedgerReady(true);
       });
     return () => { cancelled = true; };
-  }, [transactions, shiftSession, user?.id]);
+  }, [ledgerRefreshToken, shiftSession, user?.id]);
 
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
@@ -1395,7 +1421,11 @@ const Cashier = ({ onLogout, user }) => {
     const shouldSkipCashCount = skipCashCount === true;
     const draft = shouldSkipCashCount ? buildShiftCloseDraft(true) : shiftCloseDraft;
     if (!draft) {
-      setShiftError('Preview and print the Z-read before closing the shift.');
+      // When the ledger check is still in flight, buildShiftCloseDraft has
+      // already set the accurate "Verifying today's sales..." message -- don't
+      // stomp on it with a preview/print instruction that doesn't even apply
+      // to the admin-override path (which has no preview step).
+      if (shiftLedgerReady) setShiftError('Preview and print the Z-read before closing the shift.');
       return false;
     }
     if (!shouldSkipCashCount && shiftCloseStep !== 'printed') {
@@ -2335,6 +2365,8 @@ const Cashier = ({ onLogout, user }) => {
           rawStatus: 'adjusted',
           adjustments: result.adjustments || [],
         });
+      // A void or refund/exchange just changed this shift's ledger totals.
+      setLedgerRefreshToken((n) => n + 1);
 
       setLookupSale(lookupMode === 'void'
         ? { ...lookupSale, status: 'Voided', rawStatus: 'voided', voidedAt: result.voidedAt, approvedBy: result.approvedBy }
@@ -2604,6 +2636,8 @@ const Cashier = ({ onLogout, user }) => {
         voidedAt: result.voidedAt,
         voidReason: completedVoidReason.trim(),
       });
+      // A void just changed this shift's ledger totals.
+      setLedgerRefreshToken((n) => n + 1);
 
       await loadProducts();
       if (showHistory) await loadTransactionHistory();
@@ -2978,6 +3012,9 @@ const Cashier = ({ onLogout, user }) => {
           saveRetainedCompletedSales(next, user?.id);
         return next;
       });
+      // A sale just landed in the local ledger -- re-run the authoritative
+      // total (see the reconciliation effect near the top of this component).
+      setLedgerRefreshToken((n) => n + 1);
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
       setActiveTransaction(completingTransactionId);
       setSearchProduct('');
