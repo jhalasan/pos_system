@@ -1498,3 +1498,68 @@ date range going forward, it does not retroactively prove the specific numbers r
 remains after re-running the report, the next suspect is the cashier terminal's local-only shift
 totals (`retainedCompletedSales` in `localStorage`, `Cashier.jsx`) versus the cloud's `sales`
 records, which was ruled out as the *first* cause here but not yet fully eliminated.
+
+**M27. HIGH — ✅ FIXED. The cashier terminal's own shift-close "Cash Sales" figure could silently
+undercount, with no relationship to the underlying sales.** `Cashier.jsx`'s `completedCashSales`/
+`completedGcashSales` — printed on the Z-read and written to the durable cash-audit log — were
+computed entirely from `retainedCompletedSales`, a JSON blob in raw `localStorage`
+(`src/cashier-pos/utils/cashSales.js`). Two real defects fed into it: `saveRetainedCompletedSales`'s
+`localStorage.setItem` had no error handling (a sale already recorded successfully in the cloud
+could silently fail to register in the local running total), and `loadRetainedCompletedSales`'s
+parse failure silently returned `[]` on any corruption, resetting an entire shift's tally with no
+warning. Either failure reproduces the exact client-reported symptom: a terminal-reported total
+lower than reality, with the drawer's actual cash correct (since every sale genuinely happened) —
+surfacing as unexplained "excess" cash rather than a real shortage. Compounding this,
+`confirmResumeCash` (the post-restart cash-count check) treated any mismatch as a cash-handling
+event and silently booked a compensating Cash In/Out adjustment, papering over the data-loss bug
+as if it were a physical counting mistake.
+
+This app already had a proper, durable, transactional local store for exactly this data —
+`cashierDb.completedSales` (Dexie), written atomically in the same transaction as every sale, void,
+and refund (`saleRepository.js`) — it was simply never used for this figure. Fix: new
+`getShiftLedgerTotals(cashierId, sinceISO)` recomputes the total from that table and is layered as
+an authoritative override on top of the existing calculation (which stays unchanged, and remains
+the only source of this number for the separate, non-production web-mode cashier build — see the
+design spec's explicit scoping). Handles a subtlety found during design review: a split-payment
+sale is stored with `paymentMethod` coerced to `'cash'` (PocketBase's `payment_method` field has no
+`split` value), which would otherwise cause `getCashSalesAmount` to count its entire total as cash
+instead of splitting it correctly — corrected before netting.
+
+Two further real defects were found and fixed in a post-implementation review round, not part of
+the original design: (1) the reconciliation effect was keyed on the `transactions` array — intended
+as a proxy for "a sale/void/refund just completed," but in fact rebuilt on every cart mutation
+(item add, qty edit, discount, customer field), so an unbounded Dexie scan of the cashier's full
+sales history on that terminal ran on every keystroke; fixed by adding a dedicated
+`ledgerRefreshToken` counter, incremented only at the actual sale-complete/void/refund/exchange
+call sites, and keying the effect on that instead. (2) `shiftLedgerReady`'s gate used only
+`.finally()` to clear itself, which covers the query resolving or rejecting but not one that never
+settles (e.g. a stuck Dexie version-change lock) — in that state resume-confirm and every shift-close
+path (including the admin override) would have blocked forever with no escape but an app restart;
+fixed by racing the query against a 5-second timeout that falls back to "no override, use the
+existing figure" rather than blocking indefinitely.
+
+New tests: `tests/shift-ledger-totals.test.js` (8 tests: correct cash/gcash summation, void
+exclusion, partial-refund netting, the split-payment edge case, the `sinceISO` boundary, per-cashier
+scoping, and a direct reconstruction-with-no-in-memory-state regression test proving the actual
+guarantee this fix provides). `npm run test:offline` 322/322, `npm run test:vercel` 7/7, all three
+builds (`build`, `build:cashier`, `build:vercel`) clean, two rounds of code review (design-time and
+post-implementation) both closed clean. Design spec:
+`docs/superpowers/specs/2026-08-26-cashier-shift-ledger-reconciliation-design.md`.
+
+**Not independently verified:** the plan called for a manual walkthrough of this change in the
+running desktop app (cash/gcash/split sales, a void, a simulated mid-shift restart, a full shift
+close) before shipping. That walkthrough was **not performed** — this checkout's `.env` points at
+the client's live production PocketBase, and running it would have written fake sales, voids, and
+session records into production data. The human partner was asked directly and explicitly chose to
+accept the automated-test, full-regression-suite, and two-round code-review coverage above in place
+of the live walkthrough, rather than risk touching production data to get it. This means the one
+specific risk that code review cannot fully catch — a UI-wiring mistake invisible in a diff read,
+such as the `shiftLedgerReady` gate never clearing, or clearing too early — has not been confirmed
+against the real running app, particularly for the resume-after-restart flow. If wrong, this would
+surface visibly (a cashier stuck on a disabled button, or the original undercount bug persisting)
+the first time a real shift is closed post-deploy, not silently.
+
+**Not yet resolved:** whether this fix, combined with M25/M26's timezone fix, fully explains the
+client's original ₱1,347 vs ₱2,773 discrepancy is still unconfirmed pending the client's next shift
+close — this closes every mechanism found during investigation, but the original two numbers were
+never directly reproduced from the live data at the time.
