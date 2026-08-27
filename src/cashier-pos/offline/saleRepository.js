@@ -182,13 +182,19 @@ export async function finalizeSaleLocally(sale) {
   return pendingSale
 }
 
-export async function getPendingSales() {
+export async function getPendingSales({ fromISO, toISO } = {}) {
   await initializeCashierDb()
+  if (fromISO && toISO) {
+    return cashierDb.pendingSales.where('createdAt').between(fromISO, toISO, true, true).toArray()
+  }
   return cashierDb.pendingSales.orderBy('createdAt').toArray()
 }
 
-export async function getCompletedSales() {
+export async function getCompletedSales({ fromISO, toISO } = {}) {
   if (!(await hasTable('completedSales'))) return []
+  if (fromISO && toISO) {
+    return cashierDb.completedSales.where('createdAt').between(fromISO, toISO, true, true).reverse().toArray()
+  }
   return cashierDb.completedSales.orderBy('createdAt').reverse().toArray()
 }
 

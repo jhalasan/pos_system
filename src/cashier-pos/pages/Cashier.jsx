@@ -20,6 +20,7 @@ import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, getGcashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { restoreCashierTransactions } from '../utils/transactionRestore';
 import { reservedQuantityDetail } from '../utils/cartReservation';
+import { addDays, isToday, toDateInputValue, dateInputValueToDate } from '../utils/historyDateRange';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import { isCatalogActive } from '../../utils/productLifecycle';
@@ -547,6 +548,17 @@ const Cashier = ({ onLogout, user }) => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [historySearch, setHistorySearch] = useState('');
+  // The date the "Recent Transactions" list is scoped to -- defaults to
+  // today. Fixes a client-reported bug where the list claimed to show
+  // "today" but actually had no date bound at all, silently mixing in every
+  // prior day's transactions (and getting slower every day the shop
+  // operates, since it downloaded the entire history on every open).
+  const [historyDate, setHistoryDate] = useState(() => new Date());
+  // Six separate call sites can trigger a history reload while the modal is
+  // open (a sale completing, a void, Sync Now, ...). Without a request
+  // token, two overlapping loads would race and whichever happened to
+  // *resolve* last would win, not whichever was *triggered* last.
+  const historyRequestTokenRef = useRef(0);
   const [historyReprintingId, setHistoryReprintingId] = useState('');
   const [historyReprintError, setHistoryReprintError] = useState('');
   const [nextTransactionNo, setNextTransactionNo] = useState('');
@@ -1844,16 +1856,29 @@ const Cashier = ({ onLogout, user }) => {
   }
 
   async function loadTransactionHistory() {
+    const requestToken = ++historyRequestTokenRef.current;
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      setHistoryRecords(await cashierApi.salesHistory({}));
+      const records = await cashierApi.salesHistory({ date: historyDate });
+      if (requestToken !== historyRequestTokenRef.current) return; // a newer load superseded this one
+      setHistoryRecords(records);
     } catch (err) {
+      if (requestToken !== historyRequestTokenRef.current) return;
       setHistoryError(err.message || 'Unable to load transaction history.');
     } finally {
-      setHistoryLoading(false);
+      if (requestToken === historyRequestTokenRef.current) setHistoryLoading(false);
     }
   }
+
+  // Reloads whenever the modal is opened or the selected date changes (Prev/
+  // Next/Today). historyDate is a fresh `new Date()` on every open, so this
+  // also covers "load on open" without a separate direct call there.
+  useEffect(() => {
+    if (!showHistory) return;
+    loadTransactionHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadTransactionHistory closes over historyDate/historyRequestTokenRef and is recreated every render; re-running this effect on its identity would defeat the point of keying on [showHistory, historyDate].
+  }, [showHistory, historyDate]);
 
   async function loadNextTransactionNumber() {
     try {
@@ -2576,7 +2601,7 @@ const Cashier = ({ onLogout, user }) => {
     setShowHistory(true);
     setHistorySearch('');
     setHistoryReprintError('');
-    loadTransactionHistory();
+    setHistoryDate(new Date());
   };
 
   const handleSyncNow = async () => {
@@ -4970,6 +4995,29 @@ const Cashier = ({ onLogout, user }) => {
         title="Recent Transactions"
         className={styles['history-modal']}
       >
+        <div className={styles['history-date-nav']}>
+          <Button variant="outline" size="sm" onClick={() => setHistoryDate((current) => addDays(current, -1))}>
+            &larr; Prev
+          </Button>
+          <Input
+            type="date"
+            value={toDateInputValue(historyDate)}
+            onChange={(e) => {
+              if (e.target.value) setHistoryDate(dateInputValueToDate(e.target.value));
+            }}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isToday(historyDate)}
+            onClick={() => setHistoryDate((current) => addDays(current, 1))}
+          >
+            Next &rarr;
+          </Button>
+          {!isToday(historyDate) && (
+            <Button variant="outline" size="sm" onClick={() => setHistoryDate(new Date())}>Today</Button>
+          )}
+        </div>
         <div className={styles['history-tools']}>
           <Input
             label="Search Transaction No."
@@ -4983,7 +5031,9 @@ const Cashier = ({ onLogout, user }) => {
         {historyLoading && <div className={styles['history-empty']}>Loading recent transactions...</div>}
         {historyError && <div className={styles['history-empty']}>{historyError}</div>}
         {!historyLoading && !historyError && filteredHistoryRecords.length === 0 && (
-          <div className={styles['history-empty']}>No transactions found for today.</div>
+          <div className={styles['history-empty']}>
+            No transactions found for {isToday(historyDate) ? 'today' : toDateInputValue(historyDate)}.
+          </div>
         )}
         {!historyLoading && !historyError && filteredHistoryRecords.length > 0 && (
           <div className={styles['history-list']}>

@@ -2187,6 +2187,17 @@
   max-width: min(920px, calc(100vw - 32px));
 }
 
+.history-date-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.history-date-nav .field {
+  margin-bottom: 0;
+}
+
 .history-tools {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2517,6 +2528,10 @@
 }
 
 @media (max-width: 640px) {
+  .history-date-nav {
+    flex-wrap: wrap;
+  }
+
   .history-tools {
     grid-template-columns: 1fr;
   }

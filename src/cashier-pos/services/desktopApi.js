@@ -28,6 +28,8 @@ import {
 import { isDeveloperApprovalBarcode } from '../../utils/developerMode'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
+import { startOfLocalDay, endOfLocalDay } from '../utils/historyDateRange'
+import { buildSalesHistoryFilter } from '../utils/salesHistoryFilter'
 import { findApprovalHashMatch } from '../../utils/managerApprovalHash'
 
 let runtimePromise
@@ -329,13 +331,12 @@ async function cloudSaleItems(pb, saleId) {
   }).then((items) => items.map(cloudSaleItemToLocal))
 }
 
-async function cloudSalesHistory({ cashierId } = {}) {
+async function cloudSalesHistory({ cashierId, fromISO, toISO } = {}) {
   if (globalThis.navigator && !globalThis.navigator.onLine) return []
 
   const activeRuntime = await runtime()
-  const filter = cashierId
-    ? activeRuntime.pb.filter('cashier_id = {:cashierId}', { cashierId })
-    : ''
+  const { filter: rawFilter, params } = buildSalesHistoryFilter({ cashierId, fromISO, toISO })
+  const filter = rawFilter ? activeRuntime.pb.filter(rawFilter, params) : ''
   const sales = await activeRuntime.pb.collection('sales').getFullList({
     filter,
     sort: '-created_at,-created',
@@ -351,8 +352,20 @@ async function cloudSalesHistory({ cashierId } = {}) {
   // silently dropping line items on the overflowed requests). Mirrors the
   // same fix already shipped on the admin side (see
   // admin-page/services/desktopApi.js's fetchReceiptRecords).
+  //
+  // Also bounded by the same date range as the sales above -- previously
+  // unfiltered, this pulled EVERY sale_item ever recorded, store-wide, on
+  // every history open, and only got slower as the shop's history grew. A
+  // sale_item's own `created` timestamp could in theory differ from its
+  // parent sale's `created_at` by a moment right at a day boundary, but both
+  // are written in the same request/transaction, so this is a same-second
+  // event in practice; this list is display-only and does not feed any
+  // accounting figure (unlike getShiftLedgerTotals), so a hypothetical miss
+  // here has no financial impact.
   const allItemsFetchFailed = { failed: false }
+  const { filter: itemsRawFilter, params: itemsParams } = buildSalesHistoryFilter({ fromISO, toISO, dateField: 'created' })
   const allSaleItems = await activeRuntime.pb.collection('sale_items').getFullList({
+    filter: itemsRawFilter ? activeRuntime.pb.filter(itemsRawFilter, itemsParams) : '',
     sort: 'created',
     expand: 'product_id',
     requestKey: null,
@@ -997,16 +1010,27 @@ export const desktopCashierApi = {
     return { transactionNo: await peekNextTransactionNumber() }
   },
 
-  async salesHistory({ cashierId }) {
-    const [completedSales, pendingSales] = await Promise.all([getCompletedSales(), getPendingSales()])
+  // `date` defaults to today and always scopes the whole result to that one
+  // calendar day -- fixes a client-reported bug where this had no date bound
+  // at all, silently mixing in every prior day's transactions and getting
+  // slower to load every day the shop operates (see
+  // docs/superpowers/plans -- the history-list slowness/mixing fix).
+  async salesHistory({ cashierId, date = new Date() } = {}) {
+    const fromISO = startOfLocalDay(date).toISOString()
+    const toISO = endOfLocalDay(date).toISOString()
+    const [completedSales, pendingSales] = await Promise.all([
+      getCompletedSales({ fromISO, toISO }),
+      getPendingSales({ fromISO, toISO }),
+    ])
     const pendingIds = new Set(pendingSales.map((sale) => sale.clientSaleId))
     const localSales = (completedSales.length ? completedSales : pendingSales)
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .map((sale) => toCashierSale(sale, pendingIds))
     const cachedCloudSales = await cashierDb.receiptCache
+      .where('createdAt').between(fromISO, toISO, true, true)
       .filter((sale) => !cashierId || sale.cashierId === cashierId)
       .toArray()
-    const cloudResults = await cloudSalesHistory({ cashierId })
+    const cloudResults = await cloudSalesHistory({ cashierId, fromISO, toISO })
     const cloudSales = cloudResults.map((result) => result.sale)
     // Never persist a sale whose item fetch failed - caching a wrongly-empty
     // items list would make that failure permanent (see cloudSalesHistory).
