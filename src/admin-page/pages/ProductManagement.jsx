@@ -11,53 +11,15 @@ import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
-import { formatQty, pluralizeUnit, floorQty, isFractional } from '../../utils/quantity'
+import { formatQty } from '../../utils/quantity'
+import { getInventoryBreakdown, getInventoryRemainderBreakdown, breakdownUnitLabel } from '../../utils/inventoryBreakdown'
 import { findArchivedBarcodeOwner, getProductBarcodes, releasedBarcodePayload } from '../../utils/productLifecycle'
-
-function getInventoryBreakdown(product) {
-  const baseQty = Number(product.qty) || 0
-  const fractional = isFractional(product)
-  const units = normalizeSellingUnits(product)
-    .filter((unit) => Number(unit.conversion) > 0)
-    .sort((a, b) => Number(b.conversion) - Number(a.conversion))
-
-  return units.map((unit) => ({
-    ...unit,
-    total: fractional ? floorQty(baseQty / Number(unit.conversion)) : Math.floor(baseQty / Number(unit.conversion)),
-  }))
-}
-
-function getInventoryRemainderBreakdown(product) {
-  const fractional = isFractional(product)
-  let remainingQty = Number(product.qty) || 0
-  const units = normalizeSellingUnits(product)
-    .filter((unit) => Number(unit.conversion) > 0)
-    .sort((a, b) => Number(b.conversion) - Number(a.conversion))
-
-  return units.map((unit, index) => {
-    const conversion = Number(unit.conversion)
-    const count = index === units.length - 1
-      ? remainingQty
-      : (fractional ? floorQty(remainingQty / conversion) : Math.floor(remainingQty / conversion))
-    remainingQty -= count * conversion
-    return {
-      ...unit,
-      count,
-      total: fractional ? floorQty((Number(product.qty) || 0) / conversion) : Math.floor((Number(product.qty) || 0) / conversion),
-    }
-  })
-}
 
 function primaryInventoryLabel(product) {
   return {
     main: formatQty(product.qty),
     detail: '',
   }
-}
-
-function breakdownUnitLabel(product, unit) {
-  if (Number(unit.conversion) > 1) return `${unit.unit} (F)`
-  return `${pluralizeUnit(product.unit, unit.count)} (L)`
 }
 
 function formatProductPrice(product) {
@@ -512,11 +474,20 @@ export default function ProductManagement() {
                 const barcodes = getProductBarcodes(p)
                 const duplicatedProductBarcodes = barcodes.filter((barcode) => duplicateBarcodes.has(barcode))
                 const breakdown = getInventoryBreakdown(p)
-                const remainderBreakdown = getInventoryRemainderBreakdown(p)
+                // Zero-count rows (e.g. "0 Sack" once all stock is already
+                // accounted for by smaller units) are hidden -- they carry no
+                // information and only clutter the expanded view.
+                const breakdownRows = getInventoryRemainderBreakdown(p).filter((unit) => unit.count > 0)
                 // Legacy records can have the multi-unit flag set even when
                 // only one base selling unit exists. A breakdown is useful
                 // only when there are multiple actual unit rows to display.
+                // This reflects configuration (drives the "Product group"
+                // label) independent of current stock.
                 const hasMultipleUnits = breakdown.length > 1
+                // The "See more" toggle additionally needs something to
+                // actually show once expanded -- an out-of-stock product
+                // shouldn't offer an expander that opens to an empty list.
+                const canShowBreakdown = hasMultipleUnits && breakdownRows.length > 0
                 const inventoryLabel = primaryInventoryLabel(p)
                 const isExpanded = expandedProducts.has(p.id)
                 const stockToneClass = isOutOfStock || p.status === 'critical'
@@ -558,7 +529,7 @@ export default function ProductManagement() {
                         <div className="stock-stack">
                           <strong>{inventoryLabel.main}</strong>
                           {inventoryLabel.detail ? <small>{inventoryLabel.detail}</small> : null}
-                          {hasMultipleUnits ? (
+                          {canShowBreakdown ? (
                             <button
                               type="button"
                               className="link-btn stock-see-more"
@@ -601,7 +572,7 @@ export default function ProductManagement() {
                         </div>
                       </td>
                     </tr>
-                    {isExpanded ? remainderBreakdown.map((unit, index) => (
+                    {isExpanded ? breakdownRows.map((unit, index) => (
                       <tr className="product-unit-row product-breakdown-row" key={`${p.id}-${unit.barcode || unit.unit}-${unit.conversion}`}>
                         <td />
                         <td>
