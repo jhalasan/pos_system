@@ -924,6 +924,16 @@
   font-weight: 700;
 }
 
+.gross-sale-cell {
+  background: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+.gross-sale-cell strong {
+  color: #1d4ed8;
+  font-size: 17px;
+}
+
 .positive {
   color: #15803d !important;
 }

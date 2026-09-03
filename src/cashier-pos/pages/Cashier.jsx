@@ -4702,6 +4702,15 @@ const Cashier = ({ onLogout, user }) => {
         <div style={{ marginBottom: '18px' }}>
           <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', marginBottom: '10px' }}>End-of-Day Summary</div>
           <div className={styles['audit-summary-grid']}>
+            {/* Total revenue (cash + GCash), shown first/highlighted so it
+                can't be missed the way a cashier reading only Cash
+                Sales/Expected Cash previously could overlook GCash
+                entirely -- see buildShiftCloseReceiptText for the printed
+                receipt's matching placement. */}
+            <div className={styles['gross-sale-cell']}>
+              <span>Gross Sale</span>
+              <strong>{money(roundMoney(completedCashSales + completedGcashSales))}</strong>
+            </div>
             <div><span>Opening Cash</span><strong>{money(shiftOpeningCash)}</strong></div>
             <div><span>Cash Sales</span><strong>{money(completedCashSales)}</strong></div>
             <div><span>Cash In</span><strong>{money(shiftCashIn)}</strong></div>

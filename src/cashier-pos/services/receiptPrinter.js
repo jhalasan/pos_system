@@ -199,6 +199,11 @@ export function buildShiftCloseReceiptText({
   const openedDate = openedAt ? new Date(openedAt) : new Date()
   const closedDate = closedAt ? new Date(closedAt) : new Date()
   const breakdown = Array.isArray(denominations) ? denominations : []
+  // Total revenue for the shift, cash + GCash combined. Printed prominently
+  // up top, before the cash-count block -- previously GCash Sales was a
+  // single line at the very bottom, easy to miss if a cashier only read
+  // Cash Sales/Expected Cash and walked away thinking that was the total.
+  const grossSale = roundMoney(Number(cashSales || 0) + Number(gcashSales || 0))
 
   return [
     center(STORE_NAME),
@@ -208,6 +213,8 @@ export function buildShiftCloseReceiptText({
     columns('Cashier', cashierName || 'Cashier'),
     columns('Opened', openedDate.toLocaleString('en-PH')),
     columns('Closed', closedDate.toLocaleString('en-PH')),
+    line(),
+    columns('Gross Sale', moneyValue(grossSale)),
     line(),
     columns('Opening Cash', moneyValue(openingAmount)),
     columns('Cash Sales', moneyValue(cashSales)),
