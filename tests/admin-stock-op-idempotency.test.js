@@ -165,3 +165,128 @@ test('a stockOutInventory op whose cloud write already succeeded is not re-appli
 
   await adminDb.delete()
 })
+
+// Root cause of a live "Stock In enters a different quantity than what was
+// counted" report: reconcileProductStock (called from inside
+// createStockMovement) already self-heals PocketBase's true quantity when
+// two terminals race off the same stale baseline -- see
+// stockMovementReconciler.js's own comment on why delta-summation handles
+// this correctly. But the caller kept using `updated`, the product object
+// captured from the WRITE THAT HAPPENED BEFORE that self-correction ran, to
+// populate the local (Dexie) cache the admin's own screen reads from. The
+// cloud's true number was already fixed; the screen just never found out.
+//
+// Simulated here via an existing stock_movement whose chain no longer
+// matches the current cloud quantity (exactly what a concurrent race
+// produces): the movement says {previous: 20, new: 500}, but the cloud's
+// current quantity is 400 (as if a second, later write clobbered it).
+// Processing one more +10 scanInventory op must leave the LOCAL cache at
+// the correctly-reconciled 510 (20 baseline + 480 existing delta + 10 new
+// delta), not the pre-reconcile 410 the raw write itself returned.
+test('the local cache reflects reconcileProductStock\'s correction, not the pre-reconcile write result', { concurrency: false }, async () => {
+  await adminDb.delete()
+  await initializeAdminDb()
+  resetPocketBaseRateLimit()
+
+  const op = stockOp({ type: 'scanInventory', payload: { qty: 10, barcode: '4806504613212' } })
+  const { pb, calls, getCurrentProduct } = makeFakePb({
+    productRecord: baseProductRecord({ quantity: 400 }),
+    existingMovements: [
+      {
+        id: 'movement0000001',
+        product_id: PRODUCT_ID,
+        movement_type: 'stock_in',
+        quantity: 480,
+        previous_quantity: 20,
+        new_quantity: 500,
+        reference_type: 'scanInventory',
+        reference_id: 'op-other-terminal',
+        created: '2026-08-19T16:04:00.000Z',
+      },
+    ],
+  })
+  const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+  await adminDb.products.put({ id: PRODUCT_ID, name: 'Marlboro Red Original', barcode: '4806504613212', qty: 400, price: 10 })
+  await adminDb.pendingOps.put(op)
+
+  await engine.uploadOperation(op)
+
+  // reconcileProductStock's own delta-summation: 20 + 480 + 10 = 510.
+  assert.equal(Number(getCurrentProduct().quantity), 510, "PocketBase's own true quantity must be the reconciled total")
+  const localProduct = await adminDb.products.get(PRODUCT_ID)
+  assert.equal(localProduct.qty, 510, "the admin's local cache (what the Inventory screen displays) must match the reconciled total, not the raw pre-reconcile write result of 410")
+
+  await adminDb.delete()
+})
+
+test('the same fix applies to stockOutInventory', { concurrency: false }, async () => {
+  await adminDb.delete()
+  await initializeAdminDb()
+  resetPocketBaseRateLimit()
+
+  const op = stockOp({ type: 'stockOutInventory', payload: { qty: 10, barcode: '4806504613212' } })
+  const { pb, getCurrentProduct } = makeFakePb({
+    productRecord: baseProductRecord({ quantity: 400 }),
+    existingMovements: [
+      {
+        id: 'movement0000001',
+        product_id: PRODUCT_ID,
+        movement_type: 'stock_in',
+        quantity: 480,
+        previous_quantity: 20,
+        new_quantity: 500,
+        reference_type: 'scanInventory',
+        reference_id: 'op-other-terminal',
+        created: '2026-08-19T16:04:00.000Z',
+      },
+    ],
+  })
+  const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+  await adminDb.products.put({ id: PRODUCT_ID, name: 'Marlboro Red Original', barcode: '4806504613212', qty: 400, price: 10 })
+  await adminDb.pendingOps.put(op)
+
+  await engine.uploadOperation(op)
+
+  // 20 baseline + 480 existing delta - 10 this op's delta = 490.
+  assert.equal(Number(getCurrentProduct().quantity), 490)
+  const localProduct = await adminDb.products.get(PRODUCT_ID)
+  assert.equal(localProduct.qty, 490, 'local cache must match the reconciled total, not the raw write result of 390')
+
+  await adminDb.delete()
+})
+
+test('the same fix applies to adjustInventoryCount (Stock Count)', { concurrency: false }, async () => {
+  await adminDb.delete()
+  await initializeAdminDb()
+  resetPocketBaseRateLimit()
+
+  const op = stockOp({ type: 'adjustInventoryCount', payload: { countedQty: 410 } })
+  const { pb, getCurrentProduct } = makeFakePb({
+    productRecord: baseProductRecord({ quantity: 400 }),
+    existingMovements: [
+      {
+        id: 'movement0000001',
+        product_id: PRODUCT_ID,
+        movement_type: 'stock_in',
+        quantity: 480,
+        previous_quantity: 20,
+        new_quantity: 500,
+        reference_type: 'scanInventory',
+        reference_id: 'op-other-terminal',
+        created: '2026-08-19T16:04:00.000Z',
+      },
+    ],
+  })
+  const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+  await adminDb.products.put({ id: PRODUCT_ID, name: 'Marlboro Red Original', barcode: '4806504613212', qty: 400, price: 10 })
+  await adminDb.pendingOps.put(op)
+
+  await engine.uploadOperation(op)
+
+  // Count op's own delta is 410 - 400 = 10, same reconciled math as scanInventory: 510.
+  assert.equal(Number(getCurrentProduct().quantity), 510)
+  const localProduct = await adminDb.products.get(PRODUCT_ID)
+  assert.equal(localProduct.qty, 510, 'local cache must match the reconciled total, not the raw write result of 410')
+
+  await adminDb.delete()
+})

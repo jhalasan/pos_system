@@ -1580,3 +1580,53 @@ the first time a real shift is closed post-deploy, not silently.
 client's original ₱1,347 vs ₱2,773 discrepancy is still unconfirmed pending the client's next shift
 close — this closes every mechanism found during investigation, but the original two numbers were
 never directly reproduced from the live data at the time.
+
+## Live-support fix, 2026-09-04 (client-reported Stock In entering a different quantity)
+
+Client report: "ung sa stock in sir bah..same lng ghpon..iba ung i stock in mo iba ung e input
+nya" (Stock In records a different quantity than what was actually entered) — a concrete example
+given: entered 30 cases, checked, saw 39. Initially suspected as a recurrence of the already-fixed
+double-apply-on-replay bug (`e205870`, in every release since v0.1.23), but the client confirmed
+only one admin terminal is ever used, ruling that out.
+
+**M28. HIGH — ✅ FIXED. `createStockMovement`'s self-healing reconciliation already corrected
+PocketBase's true stock quantity after a concurrent-write race, but that correction never reached
+the admin's own local cache — so the screen kept showing the stale, pre-correction number.**
+Investigated directly against production `stock_movements` data: found a real product (`MISMO
+COKE/ROYAL/SPRITE`) with dozens of stock-in/adjustment entries that all recorded
+`previous_quantity: 20`, which is only possible if each one raced against another write off the
+same stale baseline rather than correctly compounding. Root cause: every stock-quantity write in
+this codebase (`scanInventory`, `stockOutInventory`, cashier sale deduction, cashier void/refund
+restock) follows a read-then-write pattern with no locking — and the admin terminal and every
+cashier terminal run as fully independent processes with no coordination between them, so an admin
+Stock In landing within the same instant as any cashier sale on the same product can have one
+write silently overwrite the other. `stockMovementReconciler.js`'s `reconcileProductStock`
+(already called from inside `createStockMovement` after every movement) was specifically designed
+to self-heal exactly this: it re-derives the true quantity by *summing every movement's own delta*
+rather than trusting any single write's absolute value, which is correct regardless of race order
+(see that file's own comment on this exact scenario). But `createStockMovement` discarded
+`reconcileProductStock`'s result, and all three admin call sites (`scanInventory`,
+`stockOutInventory`, `adjustInventoryCount`) then updated the local Dexie cache — what the
+Inventory screen actually reads — using the *pre-reconcile* write response instead. PocketBase's
+own stored number was already correct within moments; the admin's own screen just never found out,
+which exactly matches "I checked immediately after my own action and saw a different number."
+
+Fix: `createStockMovement` now returns the reconciled quantity (falling back to its own computed
+`nextQuantity` only when there was nothing to reconcile — no real change, or a replayed op), and
+all three admin write paths use that returned value — not the raw write response — when updating
+the local cache via `replaceLocalProductWithCloud`.
+
+**Scope note:** fixed for all three admin write paths (Stock In, Stock Out, Stock Count), which is
+where the reported symptom occurs (an admin checking Inventory immediately after their own action).
+The two cashier-side write paths (sale deduction, void/refund restock) share the identical
+pre-reconcile-response pattern but don't synchronously update `cashierDb.products` from either
+write's response at all today (cashier stock display refreshes via a separate periodic catalog
+pull) — so they don't exhibit this same "I acted, I checked, I saw stale data" symptom, and were
+left out of this fix's scope to keep the change precisely targeted at the confirmed bug rather than
+speculatively rewriting paths with no matching report.
+
+New tests in `tests/admin-stock-op-idempotency.test.js`: reproduces the exact production pattern
+(an existing stock_movement with a chain that no longer matches the current cloud quantity, as a
+real concurrent race produces) for all three op types, asserting the local cache lands on the
+correctly-reconciled total, not the pre-reconcile write result. `npm run test:offline` 352/352,
+lint and all three builds clean.

@@ -237,12 +237,16 @@ export function applyPendingStockOps(baseQty, ops) {
     }, baseQty)
 }
 
+// Returns the quantity the caller should actually trust for this product
+// going forward -- see the call sites below for why this matters. Falls
+// back to nextQuantity (the value this op itself computed) when there was
+// nothing to reconcile against (no real change, or a replayed op).
 async function createStockMovement(pb, product, op, previousQuantity, nextQuantity) {
   const delta = quantizeQty(Number(nextQuantity) - Number(previousQuantity))
-  if (!product?.id || delta === 0) return
+  if (!product?.id || delta === 0) return quantizeQty(nextQuantity)
 
   const movementType = op.type === 'adjustInventoryCount' ? 'adjustment' : delta > 0 ? 'stock_in' : 'stock_out'
-  if (await findStockMovement(pb, product.id, op.id)) return
+  if (await findStockMovement(pb, product.id, op.id)) return quantizeQty(nextQuantity)
   await pb.collection('stock_movements').create({
     product_id: product.id,
     movement_type: movementType,
@@ -256,7 +260,17 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
   }, {
     requestKey: `stock-movement:${op.id}`,
   })
-  await reconcileProductStock(pb, product.id)
+  // reconcileProductStock re-derives the true quantity by summing every
+  // movement's own delta, which self-heals a concurrent-write race (two
+  // terminals reading the same stale baseline -- see
+  // stockMovementReconciler.js) and may already have corrected PocketBase's
+  // stored value by the time this returns. `nextQuantity` above is only
+  // what THIS op's own (pre-reconcile) write believed the result to be --
+  // callers must use this return value, not that write's response, when
+  // updating their local cache, or the correction never reaches the screen.
+  // Root-caused from a live "Stock In enters a different quantity" report.
+  const reconciled = await reconcileProductStock(pb, product.id)
+  return reconciled === null ? quantizeQty(nextQuantity) : reconciled
 }
 
 async function replaceLocalProductWithCloud(localProductId, cloudRecord, pb, options = {}) {
@@ -792,8 +806,8 @@ export class AdminSyncEngine extends EventTarget {
         expand: 'category',
         requestKey: op.id,
       })
-      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
-      await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
+      const reconciledQuantity = await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
+      await replaceLocalProductWithCloud(op.productId, { ...updated, quantity: reconciledQuantity }, this.pb, {
         preservePendingStock: true,
         currentOpId: op.id,
       })
@@ -823,8 +837,8 @@ export class AdminSyncEngine extends EventTarget {
         expand: 'category',
         requestKey: op.id,
       })
-      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
-      await replaceLocalProductWithCloud(op.productId, updated, this.pb, {
+      const reconciledQuantity = await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
+      await replaceLocalProductWithCloud(op.productId, { ...updated, quantity: reconciledQuantity }, this.pb, {
         preservePendingStock: true,
         currentOpId: op.id,
       })
@@ -853,8 +867,8 @@ export class AdminSyncEngine extends EventTarget {
       // here made retries/duplicates compound instead of converge.
       const nextQuantity = Math.max(0, quantizeQty(Number(op.payload.countedQty)))
       const updated = await this.pb.collection('products').update(product.id, { quantity: numberFieldValue(nextQuantity) }, { expand: 'category', requestKey: op.id })
-      await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
-      await replaceLocalProductWithCloud(op.productId, updated, this.pb, { preservePendingStock: true, currentOpId: op.id })
+      const reconciledQuantity = await createStockMovement(this.pb, updated, op, previousQuantity, nextQuantity)
+      await replaceLocalProductWithCloud(op.productId, { ...updated, quantity: reconciledQuantity }, this.pb, { preservePendingStock: true, currentOpId: op.id })
       await adminDb.pendingOps.delete(op.id)
       return
     }
