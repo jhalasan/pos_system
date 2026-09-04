@@ -93,6 +93,16 @@
 
 html, body, #root { height: 100%; }
 
+/* The desktop app runs in WebView2 (Chromium/Edge), which auto-renders its
+   own "reveal password" eye icon on every input[type=password] with
+   content. Every password field in this app already has its own custom
+   show/hide eye button, so without this the two stack on top of each
+   other. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
 .desktop-update-backdrop {
   position: fixed;
   z-index: 10000;
