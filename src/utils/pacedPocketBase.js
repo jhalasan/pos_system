@@ -10,7 +10,24 @@
 // assumptions later tasks in this plan depend on. On error, the only job
 // here is to feed `governor.recordRateLimit()` and re-throw unchanged.
 
+import { isPrivateNetworkHost } from './privateNetworkHost.js'
+
 const HEALTH_PATH = '/api/health'
+
+// The governor's pacing exists purely to survive PocketHost's own 429
+// throttling -- it makes no sense against a client's self-hosted PocketBase
+// on their own LAN, which has no such rate limit. A client with no baseURL
+// at all (or one that fails to parse) defaults to paced, the existing
+// PocketHost-facing behavior, rather than silently skipping pacing.
+function shouldBypassGovernor(pb) {
+  const baseUrl = pb.baseURL || pb.baseUrl
+  if (!baseUrl) return false
+  try {
+    return isPrivateNetworkHost(new URL(baseUrl).hostname)
+  } catch {
+    return false
+  }
+}
 
 // Neither the PocketBase SDK nor any caller in this app sets a request
 // timeout -- a stalled/degraded connection to PocketHost (slow response,
@@ -87,6 +104,7 @@ export function classifyRequest(path, options = {}) {
  */
 export function createPacedPocketBase(pb, governor) {
   const rawSend = pb.send.bind(pb)
+  const bypassGovernor = shouldBypassGovernor(pb)
 
   pb.send = (path, options = {}) => {
     const priority = options.$priority || classifyRequest(path, options)
@@ -96,19 +114,20 @@ export function createPacedPocketBase(pb, governor) {
     // must never reach `rawSend`, or it leaks into the actual HTTP request.
     delete opts.$priority
 
-    return governor.schedule(
-      () => withTimeout(rawSend(path, opts), path).then(
-        (result) => {
-          governor.recordSuccess()
-          return result
-        },
-        (error) => {
-          if (Number(error?.status) === 429) governor.recordRateLimit(error)
-          throw error
-        },
-      ),
-      { priority, label: path },
+    const task = () => withTimeout(rawSend(path, opts), path).then(
+      (result) => {
+        governor.recordSuccess()
+        return result
+      },
+      (error) => {
+        if (Number(error?.status) === 429) governor.recordRateLimit(error)
+        throw error
+      },
     )
+
+    if (bypassGovernor) return task()
+
+    return governor.schedule(task, { priority, label: path })
   }
 
   return pb

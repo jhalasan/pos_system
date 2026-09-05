@@ -179,6 +179,55 @@ test('createPacedPocketBase: a request that completes before the timeout is unaf
   assert.deepEqual(result, { ok: true })
 })
 
+test('createPacedPocketBase: a private-network target (e.g. the client\'s own local PocketBase) bypasses the governor entirely', async () => {
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-private-bypass' })
+
+  let scheduleCalls = 0
+  const originalSchedule = governor.schedule
+  governor.schedule = (...args) => { scheduleCalls += 1; return originalSchedule(...args) }
+
+  const fakePb = { baseURL: 'http://192.168.0.114:8090', send: () => Promise.resolve('ok') }
+  const paced = createPacedPocketBase(fakePb, governor)
+
+  const result = await paced.send('/api/collections/products/records', { method: 'GET' })
+
+  assert.equal(result, 'ok')
+  assert.equal(scheduleCalls, 0, 'a private-network target must never go through governor.schedule')
+})
+
+test('createPacedPocketBase: a public host (e.g. PocketHost) still goes through the governor as before', async () => {
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-public-still-paced' })
+
+  let scheduleCalls = 0
+  const originalSchedule = governor.schedule
+  governor.schedule = (...args) => { scheduleCalls += 1; return originalSchedule(...args) }
+
+  const fakePb = { baseURL: 'https://nexasystems.pockethost.io', send: () => Promise.resolve('ok') }
+  const paced = createPacedPocketBase(fakePb, governor)
+
+  await paced.send('/api/collections/products/records', { method: 'GET' })
+
+  assert.equal(scheduleCalls, 1, 'a public host must still be paced through the governor')
+})
+
+test('createPacedPocketBase: a client with no baseURL at all (existing tests\' fakePb shape) still goes through the governor', async () => {
+  const clock = makeClock()
+  const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-no-baseurl' })
+
+  let scheduleCalls = 0
+  const originalSchedule = governor.schedule
+  governor.schedule = (...args) => { scheduleCalls += 1; return originalSchedule(...args) }
+
+  const fakePb = { send: () => Promise.resolve('ok') }
+  const paced = createPacedPocketBase(fakePb, governor)
+
+  await paced.send('/api/collections/products/records', { method: 'GET' })
+
+  assert.equal(scheduleCalls, 1, 'missing baseURL must default to paced (safe default), not bypassed')
+})
+
 test('createPacedPocketBase: default classification is used when $priority is absent', async () => {
   const clock = makeClock()
   const governor = createGovernor({ now: clock.now, storage: makeStorage(), key: 'test-paced-default-classification' })
