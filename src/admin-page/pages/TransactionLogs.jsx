@@ -105,15 +105,25 @@ function paymentBreakdown(receipt) {
 }
 
 export default function TransactionLogs() {
-  const { data: receipts, setData: setReceipts, loading, error } = useApi(api.receipts, [])
   const { data: cashiers } = useApi(api.cashiers, [])
   const { data: catalogProducts } = useApi(api.products, [])
   const { data: catalogCategories } = useApi(api.categories, [])
   const scanInputRef = useRef(null)
   const [query, setQuery] = useState('')
-  const [dateRange, setDateRange] = useState('all')
+  // Defaults to the last 30 days instead of the full history: opening this
+  // page previously always downloaded every sale ever made regardless of
+  // what a user picked in this dropdown afterward, because the fetch below
+  // never used to depend on these three values. "All" is still one click
+  // away in the dropdown for a genuine full-history export -- it's just no
+  // longer the default cost of simply opening the page.
+  const [dateRange, setDateRange] = useState('month')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
+  const loadReceipts = useCallback(() => {
+    const { fromDate, toDate } = filterDates(dateRange, customFrom, customTo)
+    return api.receipts({ fromDate, toDate })
+  }, [dateRange, customFrom, customTo])
+  const { data: receipts, setData: setReceipts, loading, error } = useApi(loadReceipts, [])
   const [cashierName, setCashierName] = useState('all')
   const [action, setAction] = useState('all')
   const [status, setStatus] = useState('all')
