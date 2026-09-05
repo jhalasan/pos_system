@@ -351,13 +351,26 @@ function saleItemPrice(item, product) {
   return Number(item.price_at_sale ?? item.price ?? item.unit_price ?? product?.price) || 0
 }
 
-async function receiptRecordFromSale(sale, saleItemsCollection) {
+// Groups sale_items records by their sale_id, handling the same
+// one-element-array relation shape productRelationId/dashboardSaleSource
+// already handle elsewhere in this file. Used to replace one PocketBase
+// request per sale with a single batched fetch -- see /api/receipts, whose
+// previous one-request-per-sale loop turned a fast query on PocketHost into
+// thousands of round trips once PocketBase moved behind a much slower
+// self-hosted/Tailscale-Funnel network path.
+function groupSaleItemsBySaleId(items) {
+  const grouped = new Map()
+  for (const item of items) {
+    const saleId = Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id
+    if (!saleId) continue
+    if (!grouped.has(saleId)) grouped.set(saleId, [])
+    grouped.get(saleId).push(item)
+  }
+  return grouped
+}
+
+function receiptRecordFromSale(sale, items) {
   const cashier = saleCashier(sale)
-  const items = await saleItemsCollection.getFullList({
-    sort: 'created',
-    filter: pb.filter('sale_id = {:saleId}', { saleId: sale.id }),
-    expand: 'product_id',
-  })
   const { paymentMethod, refNumber, splitPayments } = parseSalePayment(sale)
   const status = sale.status || 'completed'
   const createdAt = sale.created_at || sale.created
@@ -2382,6 +2395,7 @@ export {
   app,
   buildSalesMetrics,
   dateKey,
+  groupSaleItemsBySaleId,
   lastDays,
   lastMonths,
   lastWeeks,
