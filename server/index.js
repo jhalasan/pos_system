@@ -2074,22 +2074,38 @@ function dashboardSaleSource(sale = {}) {
 
 app.get('/api/dashboard', asyncRoute(async (req, res) => {
   const products = (await listRecords('products', '?expand=category&perPage=500')).map(toProduct)
-  let sales = await listRecords('sales', '?perPage=500')
-  let saleItems = await listRecords('sale_items', '?expand=product_id&perPage=500')
-  // sale_adjustments may not exist on an un-migrated PocketBase instance
-  // (M1's schema migration is additive and applied separately) -- fall back
-  // to no netting rather than failing the whole dashboard.
-  let adjustments = await listRecords('sale_adjustments', '?perPage=500').catch(() => [])
   const source = String(req.query.source || 'all')
   const fromMillis = phDateStringToUtcMillis(req.query.from, false)
   const toMillis = phDateStringToUtcMillis(req.query.to, true)
   const from = fromMillis === null ? null : new Date(fromMillis)
   const to = toMillis === null ? null : new Date(toMillis)
-  sales = sales.filter((sale) => (source === 'all' || dashboardSaleSource(sale) === source)
-    && (!from || saleDate(sale) >= from) && (!to || saleDate(sale) <= to))
-  const filteredSaleIds = new Set(sales.map((sale) => sale.id))
-  saleItems = saleItems.filter((item) => filteredSaleIds.has(Array.isArray(item.sale_id) ? item.sale_id[0] : item.sale_id))
-  adjustments = adjustments.filter((adjustment) => filteredSaleIds.has(productRelationId(adjustment.sale_id)))
+  const dashboardDateFilter = buildCreatedAtRangeFilter(from, to)
+
+  // Pushed down to the PocketBase query instead of downloading the store's
+  // entire lifetime history and discarding most of it in memory. Dashboard's
+  // own UI already defaults to a 30-day range, so this was the dominant cost
+  // of opening the page once PocketBase moved behind the much slower
+  // self-hosted/Tailscale-Funnel network path. dashboardSaleSource can't be
+  // expressed as a PocketBase filter (it pattern-matches transaction_no/id
+  // to classify sample/legacy/live rows), so the source filter stays exactly
+  // as it was: applied in memory, after the date-bounded fetch.
+  const sales = (await (await pbCollection('sales')).getFullList(
+    dashboardDateFilter ? { filter: dashboardDateFilter } : {},
+  )).filter((sale) => source === 'all' || dashboardSaleSource(sale) === source)
+
+  const saleIdFilter = sales.length
+    ? sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
+    : ''
+
+  const saleItems = saleIdFilter
+    ? await (await pbCollection('sale_items')).getFullList({ expand: 'product_id', filter: saleIdFilter })
+    : []
+  // sale_adjustments may not exist on an un-migrated PocketBase instance
+  // (M1's schema migration is additive and applied separately) -- fall back
+  // to no netting rather than failing the whole dashboard.
+  const adjustments = saleIdFilter
+    ? await (await pbCollection('sale_adjustments')).getFullList({ filter: saleIdFilter }).catch(() => [])
+    : []
   const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
   const now = new Date()
   const { year: todayYear, month: todayMonth, day: todayDay } = phDateParts(now)
