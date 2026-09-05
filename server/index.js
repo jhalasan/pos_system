@@ -1269,8 +1269,20 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
     perPage: 500,
     ...(dateFilterParts.length ? { filter: dateFilterParts.join(' && ') } : {}),
   })
-  const saleItems = await pbCollection('sale_items')
-  const records = await Promise.all(sales.map((sale) => receiptRecordFromSale(sale, saleItems)))
+  // One batched request for every sale's line items instead of one request
+  // PER sale (see groupSaleItemsBySaleId's own comment for why this matters
+  // now that PocketBase lives behind a much slower network path).
+  const itemsBySaleId = sales.length
+    ? groupSaleItemsBySaleId(
+        await (await pbCollection('sale_items')).getFullList({
+          sort: 'created',
+          filter: sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || '),
+          expand: 'product_id',
+        }),
+      )
+    : new Map()
+
+  const records = sales.map((sale) => receiptRecordFromSale(sale, itemsBySaleId.get(sale.id) || []))
 
   res.json(records.filter((record) => {
     const createdTime = new Date(record.createdAt).getTime()
