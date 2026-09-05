@@ -351,6 +351,18 @@ function saleItemPrice(item, product) {
   return Number(item.price_at_sale ?? item.price ?? item.unit_price ?? product?.price) || 0
 }
 
+// Builds a PocketBase filter expression bounding a collection's created_at
+// field to [from, to] (either end optional). A record with no created_at at
+// all still matches -- created_at was backfilled onto this project's sales
+// collection after some rows already existed, so treating "missing" as "no
+// bound applies to this legacy row" avoids silently excluding it.
+function buildCreatedAtRangeFilter(from, to) {
+  const parts = []
+  if (from) parts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: from.toISOString() }))
+  if (to) parts.push(pb.filter('(created_at <= {:to} || created_at = "")', { to: to.toISOString() }))
+  return parts.join(' && ')
+}
+
 // Groups sale_items records by their sale_id, handling the same
 // one-element-array relation shape productRelationId/dashboardSaleSource
 // already handle elsewhere in this file. Used to replace one PocketBase
@@ -1258,16 +1270,16 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
 
   const fromTime = phDateStringToUtcMillis(fromDate, false)
   const toTime = phDateStringToUtcMillis(toDate, true)
-
-  const dateFilterParts = []
-  if (fromTime !== null) dateFilterParts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: new Date(fromTime).toISOString() }))
-  if (toTime !== null) dateFilterParts.push(pb.filter('(created_at <= {:to} || created_at = "")', { to: new Date(toTime).toISOString() }))
+  const receiptsDateFilter = buildCreatedAtRangeFilter(
+    fromTime === null ? null : new Date(fromTime),
+    toTime === null ? null : new Date(toTime),
+  )
 
   const sales = await (await pbCollection('sales')).getFullList({
     sort: '-created_at,-created',
     expand: 'cashier_id',
     perPage: 500,
-    ...(dateFilterParts.length ? { filter: dateFilterParts.join(' && ') } : {}),
+    ...(receiptsDateFilter ? { filter: receiptsDateFilter } : {}),
   })
   // One batched request for every sale's line items instead of one request
   // PER sale (see groupSaleItemsBySaleId's own comment for why this matters
@@ -2405,6 +2417,7 @@ app.use((error, _req, res, next) => {
 
 export {
   app,
+  buildCreatedAtRangeFilter,
   buildSalesMetrics,
   dateKey,
   groupSaleItemsBySaleId,
