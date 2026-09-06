@@ -170,6 +170,20 @@ export default function TransactionLogs() {
     }
   }, [setReceipts, dateRange, customFrom, customTo])
 
+  // The receipt modal shows a snapshot captured at click time
+  // (setSelectedReceipt(receipt)) -- it does NOT automatically track later
+  // changes to the `receipts` list. This is why clicking "Refresh" while a
+  // receipt is already open "did nothing" from the client's point of view:
+  // the underlying list had refetched correct data, but the already-open
+  // modal kept rendering its stale snapshot. Whenever the list changes,
+  // re-point an open modal at its own row's fresh copy so a refresh visibly
+  // fixes what's on screen without requiring the client to close and reopen it.
+  useEffect(() => {
+    if (!selectedReceipt) return
+    const fresh = (receipts || []).find((receipt) => receipt.id === selectedReceipt.id)
+    if (fresh && fresh !== selectedReceipt) setSelectedReceipt(fresh)
+  }, [receipts, selectedReceipt])
+
   useEffect(() => {
     const handleSyncStatus = (event) => {
       if (['succeeded', 'failed'].includes(event.detail?.state)) void refreshReceipts()

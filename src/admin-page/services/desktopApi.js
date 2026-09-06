@@ -683,12 +683,31 @@ async function fetchReceiptRecords(filters = {}) {
   const saleIdFilter = sales.length
     ? sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
     : ''
-  const allSaleItems = saleIdFilter ? await pb.collection('sale_items').getFullList({
-    sort: 'created',
-    expand: 'product_id',
-    filter: saleIdFilter,
-    requestKey: null,
-  }).catch(() => []) : []
+  let allSaleItems = []
+  if (saleIdFilter) {
+    try {
+      allSaleItems = await pb.collection('sale_items').getFullList({
+        sort: 'created',
+        expand: 'product_id',
+        filter: saleIdFilter,
+        requestKey: null,
+      })
+    } catch {
+      // A failed line-item fetch is NOT evidence that these sales have zero
+      // items -- treating it that way (this used to .catch(() => [])) meant
+      // ANY fetch error here (an oversized filter, a rate limit, a network
+      // blip) silently overwrote the receipt cache -- and any already-open
+      // Transaction Logs row -- with an empty item list, even though the
+      // real sale_items were fully intact server-side. Root-caused from a
+      // live "Item details are not available" / "Untracked" report: an
+      // unbounded caller (since fixed) built a filter covering all 6,061
+      // sales, PocketBase rejected the ~188,000-character query with a 400,
+      // and that error used to vanish into `[]` right here. Bail out the
+      // same way a failed sales fetch does: keep the existing local/cached
+      // data on screen until a successful read can reconcile it.
+      return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
+    }
+  }
   const itemsBySaleId = groupSaleItemsBySaleId(allSaleItems)
   const cloudRecords = sales.map((sale) => receiptRecordFromCloudSale(sale, itemsBySaleId))
   const pendingSales = await cashierDb.pendingSales.toArray()
