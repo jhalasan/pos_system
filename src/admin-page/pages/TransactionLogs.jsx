@@ -148,14 +148,27 @@ export default function TransactionLogs() {
   const [presetName, setPresetName] = useState('')
   const [presetError, setPresetError] = useState('')
 
+  // Confirmed live: this used to call api.receipts() with no date filter,
+  // unlike loadReceipts above -- fired on every window focus, tab-visibility
+  // change, and sync event. With enough total sales (6,061 on the production
+  // server), the resulting "find every line item for these sale IDs" filter
+  // string (one clause per sale, ~188,000 characters) is rejected outright by
+  // PocketBase with a 400, which fetchReceiptRecords' .catch(() => [])
+  // swallows -- so every receipt this refresh touched was overwritten with
+  // an empty item list ("Item details are not available" / "Untracked"),
+  // even though the real sale_items/stock_movements/activity_logs rows were
+  // fully intact. Scoping this to the same selected date range as
+  // loadReceipts keeps the refresh well under any filter-length limit, same
+  // as every other unbounded-fetch fix already applied to this page.
   const refreshReceipts = useCallback(async ({ showProgress = false } = {}) => {
     if (showProgress) setRefreshing(true)
     try {
-      setReceipts(await api.receipts())
+      const { fromDate, toDate } = filterDates(dateRange, customFrom, customTo)
+      setReceipts(await api.receipts({ fromDate, toDate }))
     } finally {
       if (showProgress) setRefreshing(false)
     }
-  }, [setReceipts])
+  }, [setReceipts, dateRange, customFrom, customTo])
 
   useEffect(() => {
     const handleSyncStatus = (event) => {
