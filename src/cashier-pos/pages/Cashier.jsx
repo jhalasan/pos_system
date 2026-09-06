@@ -2789,7 +2789,6 @@ const Cashier = ({ onLogout, user }) => {
       }
 
       return [
-        ...cartItems,
         {
           id: itemId,
           productId: product.id,
@@ -2808,6 +2807,7 @@ const Cashier = ({ onLogout, user }) => {
           image: product.image,
           total: roundMoney(unitPrice * requestedQty),
         },
+        ...cartItems,
       ];
     })();
 
