@@ -2781,11 +2781,11 @@ const Cashier = ({ onLogout, user }) => {
       const existing = cartItems.find((item) => item.id === itemId);
       if (existing) {
         const nextQuantity = fractional ? quantizeQty(existing.quantity + requestedQty) : existing.quantity + requestedQty
-        return cartItems.map((item) =>
-          item.id === itemId
-            ? { ...item, quantity: nextQuantity, total: roundMoney(item.price * nextQuantity) }
-            : item
-        );
+        const updated = { ...existing, quantity: nextQuantity, total: roundMoney(existing.price * nextQuantity) }
+        // Re-scanning/re-adding an item already in the cart bumps it to the
+        // top too, alongside brand-new items -- so whatever the cashier just
+        // scanned is always the top line, and they never have to hunt for it.
+        return [updated, ...cartItems.filter((item) => item.id !== itemId)];
       }
 
       return [
