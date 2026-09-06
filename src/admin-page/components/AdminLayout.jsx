@@ -85,9 +85,14 @@ export default function AdminLayout() {
     if (!nextOpen) return
 
     try {
+      // Only the 5 most recent matching events are ever shown (see
+      // .slice(0, 5) below) -- a 14-day window is comfortably more than
+      // enough to find 5 recent discount/void/refund/reprint events on any
+      // real store, without pulling the entire activity_logs history on
+      // every bell click.
       const [dashboard, activityLogs] = await Promise.all([
         api.dashboard(),
-        api.activityLogs(),
+        api.activityLogs({ fromDate: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }),
       ])
       const eventMeta = {
         Discount: { tone: 'warning', title: 'Discount applied' },

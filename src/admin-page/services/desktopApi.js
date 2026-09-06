@@ -31,6 +31,7 @@ import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTo
 import { getProductBarcodes, isCatalogActive } from '../../utils/productLifecycle'
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 import { accountDeletionError } from '../../utils/accountDeletionGuard'
+import { buildActivityLogsFilter } from '../utils/activityLogsFilter'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -2753,15 +2754,33 @@ export const desktopAdminApi = {
   async deleteStaff(id) {
     return this.deleteCashier(id)
   },
-  async activityLogs() {
+  // Unbounded by default (fromDate/toDate omitted) for callers that
+  // genuinely need the full history (e.g. an explicit "All Time" export).
+  // Both real callers (the Activity Logs page, the notification bell) pass
+  // a bounded window in normal use -- this used to always fetch and merge
+  // the ENTIRE activity_logs table on every page open/notification check,
+  // which only gets slower as the table grows (live "logs are slow"
+  // report, worsened once the PocketHost reconciliation added a batch of
+  // historical rows in one shot).
+  async activityLogs({ fromDate, toDate } = {}) {
     await startAdminRuntime()
-    const localLogs = await adminDb.activityLogs.orderBy('time').reverse().toArray()
+    const fromISO = fromDate ? new Date(fromDate).toISOString() : null
+    const toISO = toDate ? new Date(toDate).toISOString() : null
+    const inWindow = (log) => (
+      (!fromISO || new Date(log.time) >= new Date(fromISO))
+      && (!toISO || new Date(log.time) <= new Date(toISO))
+    )
+
+    const allLocalLogs = await adminDb.activityLogs.orderBy('time').reverse().toArray()
+    const localLogs = (fromISO || toISO) ? allLocalLogs.filter(inWindow) : allLocalLogs
     if (await isCloudReachable()) {
       let records
       try {
+        const { filter, params } = buildActivityLogsFilter({ fromISO, toISO })
         records = await pb.collection('activity_logs').getFullList({
           sort: '-timestamp,-created',
           expand: 'user_id',
+          ...(filter ? { filter: pb.filter(filter, params) } : {}),
           requestKey: null,
         })
       } catch {
@@ -2769,8 +2788,13 @@ export const desktopAdminApi = {
       }
       const logs = records.map(toCloudActivityLog)
       const cloudIds = new Set(logs.map((log) => String(log.cloudId || '')).filter(Boolean))
+      // Only prune a local row that falls INSIDE the window we just queried
+      // -- a row outside the window was never checked against the cloud
+      // here, so its absence from `logs` says nothing about whether it
+      // still exists there. Bounding this fetch must never make an
+      // untouched, out-of-window local row look "confirmed deleted."
       await adminDb.activityLogs
-        .filter((log) => Boolean(log.cloudId) && !cloudIds.has(String(log.cloudId)))
+        .filter((log) => inWindow(log) && Boolean(log.cloudId) && !cloudIds.has(String(log.cloudId)))
         .delete()
       if (logs.length) await adminDb.activityLogs.bulkPut(logs)
 

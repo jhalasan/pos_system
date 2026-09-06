@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import PageLoader from '../components/PageLoader'
 import Modal from '../components/Modal'
@@ -128,11 +128,14 @@ function actionLabel(action) {
 }
 
 export default function ActivityLogs() {
-  const { data: activityLogs, loading, error } = useApi(api.activityLogs, [])
   const [userType, setUserType] = useState('All')
   const [query, setQuery] = useState('')
   const [action, setAction] = useState('All')
-  const [dateRange, setDateRange] = useState('All Time')
+  // Defaults to a bounded window, not the full history -- this page used to
+  // fetch and merge the ENTIRE activity_logs table on every open (a live
+  // "logs are slow" report that only gets worse as the table grows).
+  // "All Time" remains available as an explicit, occasional choice.
+  const [dateRange, setDateRange] = useState('Last 30 Days')
   const [customFrom, setCustomFrom] = useState('')
   const [customTo, setCustomTo] = useState('')
   const [exportOpen, setExportOpen] = useState(false)
@@ -142,16 +145,24 @@ export default function ActivityLogs() {
   const [exportFilters, setExportFilters] = useState({
     userType: 'All',
     action: 'All',
-    dateRange: 'All Time',
+    dateRange: 'Today',
     from: '',
     to: '',
   })
-
-  const actionTypes = [...new Set([...baseActionTypes, ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
+  const [exportPreview, setExportPreview] = useState([])
+  const [exportPreviewLoading, setExportPreviewLoading] = useState(false)
 
   const selectedRange = useMemo(() => (
     dateRange === 'Custom' ? getCustomDateRange(customFrom, customTo) : getDateRange(dateRange)
   ), [customFrom, customTo, dateRange])
+
+  const loadActivityLogs = useCallback(
+    () => api.activityLogs({ fromDate: selectedRange.start, toDate: selectedRange.end }),
+    [selectedRange],
+  )
+  const { data: activityLogs, loading, error } = useApi(loadActivityLogs, [])
+
+  const actionTypes = [...new Set([...baseActionTypes, ...activityLogs.map((l) => actionLabel(l.action)).filter(Boolean)])]
 
   const filtered = useMemo(() => {
     return activityLogs.filter((log) => logMatchesFilters(log, {
@@ -168,12 +179,25 @@ export default function ActivityLogs() {
     userType: 'All', action: 'All', query: '', range: todayRange,
   })).length
 
-  const exportPreview = useMemo(() => {
+  // Fetched independently from the (now bounded) main list -- an "All Time"
+  // export must still see the full history regardless of whatever window
+  // the page itself currently has loaded.
+  useEffect(() => {
+    if (!exportOpen) return undefined
+    let active = true
     const range = exportFilters.dateRange === 'Custom'
       ? getCustomDateRange(exportFilters.from, exportFilters.to)
       : getDateRange(exportFilters.dateRange)
-    return activityLogs.filter((log) => logMatchesFilters(log, { ...exportFilters, range }))
-  }, [activityLogs, exportFilters])
+    setExportPreviewLoading(true)
+    api.activityLogs({ fromDate: range.start, toDate: range.end })
+      .then((logs) => {
+        if (!active) return
+        setExportPreview(logs.filter((log) => logMatchesFilters(log, { ...exportFilters, range })))
+      })
+      .catch(() => { if (active) setExportPreview([]) })
+      .finally(() => { if (active) setExportPreviewLoading(false) })
+    return () => { active = false }
+  }, [exportOpen, exportFilters])
 
   async function exportLogs() {
     setExporting(true)
@@ -325,8 +349,8 @@ export default function ActivityLogs() {
           footer={(
             <>
               <button className="btn btn-outline" onClick={() => setExportOpen(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={exportLogs} disabled={exporting}>
-                <IconDownload size={16} /> {exporting ? 'Exporting...' : `Export ${exportPreview.length} Log(s)`}
+              <button className="btn btn-primary" onClick={exportLogs} disabled={exporting || exportPreviewLoading}>
+                <IconDownload size={16} /> {exporting ? 'Exporting...' : exportPreviewLoading ? 'Loading...' : `Export ${exportPreview.length} Log(s)`}
               </button>
             </>
           )}
@@ -392,7 +416,7 @@ export default function ActivityLogs() {
               </>
             )}
           </div>
-          <div className="export-summary">{exportPreview.length} matching record(s)</div>
+          <div className="export-summary">{exportPreviewLoading ? 'Counting matching records...' : `${exportPreview.length} matching record(s)`}</div>
         </Modal>
       )}
     </>
