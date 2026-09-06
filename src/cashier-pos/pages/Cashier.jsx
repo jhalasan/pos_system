@@ -225,9 +225,9 @@ const DEFAULT_RECEIPT_SETTINGS = {
   drawerPulseMs: 50,
 };
 const CASHIER_SHORTCUTS = [
-  { action: 'focusBarcode', label: 'Focus barcode scan', defaultKeys: 'F1' },
+  { action: 'focusBarcode', label: 'Focus scan/search field', defaultKeys: 'F1' },
   { action: 'requestDiscount', label: 'Request discount', defaultKeys: 'F2' },
-  { action: 'focusSearch', label: 'Focus product search', defaultKeys: 'F3' },
+  { action: 'focusSearch', label: 'Focus scan/search field', defaultKeys: 'F3' },
   { action: 'focusQuantity', label: 'Focus item quantity', defaultKeys: 'F4' },
   { action: 'toggleQuickAdd', label: 'Toggle quick add', defaultKeys: 'F5' },
   { action: 'newTransaction', label: 'New transaction', defaultKeys: 'Ctrl+N' },
@@ -459,7 +459,6 @@ const Cashier = ({ onLogout, user }) => {
   const navigate = useNavigate();
   const can = useCallback((capability) => !Array.isArray(user?.permissions) || user.permissions.length === 0 || user.permissions.includes(capability), [user?.permissions]);
   const barcodeInputRef = useRef(null);
-  const searchProductInputRef = useRef(null);
   const searchResultsRef = useRef(null);
   const initialQuantityInputRef = useRef(null);
   const quantityInputRefs = useRef(new Map());
@@ -476,8 +475,8 @@ const Cashier = ({ onLogout, user }) => {
   const nextTransactionIdRef = useRef(2);
   const [activeTransaction, setActiveTransaction] = useState(1);
   const [selectedSearchIndex, setSelectedSearchIndex] = useState(0);
+  const [dropdownNavigated, setDropdownNavigated] = useState(false);
   const [barcode, setBarcode] = useState('');
-  const [searchProduct, setSearchProduct] = useState('');
   const [pendingCartProduct, setPendingCartProduct] = useState(null);
   const [pendingCartUnitKey, setPendingCartUnitKey] = useState('');
   const [initialCartQuantity, setInitialCartQuantity] = useState('1');
@@ -693,7 +692,7 @@ const Cashier = ({ onLogout, user }) => {
     || activeTxn.transactionNo;
 
   const filteredProducts = useMemo(() => {
-    const query = searchProduct.trim().toLowerCase();
+    const query = barcode.trim().toLowerCase();
     if (!query) return [];
     const matchesQuery = (product) => {
       const matchesProduct = String(product.name || '').toLowerCase().includes(query)
@@ -722,7 +721,7 @@ const Cashier = ({ onLogout, user }) => {
       if (matches.length === 8) break;
     }
     return matches;
-  }, [products, searchProduct]);
+  }, [products, barcode]);
   const selectedSearchProduct = filteredProducts[selectedSearchIndex];
 
   const filteredHistoryRecords = useMemo(() => {
@@ -1945,7 +1944,7 @@ const Cashier = ({ onLogout, user }) => {
   }, [activeTransaction]);
 
   useEffect(() => {
-    if (!searchProduct) return;
+    if (!barcode) return;
     if (filteredProducts.length > 0 && selectedSearchIndex >= filteredProducts.length) {
       setSelectedSearchIndex(filteredProducts.length - 1);
       return;
@@ -1962,7 +1961,7 @@ const Cashier = ({ onLogout, user }) => {
         container.scrollTop += selectedRect.bottom - containerRect.bottom;
       }
     }
-  }, [filteredProducts, searchProduct, selectedSearchIndex, selectedSearchProduct]);
+  }, [filteredProducts, barcode, selectedSearchIndex, selectedSearchProduct]);
 
   useEffect(() => {
     if (!paymentFlow.open) return;
@@ -2818,7 +2817,6 @@ const Cashier = ({ onLogout, user }) => {
         image: product.image,
       },
     });
-    setSearchProduct('');
     setBarcode('');
     window.requestAnimationFrame(() => barcodeInputRef.current?.focus());
     return true
@@ -2847,54 +2845,55 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
-  const handleSearchKeyDown = (e) => {
-    if (!searchProduct) return;
+  const handleBarcodeFieldChange = (e) => {
+    setBarcode(e.target.value);
+    setSelectedSearchIndex(0);
+    setDropdownNavigated(false);
+  };
 
-    const moveSelection = (direction) => {
-      if (!filteredProducts.length) return;
-      setSelectedSearchIndex((current) => (
-        Math.max(0, Math.min(filteredProducts.length - 1, current + direction))
-      ));
-    };
+  const handleBarcodeFieldKeyDown = (e) => {
+    if (barcode) {
+      const moveSelection = (direction) => {
+        if (!filteredProducts.length) return;
+        setDropdownNavigated(true);
+        setSelectedSearchIndex((current) => (
+          Math.max(0, Math.min(filteredProducts.length - 1, current + direction))
+        ));
+      };
 
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      moveSelection(1);
-      return;
-    }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveSelection(1);
+        return;
+      }
 
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      moveSelection(-1);
-      return;
-    }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveSelection(-1);
+        return;
+      }
 
-    if (e.key === 'Home' || e.key === 'End') {
-      e.preventDefault();
-      if (filteredProducts.length) setSelectedSearchIndex(e.key === 'Home' ? 0 : filteredProducts.length - 1);
-      return;
+      if (e.key === 'Home' || e.key === 'End') {
+        e.preventDefault();
+        if (filteredProducts.length) {
+          setDropdownNavigated(true);
+          setSelectedSearchIndex(e.key === 'Home' ? 0 : filteredProducts.length - 1);
+        }
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setBarcode('');
+        setDropdownNavigated(false);
+        return;
+      }
     }
 
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (selectedSearchProduct && stockForProduct(selectedSearchProduct) > 0) {
-        handleAddToCart(selectedSearchProduct);
-      } else if (selectedSearchProduct) {
-        showNotification(`${selectedSearchProduct.name} is out of stock.`);
-      }
-      return;
+      handleScan();
     }
-
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      setSearchProduct('');
-      barcodeInputRef.current?.focus();
-    }
-  };
-
-  const handleSearchProductChange = (e) => {
-    setSearchProduct(e.target.value);
-    setSelectedSearchIndex(0);
   };
 
   const handleScan = async () => {
@@ -2905,10 +2904,37 @@ const Cashier = ({ onLogout, user }) => {
     const code = normalizeBarcode(barcode);
     if (!code) return;
 
+    // The cashier deliberately arrow-navigated to a specific search result --
+    // honor that pick directly instead of racing it against a barcode lookup.
+    if (dropdownNavigated && selectedSearchProduct) {
+      if (stockForProduct(selectedSearchProduct) > 0) {
+        handleAddToCart(selectedSearchProduct);
+      } else {
+        showNotification(`${selectedSearchProduct.name} is out of stock.`);
+      }
+      return;
+    }
+
     try {
       const product = await cashierApi.productByBarcode(code);
       handleAddToCart(product, findSellingUnit(product, code));
     } catch (err) {
+      // Not a recognized barcode. If what was typed happens to turn up
+      // exactly one product match (e.g. a full product name), treat that as
+      // an unambiguous convenience pick -- but never auto-pick when there
+      // are multiple candidates: a mistyped/unregistered barcode can
+      // coincidentally substring-match an unrelated product, and silently
+      // ringing up the wrong item is worse than asking the cashier to pick
+      // explicitly (click, or arrow keys + Enter).
+      if (filteredProducts.length === 1) {
+        const onlyMatch = filteredProducts[0];
+        if (stockForProduct(onlyMatch) > 0) {
+          handleAddToCart(onlyMatch);
+        } else {
+          showNotification(`${onlyMatch.name} is out of stock.`);
+        }
+        return;
+      }
       showNotification(err.message || 'Product not found.');
     }
   };
@@ -3070,7 +3096,6 @@ const Cashier = ({ onLogout, user }) => {
       setLedgerRefreshToken((n) => n + 1);
       setTransactions((current) => [...current, createTransaction(newId, transactionNo)]);
       setActiveTransaction(completingTransactionId);
-      setSearchProduct('');
       setBarcode('');
       if (showHistory) loadTransactionHistory();
       showNotification(`Transaction No. ${sale.transactionNo || sale.id} completed.`);
@@ -3373,7 +3398,6 @@ const Cashier = ({ onLogout, user }) => {
     ), nextTransactionNo || activeTxn.transactionNo);
     setTransactions((current) => [...current, createTransaction(newId, nextLocalTransactionNo(transactionNo))]);
     setActiveTransaction(newId);
-    setSearchProduct('');
     setBarcode('');
   };
 
@@ -3392,7 +3416,6 @@ const Cashier = ({ onLogout, user }) => {
       const nextTransaction = createTransaction(1);
       setTransactions([nextTransaction]);
       setActiveTransaction(nextTransaction.id);
-      setSearchProduct('');
       setBarcode('');
       return;
     }
@@ -3511,9 +3534,12 @@ const Cashier = ({ onLogout, user }) => {
         barcodeInputRef.current?.focus();
         barcodeInputRef.current?.select?.();
       },
+      // Barcode scan and product search were merged into one field -- keep
+      // this action (and any cashier's custom F3 keybinding for it) working
+      // by pointing it at the same input.
       focusSearch: () => {
-        searchProductInputRef.current?.focus();
-        searchProductInputRef.current?.select?.();
+        barcodeInputRef.current?.focus();
+        barcodeInputRef.current?.select?.();
       },
       focusQuantity: focusLatestQuantityInput,
       toggleQuickAdd: toggleQuickAddMode,
@@ -3788,35 +3814,20 @@ const Cashier = ({ onLogout, user }) => {
 
             <div className={styles['input-group']}>
               <Input
-                label={withShortcut('Scan Barcode', 'focusBarcode')}
-                placeholder="Scan or enter barcode"
+                label={withShortcut('Scan or Search Product', 'focusBarcode')}
+                placeholder="Scan a barcode, or type a product name/barcode to search"
                 inputRef={barcodeInputRef}
                 value={barcode}
-                onChange={(e) => setBarcode(e.target.value)}
+                onChange={handleBarcodeFieldChange}
+                onKeyDownCapture={handleBarcodeFieldKeyDown}
                 disabled={isLockedTxn}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleScan();
-                  }
-                }}
+                role="combobox"
+                aria-expanded={Boolean(barcode && filteredProducts.length)}
+                aria-controls="cashier-product-search-results"
+                aria-activedescendant={barcode && selectedSearchProduct ? `cashier-product-option-${selectedSearchIndex}` : undefined}
               />
-              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isLockedTxn}>Scan</Button>
+              <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isLockedTxn}>Add</Button>
             </div>
-
-            <Input
-              label={withShortcut('Search Product', 'focusSearch')}
-              placeholder="Search by product name or barcode"
-              inputRef={searchProductInputRef}
-              value={searchProduct}
-              onChange={handleSearchProductChange}
-              onKeyDownCapture={handleSearchKeyDown}
-              disabled={isLockedTxn}
-              role="combobox"
-              aria-expanded={Boolean(searchProduct && filteredProducts.length)}
-              aria-controls="cashier-product-search-results"
-              aria-activedescendant={searchProduct && selectedSearchProduct ? `cashier-product-option-${selectedSearchIndex}` : undefined}
-            />
 
             {lastScanned && (
               <div className={styles['last-scanned']}>
@@ -3835,7 +3846,7 @@ const Cashier = ({ onLogout, user }) => {
             {productsLoading && <div className={styles['search-empty']}>Loading products...</div>}
             {productsError && <div className={styles['search-empty']}>{productsError}</div>}
 
-            {searchProduct && (
+            {barcode && (
               <div ref={searchResultsRef} id="cashier-product-search-results" role="listbox" className={styles['search-results']}>
                 {filteredProducts.length === 0 ? (
                   <div className={styles['search-empty']}>No products found.</div>
