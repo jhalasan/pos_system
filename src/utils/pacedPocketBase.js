@@ -45,11 +45,11 @@ function shouldBypassGovernor(pb) {
 // regardless of the SDK's internal signal handling.
 const REQUEST_TIMEOUT_MS = 20_000
 
-function withTimeout(promise, path) {
+function withTimeout(promise, path, hostLabel) {
   let timeoutId
   const timeout = new Promise((_resolve, reject) => {
     timeoutId = setTimeout(() => {
-      const error = new Error(`Request to PocketHost timed out after ${REQUEST_TIMEOUT_MS / 1000}s (${path}).`)
+      const error = new Error(`Request to ${hostLabel || 'the server'} timed out after ${REQUEST_TIMEOUT_MS / 1000}s (${path}).`)
       error.isTimeout = true
       reject(error)
     }, REQUEST_TIMEOUT_MS)
@@ -105,6 +105,20 @@ export function classifyRequest(path, options = {}) {
 export function createPacedPocketBase(pb, governor) {
   const rawSend = pb.send.bind(pb)
   const bypassGovernor = shouldBypassGovernor(pb)
+  // A timeout used to always say "Request to PocketHost timed out," even
+  // once a deployment pointed this same client at a self-hosted PocketBase
+  // -- misleading a live "why can't I log in" report toward PocketHost when
+  // the actual (and only) target was the local server. Label it from the
+  // client's own baseURL instead.
+  const hostLabel = (() => {
+    const baseUrl = pb.baseURL || pb.baseUrl
+    if (!baseUrl) return ''
+    try {
+      return new URL(baseUrl).hostname
+    } catch {
+      return ''
+    }
+  })()
 
   pb.send = (path, options = {}) => {
     const priority = options.$priority || classifyRequest(path, options)
@@ -114,7 +128,7 @@ export function createPacedPocketBase(pb, governor) {
     // must never reach `rawSend`, or it leaks into the actual HTTP request.
     delete opts.$priority
 
-    const task = () => withTimeout(rawSend(path, opts), path).then(
+    const task = () => withTimeout(rawSend(path, opts), path, hostLabel).then(
       (result) => {
         governor.recordSuccess()
         return result
