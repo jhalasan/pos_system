@@ -1,0 +1,1906 @@
+{
+  "generatedAt": "2026-09-05T11:21:07.815Z",
+  "mode": "dry-run",
+  "source": "https://nexasystems.pockethost.io",
+  "target": "http://192.168.0.114:8090",
+  "cutoff": "2026-09-05 04:52:03.209Z",
+  "counts": {
+    "sourceSalesAfterCutoff": 47,
+    "missingSales": 47,
+    "missingSaleItems": 142,
+    "missingProducts": 0,
+    "skippedSalesMissingCashier": 0,
+    "sourceMovementsAfterCutoff": 142,
+    "missingMovements": 142,
+    "productsToAdjust": 104,
+    "missing_cash_movements": 0,
+    "missing_activity_logs": 133,
+    "missing_sale_adjustments": 0
+  },
+  "productAdjustments": [
+    {
+      "productId": "c0jgnrtkce3lka3",
+      "netDelta": -36
+    },
+    {
+      "productId": "prd000000000786",
+      "netDelta": -39
+    },
+    {
+      "productId": "uy81pl7u4js9fcd",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000359",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000002387",
+      "netDelta": -1
+    },
+    {
+      "productId": "l7jxiuuywepkzdg",
+      "netDelta": -84
+    },
+    {
+      "productId": "prd000000000894",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000002230",
+      "netDelta": -32
+    },
+    {
+      "productId": "prd000000000756",
+      "netDelta": -5
+    },
+    {
+      "productId": "prd000000002020",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000002057",
+      "netDelta": -1
+    },
+    {
+      "productId": "fdf3gjdk9l5ogia",
+      "netDelta": -8
+    },
+    {
+      "productId": "qej7fdvjc09f1le",
+      "netDelta": -20
+    },
+    {
+      "productId": "prd000000001393",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001324",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000002231",
+      "netDelta": -31
+    },
+    {
+      "productId": "prd000000001548",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001929",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000000654",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000000086",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000206",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000093",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000897",
+      "netDelta": -1
+    },
+    {
+      "productId": "671yztnbao3t7y3",
+      "netDelta": -2
+    },
+    {
+      "productId": "k6c1o6s76h4kcv2",
+      "netDelta": -6
+    },
+    {
+      "productId": "f24s9qnhjrlekld",
+      "netDelta": -84
+    },
+    {
+      "productId": "t2ob721qy6i4ftt",
+      "netDelta": -336
+    },
+    {
+      "productId": "3699xr8oi06dowo",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000000110",
+      "netDelta": -7
+    },
+    {
+      "productId": "prd000000000116",
+      "netDelta": -3
+    },
+    {
+      "productId": "at93e1fm2oeky9r",
+      "netDelta": -15
+    },
+    {
+      "productId": "prd000000000871",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000002442",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001099",
+      "netDelta": -10
+    },
+    {
+      "productId": "prd000000000632",
+      "netDelta": -11
+    },
+    {
+      "productId": "prd000000000585",
+      "netDelta": -10
+    },
+    {
+      "productId": "prd000000000315",
+      "netDelta": -6
+    },
+    {
+      "productId": "fs224fbbi9o16km",
+      "netDelta": -140
+    },
+    {
+      "productId": "prd000000002459",
+      "netDelta": -1
+    },
+    {
+      "productId": "mv58kfkpkvu7lxw",
+      "netDelta": -2
+    },
+    {
+      "productId": "j99wekvpq93x7fa",
+      "netDelta": -3
+    },
+    {
+      "productId": "bhrtsah87rnf4pm",
+      "netDelta": -28
+    },
+    {
+      "productId": "prd000000000658",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001247",
+      "netDelta": -2
+    },
+    {
+      "productId": "7k4rv6vu0p7o09a",
+      "netDelta": -1
+    },
+    {
+      "productId": "mqw632zco2drird",
+      "netDelta": -3
+    },
+    {
+      "productId": "prd000000000761",
+      "netDelta": -3
+    },
+    {
+      "productId": "i75zkiz6n8lptdu",
+      "netDelta": -87
+    },
+    {
+      "productId": "prd000000002296",
+      "netDelta": -3
+    },
+    {
+      "productId": "prd000000001181",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001952",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000847",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000676",
+      "netDelta": -2
+    },
+    {
+      "productId": "sw4vvl9qjeqz4w3",
+      "netDelta": -30
+    },
+    {
+      "productId": "kmxqueang87zfgu",
+      "netDelta": -9
+    },
+    {
+      "productId": "o3tsktjg14mysf8",
+      "netDelta": -6
+    },
+    {
+      "productId": "sav2ah7te4rri0o",
+      "netDelta": -24
+    },
+    {
+      "productId": "pnjjw5gyr6kp29u",
+      "netDelta": -24
+    },
+    {
+      "productId": "6szmqijps7r1lu4",
+      "netDelta": -12
+    },
+    {
+      "productId": "t2rcmzz1qnkl2fy",
+      "netDelta": -12
+    },
+    {
+      "productId": "prd000000001277",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000460",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000002229",
+      "netDelta": -30
+    },
+    {
+      "productId": "ghk9lhgrc16vjge",
+      "netDelta": -30
+    },
+    {
+      "productId": "prd000000002662",
+      "netDelta": -30
+    },
+    {
+      "productId": "prd000000002460",
+      "netDelta": -50
+    },
+    {
+      "productId": "xoi23swfh63sca3",
+      "netDelta": -50
+    },
+    {
+      "productId": "whqcvxiw2ywjs5k",
+      "netDelta": -3
+    },
+    {
+      "productId": "9lgwwwk6uiqsaxo",
+      "netDelta": -41
+    },
+    {
+      "productId": "prd000000000886",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000000003",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000002",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001176",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000062",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000002043",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000893",
+      "netDelta": -1
+    },
+    {
+      "productId": "j9bqzm4igjmnkzo",
+      "netDelta": -2
+    },
+    {
+      "productId": "vanycm81fu46x5e",
+      "netDelta": -80
+    },
+    {
+      "productId": "prd000000002583",
+      "netDelta": -1
+    },
+    {
+      "productId": "68m4zmi2fiu39l9",
+      "netDelta": -2
+    },
+    {
+      "productId": "sxtshlq1mnjwais",
+      "netDelta": -5
+    },
+    {
+      "productId": "npj5k036fefhuym",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000002203",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000162",
+      "netDelta": -2
+    },
+    {
+      "productId": "99qdqugypjwd9b7",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000222",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000207",
+      "netDelta": -6
+    },
+    {
+      "productId": "prd000000000221",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001365",
+      "netDelta": -6
+    },
+    {
+      "productId": "prd000000002263",
+      "netDelta": -12
+    },
+    {
+      "productId": "prd000000001378",
+      "netDelta": -6
+    },
+    {
+      "productId": "prd000000001144",
+      "netDelta": -6
+    },
+    {
+      "productId": "prd000000000159",
+      "netDelta": -1
+    },
+    {
+      "productId": "53xrwoia8tyxse5",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000059",
+      "netDelta": -4
+    },
+    {
+      "productId": "prd000000000835",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000000836",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000000901",
+      "netDelta": -3
+    },
+    {
+      "productId": "9bsf7ry3r1hlffe",
+      "netDelta": -1
+    },
+    {
+      "productId": "prd000000001588",
+      "netDelta": -2
+    },
+    {
+      "productId": "prd000000001374",
+      "netDelta": -6
+    },
+    {
+      "productId": "c8ibr9q909s0qvu",
+      "netDelta": -12
+    },
+    {
+      "productId": "prd000000000307",
+      "netDelta": -6
+    },
+    {
+      "productId": "prd000000002184",
+      "netDelta": -3
+    }
+  ],
+  "warnings": [],
+  "_cash_movements": [],
+  "_activity_logs": [
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:01:23.612Z",
+      "description": "Completed transaction 2026090505073100093 with 1 item(s), total PHP 200.00.",
+      "id": "6njxfrhm5fymumg",
+      "timestamp": "2026-09-05 05:01:02.157Z",
+      "updated": "2026-09-05 05:01:23.612Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:01:24.414Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100092; physical status is not detectable. Device POS-72F1F2.",
+      "id": "cf008x9ytfzh741",
+      "timestamp": "2026-09-05 05:01:02.244Z",
+      "updated": "2026-09-05 05:01:24.414Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:01:53.474Z",
+      "description": "Completed transaction 2026090505073100094 with 2 item(s), total PHP 1320.00.",
+      "id": "cdjzyszm6fdn765",
+      "timestamp": "2026-09-05 05:01:45.639Z",
+      "updated": "2026-09-05 05:01:53.474Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:01:54.314Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100093; physical status is not detectable. Device POS-72F1F2.",
+      "id": "31dw6pphq0s6ufq",
+      "timestamp": "2026-09-05 05:01:45.723Z",
+      "updated": "2026-09-05 05:01:54.314Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:04:59.206Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100094; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "lzvx2twzlzp6xpe",
+      "timestamp": "2026-09-05 05:01:46.634Z",
+      "updated": "2026-09-05 05:04:59.206Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:09:40.878Z",
+      "description": "Completed transaction 2026090505073100095 with 1 item(s), total PHP 45.00.",
+      "id": "5r105vtfe5i76dz",
+      "timestamp": "2026-09-05 05:09:32.387Z",
+      "updated": "2026-09-05 05:09:40.878Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:09:41.747Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100094; physical status is not detectable. Device POS-72F1F2.",
+      "id": "38op4g0rlrph509",
+      "timestamp": "2026-09-05 05:09:32.457Z",
+      "updated": "2026-09-05 05:09:41.747Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:14:12.800Z",
+      "description": "Signed in to cashier POS",
+      "id": "dkbwb1pvrihkzip",
+      "timestamp": "2026-09-05 05:14:06.147Z",
+      "updated": "2026-09-05 05:14:12.800Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Shift Open",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:14:27.603Z",
+      "description": "Shift opened by cashier sample: beginning PHP 0.00. Device POS-25A2EE.",
+      "id": "7lhewesdyjnk1a1",
+      "timestamp": "2026-09-05 05:14:08.107Z",
+      "updated": "2026-09-05 05:14:27.603Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:21:39.507Z",
+      "description": "Completed transaction 2026090505073100096 with 2 item(s), total PHP 66.00.",
+      "id": "fq3kcp3f8nxpb9p",
+      "timestamp": "2026-09-05 05:21:29.474Z",
+      "updated": "2026-09-05 05:21:39.507Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:21:40.354Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100095; physical status is not detectable. Device POS-72F1F2.",
+      "id": "jpqyc1rsdpisgi9",
+      "timestamp": "2026-09-05 05:21:29.529Z",
+      "updated": "2026-09-05 05:21:40.354Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:23:38.381Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100096; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "q672il2ag4kjbx5",
+      "timestamp": "2026-09-05 05:21:30.236Z",
+      "updated": "2026-09-05 05:23:38.381Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:23:37.524Z",
+      "description": "Completed transaction 2026090505073100097 with 6 item(s), total PHP 894.00.",
+      "id": "o1hkbrer1a6kjzh",
+      "timestamp": "2026-09-05 05:23:27.087Z",
+      "updated": "2026-09-05 05:23:37.524Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:23:38.969Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100096; physical status is not detectable. Device POS-72F1F2.",
+      "id": "nm0ygyzta8ia2sq",
+      "timestamp": "2026-09-05 05:23:27.159Z",
+      "updated": "2026-09-05 05:23:38.969Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:24:00.016Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100097; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "3o0nwwzo68j5eah",
+      "timestamp": "2026-09-05 05:23:44.252Z",
+      "updated": "2026-09-05 05:24:00.016Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:27:14.025Z",
+      "description": "Completed transaction 2026090505073100098 with 9 item(s), total PHP 48.58.",
+      "id": "nxdb0anxrkdadaq",
+      "timestamp": "2026-09-05 05:27:01.072Z",
+      "updated": "2026-09-05 05:27:14.025Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:27:14.849Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100097; physical status is not detectable. Device POS-72F1F2.",
+      "id": "7rrhqx4o9db09xy",
+      "timestamp": "2026-09-05 05:27:01.157Z",
+      "updated": "2026-09-05 05:27:14.849Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:30:31.458Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100098; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "vxmbcwc5h1ko99h",
+      "timestamp": "2026-09-05 05:27:07.938Z",
+      "updated": "2026-09-05 05:30:31.458Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:35:17.058Z",
+      "description": "Completed transaction 2026090505073100099 with 4 item(s), total PHP 334.82.",
+      "id": "ohxkf7m9mz3almi",
+      "timestamp": "2026-09-05 05:34:54.847Z",
+      "updated": "2026-09-05 05:35:17.058Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:35:17.825Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100098; physical status is not detectable. Device POS-72F1F2.",
+      "id": "exkzgg8ixbw8k0s",
+      "timestamp": "2026-09-05 05:34:54.908Z",
+      "updated": "2026-09-05 05:35:17.825Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:38:22.982Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100099; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "zc6hnvqsvpr8pkh",
+      "timestamp": "2026-09-05 05:34:55.769Z",
+      "updated": "2026-09-05 05:38:22.982Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:44:02.843Z",
+      "description": "Completed transaction 2026090505073100100 with 3 item(s), total PHP 192.50.",
+      "id": "6rb1udgmvzionqt",
+      "timestamp": "2026-09-05 05:43:50.498Z",
+      "updated": "2026-09-05 05:44:02.843Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:44:03.663Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100099; physical status is not detectable. Device POS-72F1F2.",
+      "id": "4rvequt2c5agr9v",
+      "timestamp": "2026-09-05 05:43:50.559Z",
+      "updated": "2026-09-05 05:44:03.663Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:49:25.586Z",
+      "description": "Completed transaction 2026090505073100101 with 12 item(s), total PHP 372.04.",
+      "id": "9yt3id0jpoiiesx",
+      "timestamp": "2026-09-05 05:48:59.514Z",
+      "updated": "2026-09-05 05:49:25.586Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:49:26.493Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100100; physical status is not detectable. Device POS-72F1F2.",
+      "id": "l4jyrwvicv1bl4s",
+      "timestamp": "2026-09-05 05:48:59.608Z",
+      "updated": "2026-09-05 05:49:26.493Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:52:43.304Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100101; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "f0qfkfmeqx8tas0",
+      "timestamp": "2026-09-05 05:49:12.037Z",
+      "updated": "2026-09-05 05:52:43.304Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:53:58.348Z",
+      "description": "Completed transaction 2026090505073100102 with 13 item(s), total PHP 1564.28.",
+      "id": "9exqvu6yrj6ez89",
+      "timestamp": "2026-09-05 05:53:40.329Z",
+      "updated": "2026-09-05 05:53:58.348Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:53:59.168Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100101; physical status is not detectable. Device POS-72F1F2.",
+      "id": "ft4a9q2cxwtik2a",
+      "timestamp": "2026-09-05 05:53:40.388Z",
+      "updated": "2026-09-05 05:53:59.168Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:55:22.677Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100102; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "uvnulidzbqcf5cw",
+      "timestamp": "2026-09-05 05:53:52.188Z",
+      "updated": "2026-09-05 05:55:22.677Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:55:21.865Z",
+      "description": "Completed transaction 2026090505073100103 with 12 item(s), total PHP 371.31.",
+      "id": "39psyw0ffgzo7sj",
+      "timestamp": "2026-09-05 05:55:06.448Z",
+      "updated": "2026-09-05 05:55:21.865Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:55:23.223Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100102; physical status is not detectable. Device POS-72F1F2.",
+      "id": "c95nl1vn62pbzzi",
+      "timestamp": "2026-09-05 05:55:06.526Z",
+      "updated": "2026-09-05 05:55:23.223Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 05:55:40.244Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100103; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "zzgh4w5yah9jq6y",
+      "timestamp": "2026-09-05 05:55:37.851Z",
+      "updated": "2026-09-05 05:55:40.244Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:03:23.452Z",
+      "description": "Completed transaction 2026090505073100104 with 1 item(s), total PHP 113.22.",
+      "id": "zn09vxikuhu740l",
+      "timestamp": "2026-09-05 06:03:09.012Z",
+      "updated": "2026-09-05 06:03:23.452Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:03:24.839Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100103; physical status is not detectable. Device POS-72F1F2.",
+      "id": "6kza3tqfugxkpmq",
+      "timestamp": "2026-09-05 06:03:09.093Z",
+      "updated": "2026-09-05 06:03:24.839Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Receipt Reprint",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:05:43.370Z",
+      "description": "Reprinted receipt for transaction 2026090505073100102 from Recent Transactions.",
+      "id": "ju6kcd9mnltflu1",
+      "timestamp": "2026-09-05 06:05:34.947Z",
+      "updated": "2026-09-05 06:05:43.370Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:06:00.131Z",
+      "description": "Completed transaction 2026090505073100105 with 1 item(s), total PHP 55.55.",
+      "id": "up2ku60ne83wu6y",
+      "timestamp": "2026-09-05 06:05:51.768Z",
+      "updated": "2026-09-05 06:06:00.131Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:06:01.002Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100104; physical status is not detectable. Device POS-72F1F2.",
+      "id": "1y5yd19hhlimlhx",
+      "timestamp": "2026-09-05 06:05:51.859Z",
+      "updated": "2026-09-05 06:06:01.002Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Session Locked",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:11:27.250Z",
+      "description": "Cashier session locked after inactivity for cashier sample. Device POS-25A2EE.",
+      "id": "1oushb6nyvni2pl",
+      "timestamp": "2026-09-05 06:11:24.823Z",
+      "updated": "2026-09-05 06:11:27.250Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:12:17.752Z",
+      "description": "Completed transaction 2026090505073100106 with 9.5 item(s), total PHP 413.40.",
+      "id": "0zjf8nqk5v936jp",
+      "timestamp": "2026-09-05 06:11:55.320Z",
+      "updated": "2026-09-05 06:12:17.752Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:12:18.568Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100105; physical status is not detectable. Device POS-72F1F2.",
+      "id": "lon0cgngk2hbq2j",
+      "timestamp": "2026-09-05 06:11:55.414Z",
+      "updated": "2026-09-05 06:12:18.568Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:12:50.602Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100106; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "3cvotcpa2wx3j4c",
+      "timestamp": "2026-09-05 06:11:56.751Z",
+      "updated": "2026-09-05 06:12:50.602Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:12:49.790Z",
+      "description": "Completed transaction 2026090505073100107 with 1 item(s), total PHP 176.00.",
+      "id": "b1vjziiicp7j9pk",
+      "timestamp": "2026-09-05 06:12:41.774Z",
+      "updated": "2026-09-05 06:12:49.790Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:12:51.154Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100106; physical status is not detectable. Device POS-72F1F2.",
+      "id": "licdc8x77kt97c8",
+      "timestamp": "2026-09-05 06:12:41.843Z",
+      "updated": "2026-09-05 06:12:51.154Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:18:50.431Z",
+      "description": "Signed in to cashier POS",
+      "id": "p3iefz7u3o97any",
+      "timestamp": "2026-09-05 06:18:46.971Z",
+      "updated": "2026-09-05 06:18:50.431Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Session Unlocked",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:18:51.347Z",
+      "description": "Cashier session unlocked by cashier sample. Device POS-25A2EE.",
+      "id": "o4al5dxvk025mxg",
+      "timestamp": "2026-09-05 06:18:46.974Z",
+      "updated": "2026-09-05 06:18:51.347Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Cashier Work Session Ended",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:20:07.812Z",
+      "description": "cashier sample paused their session for a break with PHP 0.00 expected in their drawer. Their session resumes on next login; sales remain assigned to their account. Device POS-25A2EE.",
+      "id": "hfaejrs51nfp0yh",
+      "timestamp": "2026-09-05 06:19:28.391Z",
+      "updated": "2026-09-05 06:20:07.812Z",
+      "user_id": "vp25zbjjontp0ku"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:19:38.141Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "jw9p0itbfy35z42",
+      "timestamp": "2026-09-05 06:19:37.068Z",
+      "updated": "2026-09-05 06:19:38.141Z",
+      "user_id": "th0g57xepysf3pg"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:27:00.981Z",
+      "description": "Completed transaction 2026090505073100108 with 3 item(s), total PHP 27.10.",
+      "id": "wygxlaf2dyxfbxh",
+      "timestamp": "2026-09-05 06:26:47.984Z",
+      "updated": "2026-09-05 06:27:00.981Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:27:01.767Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100107; physical status is not detectable. Device POS-72F1F2.",
+      "id": "37f95wmo0kuyexs",
+      "timestamp": "2026-09-05 06:26:48.061Z",
+      "updated": "2026-09-05 06:27:01.767Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:28:30.948Z",
+      "description": "Completed transaction 2026090505073100109 with 2 item(s), total PHP 453.50.",
+      "id": "u2e1dyrm739mmrn",
+      "timestamp": "2026-09-05 06:28:11.472Z",
+      "updated": "2026-09-05 06:28:30.948Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:28:31.804Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100108; physical status is not detectable. Device POS-72F1F2.",
+      "id": "lxsufpylgpei2tl",
+      "timestamp": "2026-09-05 06:28:11.553Z",
+      "updated": "2026-09-05 06:28:31.804Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:31:41.544Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100109; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "68xsb4se2xbz2x1",
+      "timestamp": "2026-09-05 06:28:13.034Z",
+      "updated": "2026-09-05 06:31:41.544Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:32:00.088Z",
+      "description": "Completed transaction 2026090505073100110 with 4 item(s), total PHP 29.03.",
+      "id": "8t6f44cyftyltsk",
+      "timestamp": "2026-09-05 06:31:40.770Z",
+      "updated": "2026-09-05 06:32:00.088Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:32:00.896Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100109; physical status is not detectable. Device POS-72F1F2.",
+      "id": "kc3l78fr33pxc85",
+      "timestamp": "2026-09-05 06:31:40.855Z",
+      "updated": "2026-09-05 06:32:00.896Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:32:01.430Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100110; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "p47z6z08xckir0u",
+      "timestamp": "2026-09-05 06:31:46.169Z",
+      "updated": "2026-09-05 06:32:01.430Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:37:11.318Z",
+      "description": "Completed transaction 2026090505073100111 with 7 item(s), total PHP 41.75.",
+      "id": "tgrul9x5lxavkoy",
+      "timestamp": "2026-09-05 06:36:52.488Z",
+      "updated": "2026-09-05 06:37:11.318Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:37:12.121Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100110; physical status is not detectable. Device POS-72F1F2.",
+      "id": "crhk8a7517z2x3z",
+      "timestamp": "2026-09-05 06:36:52.579Z",
+      "updated": "2026-09-05 06:37:12.121Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:38:27.976Z",
+      "description": "Completed transaction 2026090505073100112 with 3 item(s), total PHP 75.00.",
+      "id": "7y6t1xkd4ql4izf",
+      "timestamp": "2026-09-05 06:38:19.033Z",
+      "updated": "2026-09-05 06:38:27.976Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:38:28.807Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100111; physical status is not detectable. Device POS-72F1F2.",
+      "id": "f4bjqhtmoyrs8v2",
+      "timestamp": "2026-09-05 06:38:19.118Z",
+      "updated": "2026-09-05 06:38:28.807Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:40:25.054Z",
+      "description": "Completed transaction 2026090505073100113 with 1 item(s), total PHP 31.00.",
+      "id": "slmgq525xor5vii",
+      "timestamp": "2026-09-05 06:39:46.848Z",
+      "updated": "2026-09-05 06:40:25.054Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:40:27.648Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100112; physical status is not detectable. Device POS-72F1F2.",
+      "id": "b40z6zedqb1exmy",
+      "timestamp": "2026-09-05 06:39:46.922Z",
+      "updated": "2026-09-05 06:40:27.648Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:43:08.774Z",
+      "description": "Completed transaction 2026090505073100114 with 1 item(s), total PHP 10.00.",
+      "id": "z564epikjpcy5z2",
+      "timestamp": "2026-09-05 06:40:16.241Z",
+      "updated": "2026-09-05 06:43:08.774Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:43:18.473Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100113; physical status is not detectable. Device POS-72F1F2.",
+      "id": "ce2hds8qewzj84w",
+      "timestamp": "2026-09-05 06:40:16.313Z",
+      "updated": "2026-09-05 06:43:18.473Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:43:17.452Z",
+      "description": "Completed transaction 2026090505073100115 with 9 item(s), total PHP 1863.00.",
+      "id": "m1uyab19jsuenw1",
+      "timestamp": "2026-09-05 06:42:54.444Z",
+      "updated": "2026-09-05 06:43:17.452Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:43:19.030Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100114; physical status is not detectable. Device POS-72F1F2.",
+      "id": "bdi8k7ih33deas3",
+      "timestamp": "2026-09-05 06:42:54.526Z",
+      "updated": "2026-09-05 06:43:19.030Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:46:30.052Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100115; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "v4gjfgtnzor95vz",
+      "timestamp": "2026-09-05 06:43:00.478Z",
+      "updated": "2026-09-05 06:46:30.052Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:58:46.402Z",
+      "description": "Completed transaction 2026090505073100116 with 4 item(s), total PHP 36.98.",
+      "id": "xm7jynx2wjh91b1",
+      "timestamp": "2026-09-05 06:58:34.065Z",
+      "updated": "2026-09-05 06:58:46.402Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 06:58:47.211Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100115; physical status is not detectable. Device POS-72F1F2.",
+      "id": "q6rb1uvmspgnouq",
+      "timestamp": "2026-09-05 06:58:34.154Z",
+      "updated": "2026-09-05 06:58:47.211Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:04:05.493Z",
+      "description": "Completed transaction 2026090505073100117 with 5 item(s), total PHP 880.00.",
+      "id": "x3k3mfh96ucs9yz",
+      "timestamp": "2026-09-05 07:03:54.561Z",
+      "updated": "2026-09-05 07:04:05.493Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:04:06.330Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100116; physical status is not detectable. Device POS-72F1F2.",
+      "id": "jwy87g7gwa4o647",
+      "timestamp": "2026-09-05 07:03:54.621Z",
+      "updated": "2026-09-05 07:04:06.330Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:06:04.543Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100117; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "zyeplv7vewdjv57",
+      "timestamp": "2026-09-05 07:03:58.936Z",
+      "updated": "2026-09-05 07:06:04.543Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:06:03.417Z",
+      "description": "Completed transaction 2026090505073100118 with 5 item(s), total PHP 3015.00.",
+      "id": "tbk0io7s5djr4x2",
+      "timestamp": "2026-09-05 07:05:34.744Z",
+      "updated": "2026-09-05 07:06:03.417Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:06:05.205Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100117; physical status is not detectable. Device POS-72F1F2.",
+      "id": "jptyx1bdrhuj5gx",
+      "timestamp": "2026-09-05 07:05:34.833Z",
+      "updated": "2026-09-05 07:06:05.205Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:09:21.378Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100118; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "3d93qvbgduwz0ug",
+      "timestamp": "2026-09-05 07:05:36.192Z",
+      "updated": "2026-09-05 07:09:21.378Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:16:09.936Z",
+      "description": "Completed transaction 2026090505073100119 with 13.5 item(s), total PHP 5817.50.",
+      "id": "4nb3s7hnfmzyyok",
+      "timestamp": "2026-09-05 07:15:22.177Z",
+      "updated": "2026-09-05 07:16:09.936Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:16:10.805Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100118; physical status is not detectable. Device POS-72F1F2.",
+      "id": "w2jz57h1vielssy",
+      "timestamp": "2026-09-05 07:15:22.290Z",
+      "updated": "2026-09-05 07:16:10.805Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:17:18.169Z",
+      "description": "MA.CAZZANDRA SIACOR manually confirmed the physical drawer was closed for transaction 2026090505073100119; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "n1ah2xv402oye5q",
+      "timestamp": "2026-09-05 07:15:23.293Z",
+      "updated": "2026-09-05 07:17:18.169Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Cashier Work Session Ended",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:17:18.763Z",
+      "description": "MA.CAZZANDRA SIACOR paused their session for a break with PHP 39910.16 expected in their drawer. Their session resumes on next login; sales remain assigned to their account. Device POS-72F1F2.",
+      "id": "t33gk6wss9ae7rg",
+      "timestamp": "2026-09-05 07:17:09.813Z",
+      "updated": "2026-09-05 07:17:18.763Z",
+      "user_id": "dg5cd7szvaj4xc1"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:17:16.116Z",
+      "description": "Signed in to cashier POS using barcode",
+      "id": "sls62ras239p7ke",
+      "timestamp": "2026-09-05 07:17:16.064Z",
+      "updated": "2026-09-05 07:17:16.116Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:17:19.678Z",
+      "description": "Signed in to cashier POS using barcode",
+      "id": "eebogs203m7sjiu",
+      "timestamp": "2026-09-05 07:17:16.113Z",
+      "updated": "2026-09-05 07:17:19.678Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Shift Open",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:20:18.663Z",
+      "description": "Shift opened by SYRA MAE ENARIO: beginning PHP 0.00. Device POS-72F1F2.",
+      "id": "poamj5x7cza4tke",
+      "timestamp": "2026-09-05 07:19:53.011Z",
+      "updated": "2026-09-05 07:20:18.663Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:21:58.908Z",
+      "description": "Completed transaction 2026090505073100120 with 4 item(s), total PHP 67.73.",
+      "id": "6iv91tn3f1be2ou",
+      "timestamp": "2026-09-05 07:21:42.271Z",
+      "updated": "2026-09-05 07:21:58.908Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:21:59.762Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100120; physical status is not detectable. Device POS-72F1F2.",
+      "id": "277mceid6nz1nxh",
+      "timestamp": "2026-09-05 07:21:42.326Z",
+      "updated": "2026-09-05 07:21:59.762Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:25:17.690Z",
+      "description": "SYRA MAE ENARIO manually confirmed the physical drawer was closed for transaction 2026090505073100120; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "gyn5svh7zezam01",
+      "timestamp": "2026-09-05 07:21:43.251Z",
+      "updated": "2026-09-05 07:25:17.690Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:37:24.466Z",
+      "description": "Completed transaction 2026090505073100121 with 1 item(s), total PHP 23.81.",
+      "id": "ssmmy3q5gv74sjh",
+      "timestamp": "2026-09-05 07:37:14.746Z",
+      "updated": "2026-09-05 07:37:24.466Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:37:25.331Z",
+      "description": "Cash drawer open command sent after completed transaction 202609055073100122; physical status is not detectable. Device POS-72F1F2.",
+      "id": "bboi5l7gjgp08w8",
+      "timestamp": "2026-09-05 07:37:14.815Z",
+      "updated": "2026-09-05 07:37:25.331Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:50:32.208Z",
+      "description": "Completed transaction 2026090505073100122 with 254 item(s), total PHP 2443.10.",
+      "id": "cljzk4wnofurhdb",
+      "timestamp": "2026-09-05 07:50:04.440Z",
+      "updated": "2026-09-05 07:50:32.208Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:50:33.046Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100121; physical status is not detectable. Device POS-72F1F2.",
+      "id": "9dob48q5vwmhs0y",
+      "timestamp": "2026-09-05 07:50:04.489Z",
+      "updated": "2026-09-05 07:50:33.046Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:52:06.048Z",
+      "description": "SYRA MAE ENARIO manually confirmed the physical drawer was closed for transaction 2026090505073100122; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "olylf6f4q5zcis7",
+      "timestamp": "2026-09-05 07:50:07.044Z",
+      "updated": "2026-09-05 07:52:06.048Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Receipt Reprint",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:52:06.622Z",
+      "description": "Reprinted receipt for transaction 2026090505073100122 from Recent Transactions.",
+      "id": "ka2wqegfy6rsoak",
+      "timestamp": "2026-09-05 07:51:51.193Z",
+      "updated": "2026-09-05 07:52:06.622Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Receipt Reprint",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:54:16.637Z",
+      "description": "Reprinted receipt for transaction 2026090505073100122 from Recent Transactions.",
+      "id": "pd25cw51u4v0x7c",
+      "timestamp": "2026-09-05 07:54:13.219Z",
+      "updated": "2026-09-05 07:54:16.637Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:56:03.395Z",
+      "description": "Completed transaction 2026090505073100123 with 1 item(s), total PHP 9.00.",
+      "id": "k85mvw4xi43np5v",
+      "timestamp": "2026-09-05 07:55:53.894Z",
+      "updated": "2026-09-05 07:56:03.395Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:56:04.956Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100122; physical status is not detectable. Device POS-72F1F2.",
+      "id": "go8ecube3ne8xws",
+      "timestamp": "2026-09-05 07:55:53.978Z",
+      "updated": "2026-09-05 07:56:04.956Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:59:29.619Z",
+      "description": "Completed transaction 2026090505073100124 with 2 item(s), total PHP 16.00.",
+      "id": "yg9j617wnowhdxj",
+      "timestamp": "2026-09-05 07:56:04.249Z",
+      "updated": "2026-09-05 07:59:29.619Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 07:59:30.477Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100123; physical status is not detectable. Device POS-72F1F2.",
+      "id": "6bmfvsbgu0f41cq",
+      "timestamp": "2026-09-05 07:56:04.325Z",
+      "updated": "2026-09-05 07:59:30.477Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:02:13.703Z",
+      "description": "Completed transaction 2026090505073100125 with 2 item(s), total PHP 28.27.",
+      "id": "gbseuk2fjse3v0u",
+      "timestamp": "2026-09-05 08:02:02.885Z",
+      "updated": "2026-09-05 08:02:13.703Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:02:14.544Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100124; physical status is not detectable. Device POS-72F1F2.",
+      "id": "x5egrnv3h5olfvn",
+      "timestamp": "2026-09-05 08:02:02.975Z",
+      "updated": "2026-09-05 08:02:14.544Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:08:22.631Z",
+      "description": "Completed transaction 2026090505073100126 with 3 item(s), total PHP 70.78.",
+      "id": "e5f9ckrvnqrjvga",
+      "timestamp": "2026-09-05 08:05:38.738Z",
+      "updated": "2026-09-05 08:08:22.631Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:08:37.721Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100125; physical status is not detectable. Device POS-72F1F2.",
+      "id": "h67yj3gqpjoi87v",
+      "timestamp": "2026-09-05 08:05:38.827Z",
+      "updated": "2026-09-05 08:08:37.721Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:07:00.379Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "5ncdrmar73bui9p",
+      "timestamp": "2026-09-05 08:06:56.247Z",
+      "updated": "2026-09-05 08:07:00.379Z",
+      "user_id": "th0g57xepysf3pg"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:07:16.817Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "m5yz9b9kaihzlcp",
+      "timestamp": "2026-09-05 08:07:13.583Z",
+      "updated": "2026-09-05 08:07:16.817Z",
+      "user_id": "th0g57xepysf3pg"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:08:36.804Z",
+      "description": "Completed transaction 2026090505073100127 with 3 item(s), total PHP 28.00.",
+      "id": "lh53tfir9b8y5oq",
+      "timestamp": "2026-09-05 08:08:07.918Z",
+      "updated": "2026-09-05 08:08:36.804Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:08:38.421Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100126; physical status is not detectable. Device POS-72F1F2.",
+      "id": "eqyo8r1kgxuqzr2",
+      "timestamp": "2026-09-05 08:08:07.996Z",
+      "updated": "2026-09-05 08:08:38.421Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:21:46.284Z",
+      "description": "Completed transaction 2026090505073100128 with 2 item(s), total PHP 108.00.",
+      "id": "2wal0bhao1gchfk",
+      "timestamp": "2026-09-05 08:21:34.880Z",
+      "updated": "2026-09-05 08:21:46.284Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:21:47.244Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100127; physical status is not detectable. Device POS-72F1F2.",
+      "id": "ytwtocj3p88g2wu",
+      "timestamp": "2026-09-05 08:21:34.948Z",
+      "updated": "2026-09-05 08:21:47.244Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:22:40.108Z",
+      "description": "Completed transaction 2026090505073100129 with 1 item(s), total PHP 146.00.",
+      "id": "1hupli2ijajtyxw",
+      "timestamp": "2026-09-05 08:22:23.460Z",
+      "updated": "2026-09-05 08:22:40.108Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:22:41.097Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100128; physical status is not detectable. Device POS-72F1F2.",
+      "id": "9sdkc634d8ry7ep",
+      "timestamp": "2026-09-05 08:22:23.552Z",
+      "updated": "2026-09-05 08:22:41.097Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:26:22.684Z",
+      "description": "Completed transaction 2026090505073100130 with 7 item(s), total PHP 224.00.",
+      "id": "yo3upvq4yhxs9s0",
+      "timestamp": "2026-09-05 08:26:10.541Z",
+      "updated": "2026-09-05 08:26:22.684Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:26:23.539Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100129; physical status is not detectable. Device POS-72F1F2.",
+      "id": "xhydpv8t8w5si9b",
+      "timestamp": "2026-09-05 08:26:10.638Z",
+      "updated": "2026-09-05 08:26:23.539Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:26:51.367Z",
+      "description": "Completed transaction 2026090505073100131 with 1 item(s), total PHP 8.50.",
+      "id": "7iab8kh3a41mrva",
+      "timestamp": "2026-09-05 08:26:43.386Z",
+      "updated": "2026-09-05 08:26:51.367Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:26:52.260Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100130; physical status is not detectable. Device POS-72F1F2.",
+      "id": "kez0dclog5323zr",
+      "timestamp": "2026-09-05 08:26:43.462Z",
+      "updated": "2026-09-05 08:26:52.260Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:39:38.791Z",
+      "description": "Completed transaction 2026090505073100132 with 14.5 item(s), total PHP 1697.33.",
+      "id": "z6x7tiggkb3peov",
+      "timestamp": "2026-09-05 08:38:31.411Z",
+      "updated": "2026-09-05 08:39:38.791Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:39:40.177Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100131; physical status is not detectable. Device POS-72F1F2.",
+      "id": "k7abthujdkzjqzk",
+      "timestamp": "2026-09-05 08:38:31.506Z",
+      "updated": "2026-09-05 08:39:40.177Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:40:45.876Z",
+      "description": "SYRA MAE ENARIO manually confirmed the physical drawer was closed for transaction 2026090505073100132; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "7mf7gizs9f5glco",
+      "timestamp": "2026-09-05 08:38:49.302Z",
+      "updated": "2026-09-05 08:40:45.876Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:40:44.085Z",
+      "description": "Completed transaction 2026090505073100133 with 9 item(s), total PHP 295.00.",
+      "id": "hk7mih1ahd7gye9",
+      "timestamp": "2026-09-05 08:40:14.943Z",
+      "updated": "2026-09-05 08:40:44.085Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:40:46.717Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100132; physical status is not detectable. Device POS-72F1F2.",
+      "id": "jk5tegfsruhoflm",
+      "timestamp": "2026-09-05 08:40:15.027Z",
+      "updated": "2026-09-05 08:40:46.717Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:45:10.615Z",
+      "description": "Completed transaction 2026090505073100134 with 1 item(s), total PHP 54.00.",
+      "id": "gx0ygqtte9rplpm",
+      "timestamp": "2026-09-05 08:45:02.686Z",
+      "updated": "2026-09-05 08:45:10.615Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:45:11.551Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100133; physical status is not detectable. Device POS-72F1F2.",
+      "id": "90n7zoqducmvc87",
+      "timestamp": "2026-09-05 08:45:02.764Z",
+      "updated": "2026-09-05 08:45:11.551Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:54:32.512Z",
+      "description": "Completed transaction 2026090505073100135 with 45 item(s), total PHP 926.17.",
+      "id": "3l3oulez27br79l",
+      "timestamp": "2026-09-05 08:53:06.039Z",
+      "updated": "2026-09-05 08:54:32.512Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:54:33.756Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100134; physical status is not detectable. Device POS-72F1F2.",
+      "id": "f5ike39g49imzy1",
+      "timestamp": "2026-09-05 08:53:06.141Z",
+      "updated": "2026-09-05 08:54:33.756Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:55:23.715Z",
+      "description": "SYRA MAE ENARIO manually confirmed the physical drawer was closed for transaction 2026090505073100135; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "vhlweo27nnhp515",
+      "timestamp": "2026-09-05 08:53:09.042Z",
+      "updated": "2026-09-05 08:55:23.715Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:55:21.270Z",
+      "description": "Completed transaction 2026090505073100136 with 8 item(s), total PHP 287.82.",
+      "id": "clzs86uqbkav4am",
+      "timestamp": "2026-09-05 08:54:50.762Z",
+      "updated": "2026-09-05 08:55:21.270Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:55:25.605Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100135; physical status is not detectable. Device POS-72F1F2.",
+      "id": "yk80y1tpdrk5z87",
+      "timestamp": "2026-09-05 08:54:50.845Z",
+      "updated": "2026-09-05 08:55:25.605Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Closure Confirmed",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:57:18.571Z",
+      "description": "SYRA MAE ENARIO manually confirmed the physical drawer was closed for transaction 2026090505073100136; confirmation was not sensor verified. Device POS-72F1F2.",
+      "id": "6twvq4ihhu262mb",
+      "timestamp": "2026-09-05 08:55:05.794Z",
+      "updated": "2026-09-05 08:57:18.571Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:57:17.873Z",
+      "description": "Completed transaction 2026090505073100137 with 4 item(s), total PHP 62.50.",
+      "id": "b77h44ymsuvs0hp",
+      "timestamp": "2026-09-05 08:57:01.228Z",
+      "updated": "2026-09-05 08:57:17.873Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 08:57:19.045Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100136; physical status is not detectable. Device POS-72F1F2.",
+      "id": "9ug9h478lljeyrf",
+      "timestamp": "2026-09-05 08:57:01.306Z",
+      "updated": "2026-09-05 08:57:19.045Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:01:39.262Z",
+      "description": "Completed transaction 2026090505073100138 with 3 item(s), total PHP 95.00.",
+      "id": "j9d27qvlvpy55uf",
+      "timestamp": "2026-09-05 09:01:25.091Z",
+      "updated": "2026-09-05 09:01:39.262Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:01:40.091Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100137; physical status is not detectable. Device POS-72F1F2.",
+      "id": "788tlx8r5y71m43",
+      "timestamp": "2026-09-05 09:01:25.184Z",
+      "updated": "2026-09-05 09:01:40.091Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Sale",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:03:07.776Z",
+      "description": "Completed transaction 2026090505073100139 with 18 item(s), total PHP 240.35.",
+      "id": "f7uvs7rbwxhphtd",
+      "timestamp": "2026-09-05 09:02:50.164Z",
+      "updated": "2026-09-05 09:03:07.776Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Cash Drawer Open Command Sent",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:03:08.463Z",
+      "description": "Cash drawer open command sent after completed transaction 2026090505073100138; physical status is not detectable. Device POS-72F1F2.",
+      "id": "02xzun4mg8ag202",
+      "timestamp": "2026-09-05 09:02:50.282Z",
+      "updated": "2026-09-05 09:03:08.463Z",
+      "user_id": "hh0p9fx4e045zzh"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:04:45.634Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "rd18lhsmm3qe0w2",
+      "timestamp": "2026-09-05 09:04:42.409Z",
+      "updated": "2026-09-05 09:04:45.634Z",
+      "user_id": "th0g57xepysf3pg"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:06:19.524Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "4t5bzh2xkuk5sr3",
+      "timestamp": "2026-09-05 09:06:16.222Z",
+      "updated": "2026-09-05 09:06:19.524Z",
+      "user_id": "th0g57xepysf3pg"
+    },
+    {
+      "action_type": "Login",
+      "collectionId": "pbc_444539071",
+      "collectionName": "activity_logs",
+      "created": "2026-09-05 09:59:30.950Z",
+      "description": "Signed in to admin dashboard.",
+      "id": "f62wxfjddlvemcf",
+      "timestamp": "2026-09-05 09:59:25.985Z",
+      "updated": "2026-09-05 09:59:30.950Z",
+      "user_id": "th0g57xepysf3pg"
+    }
+  ],
+  "_sale_adjustments": []
+}
