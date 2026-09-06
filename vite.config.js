@@ -3,7 +3,15 @@ import react from '@vitejs/plugin-react'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const DEFAULT_POCKETBASE_URL = 'https://nexasystems.pockethost.io'
+// The store migrated off PocketHost to a self-hosted local PocketBase
+// (192.168.0.114:8090) on 2026-09-05. This fallback is a defense-in-depth
+// safety net for any build invocation that forgets to set
+// VITE_POCKETBASE_URL/POCKETBASE_URL explicitly -- it must track wherever
+// the store's PocketBase actually lives, not the decommissioned PocketHost
+// instance. Confirmed live: the GitHub Actions release workflow had never
+// set either env var, so every CI-built release before this fix silently
+// baked in the old PocketHost URL via this exact constant.
+const DEFAULT_POCKETBASE_URL = 'http://192.168.0.114:8090'
 const DEFAULT_ADMIN_API_URL = 'https://pos-system-taupe-eight.vercel.app/api'
 const DEFAULT_RECEIPT_PRINTER_NAME = 'XP-58H'
 const DEFAULT_RECEIPT_COPIES = '2'

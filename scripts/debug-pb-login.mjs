@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const pb = new PocketBase(process.env.POCKETBASE_URL || 'https://nexasystems.pockethost.io');
+const pb = new PocketBase(process.env.POCKETBASE_URL || 'http://192.168.0.114:8090');
 
 try {
   await pb.collection('_superusers').authWithPassword(process.env.POCKETBASE_SUPERUSER_EMAIL, process.env.POCKETBASE_SUPERUSER_PASSWORD);
