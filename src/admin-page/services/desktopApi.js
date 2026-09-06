@@ -32,6 +32,7 @@ import { getProductBarcodes, isCatalogActive } from '../../utils/productLifecycl
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 import { accountDeletionError } from '../../utils/accountDeletionGuard'
 import { buildActivityLogsFilter } from '../utils/activityLogsFilter'
+import { buildDashboardSalesFilter } from '../utils/dashboardSalesFilter'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -652,11 +653,22 @@ async function fetchReceiptRecords(filters = {}) {
     : []
   if (!(await isCloudReachable())) return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
 
+  // Bounded to the same [fromDate, toDate] window TransactionLogs.jsx
+  // already selects (see filterReceiptRecords' identical fromTime/toTime
+  // above) -- this used to fetch and expand EVERY sale and EVERY sale_item
+  // ever recorded on every load, then discard everything outside the
+  // window in filterReceiptRecords below anyway. Mirrors the identical fix
+  // already applied to /api/receipts (server/index.js) and to the desktop
+  // Dashboard's own sales fetch above.
+  const fromISO = filters.fromDate ? new Date(`${filters.fromDate}T00:00:00`).toISOString() : null
+  const toISO = filters.toDate ? new Date(`${filters.toDate}T23:59:59.999`).toISOString() : null
+  const { filter: salesFilter, params: salesParams } = buildDashboardSalesFilter({ fromISO, toISO })
   let sales
   try {
     sales = await pb.collection('sales').getFullList({
       sort: '-created_at,-created',
       expand: 'cashier_id',
+      ...(salesFilter ? { filter: pb.filter(salesFilter, salesParams) } : {}),
       requestKey: null,
     })
   } catch {
@@ -668,11 +680,15 @@ async function fetchReceiptRecords(filters = {}) {
   // latter reliably exceeds PocketHost's per-IP concurrent-request cap once
   // there are more than a handful of sales, silently dropping line items on
   // the overflowed requests.
-  const allSaleItems = await pb.collection('sale_items').getFullList({
+  const saleIdFilter = sales.length
+    ? sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
+    : ''
+  const allSaleItems = saleIdFilter ? await pb.collection('sale_items').getFullList({
     sort: 'created',
     expand: 'product_id',
+    filter: saleIdFilter,
     requestKey: null,
-  }).catch(() => [])
+  }).catch(() => []) : []
   const itemsBySaleId = groupSaleItemsBySaleId(allSaleItems)
   const cloudRecords = sales.map((sale) => receiptRecordFromCloudSale(sale, itemsBySaleId))
   const pendingSales = await cashierDb.pendingSales.toArray()
@@ -1979,19 +1995,36 @@ export const desktopAdminApi = {
 
     await refreshAdminLocalCache({ pb }).catch(() => {})
     const products = await getAllProducts()
-    const [cloudSales, cloudSaleItems, cloudAdjustments] = await Promise.all([
-      pb.collection('sales').getFullList({
-        requestKey: null,
-      }).catch(() => []),
+    // Bounded to the same [options.from, options.to] window Dashboard.jsx
+    // already selects -- this used to fetch and expand EVERY sale,
+    // sale_item, and sale_adjustment ever recorded on every single page
+    // load (fired automatically right after the fast local-only pass, not
+    // just on manual refresh), then discard everything outside the window
+    // in filterAnalyticsRecords below anyway. Bounding the fetch itself
+    // changes no downstream number -- filterAnalyticsRecords already
+    // narrowed to this same window before any stat was computed -- it just
+    // stops fetching data that was always going to be thrown away.
+    const fromISO = options.from ? new Date(`${options.from}T00:00:00`).toISOString() : null
+    const toISO = options.to ? new Date(`${options.to}T23:59:59.999`).toISOString() : null
+    const { filter: salesFilter, params: salesParams } = buildDashboardSalesFilter({ fromISO, toISO })
+    const cloudSales = await pb.collection('sales').getFullList({
+      ...(salesFilter ? { filter: pb.filter(salesFilter, salesParams) } : {}),
+      requestKey: null,
+    }).catch(() => [])
+    const saleIdFilter = cloudSales.length
+      ? cloudSales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
+      : ''
+    const [cloudSaleItems, cloudAdjustments] = saleIdFilter ? await Promise.all([
       pb.collection('sale_items').getFullList({
+        filter: saleIdFilter,
         expand: 'product_id',
         requestKey: null,
       }).catch(() => []),
       // sale_adjustments may not exist on an un-migrated PocketBase (M1's
       // schema migration is additive and applied separately) -- degrade to
       // un-netted figures rather than failing the whole dashboard.
-      pb.collection('sale_adjustments').getFullList({ requestKey: null }).catch(() => []),
-    ])
+      pb.collection('sale_adjustments').getFullList({ filter: saleIdFilter, requestKey: null }).catch(() => []),
+    ]) : [[], []]
 
     const overriddenTransactionNos = new Set(
       localCompletedSales
@@ -2487,18 +2520,22 @@ export const desktopAdminApi = {
       return records.map(toProductBarcodeLabel)
     }
 
-    const records = await pb.collection('product_barcode_labels').getFullList({
+    // Capped at the most recent 300 rather than the entire history
+    // (getFullList) -- reprinting a recently-generated label is the real
+    // use case here (see the search box in BarcodeTools.jsx), and unlike
+    // activity_logs/dashboard this list has no natural date-range picker to
+    // bound it by instead. Deliberately does NOT clear() the local cache
+    // before upserting (unlike the old unbounded version): a label older
+    // than this cap would look "deleted on the cloud" and be wiped from the
+    // offline cache, when it was simply outside this page's window.
+    const page = await pb.collection('product_barcode_labels').getList(1, 300, {
       sort: '-created',
       expand: 'generated_by',
       requestKey: null,
-    }).catch(() => [])
+    }).catch(() => ({ items: [] }))
 
-    const normalized = records.map(fromCloudProductBarcodeLabel)
-    await adminDb.transaction('rw', adminDb.productBarcodeLabels, async () => {
-      const pending = await adminDb.productBarcodeLabels.filter((record) => record.pendingSync).toArray()
-      await adminDb.productBarcodeLabels.clear()
-      await adminDb.productBarcodeLabels.bulkPut([...normalized, ...pending])
-    })
+    const normalized = page.items.map(fromCloudProductBarcodeLabel)
+    if (normalized.length) await adminDb.productBarcodeLabels.bulkPut(normalized)
     return normalized.map(toProductBarcodeLabel)
   },
   async createProductBarcodeLabel(title) {
