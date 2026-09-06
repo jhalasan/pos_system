@@ -5,7 +5,13 @@ import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 
 export async function refreshAdminLocalCache({
-  baseUrl = import.meta.env.VITE_POCKETBASE_URL,
+  // Optional chaining matters here: under Vite this is always populated by
+  // `define`, but a caller (e.g. the sync engine) that passes only `pb` and
+  // no `baseUrl` still evaluates this default -- under a plain Node runtime
+  // (tests) `import.meta.env` itself is undefined, not just the var. Mirrors
+  // the identical fix already applied to the cashier equivalent in
+  // cashier-pos/offline/cloudBootstrap.js.
+  baseUrl = import.meta.env?.VITE_POCKETBASE_URL,
   pb = baseUrl ? createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor) : null,
   requireCatalog = false,
 } = {}) {

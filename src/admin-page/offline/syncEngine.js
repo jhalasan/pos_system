@@ -14,6 +14,7 @@ import { resolveRequiredProductPrice } from './productPricing'
 import { quantizeQty } from '../../utils/quantity'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
+import { isPrivateNetworkHost } from '../../utils/privateNetworkHost'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const CLOUD_PULL_INTERVAL_MS = 2 * 60_000
@@ -78,6 +79,22 @@ async function productSyncErrorMessage(pb, op, error) {
 function retryDelay(attempts) {
   const exponential = Math.min(MAX_BACKOFF_MS, 1_000 * (2 ** Math.min(attempts, 8)))
   return exponential + Math.floor(Math.random() * 500)
+}
+
+// See the identical helper's comment in cashier-pos/offline/syncEngine.js --
+// sharedGovernor's rate-limit cooldown is one flag shared by every caller in
+// the app, including unrelated PocketHost-facing traffic (barcode login,
+// manager approval) that can still legitimately be rate-limited. Once this
+// engine's own `pb` targets a private-network server (no rate limit at all),
+// that unrelated cooldown must not pause this engine's own uploads/pulls.
+function targetsPrivateNetwork(pb) {
+  const baseUrl = pb.baseURL || pb.baseUrl
+  if (!baseUrl) return false
+  try {
+    return isPrivateNetworkHost(new URL(baseUrl).hostname)
+  } catch {
+    return false
+  }
 }
 
 function queuedStaffBody(payload = {}) {
@@ -329,6 +346,15 @@ export class AdminSyncEngine extends EventTarget {
     this.lastCloudPullAt = 0
     this.reachabilityCache = { value: false, expiresAt: 0 }
     this.jitterMs = Math.floor(Math.random() * SCHEDULE_JITTER_MS)
+    this.targetsPrivateNetwork = targetsPrivateNetwork(this.pb)
+  }
+
+  isBlockedByRateLimit() {
+    return !this.targetsPrivateNetwork && isPocketBaseRateLimited()
+  }
+
+  rateLimitDelayMs() {
+    return this.targetsPrivateNetwork ? 0 : pocketBaseRateLimitRemainingMs()
   }
 
   start() {
@@ -353,13 +379,13 @@ export class AdminSyncEngine extends EventTarget {
   schedule(delay = this.intervalMs + this.jitterMs) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    const rateLimitDelay = pocketBaseRateLimitRemainingMs()
+    const rateLimitDelay = this.rateLimitDelayMs()
     this.timer = setTimeout(() => void this.syncNow(), Math.max(delay, rateLimitDelay))
   }
 
   async isCloudReachable({ forceNetworkCheck = false } = {}) {
     if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
-    if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
+    if (!forceNetworkCheck && this.isBlockedByRateLimit()) return false
     if (!forceNetworkCheck && Date.now() < this.reachabilityCache.expiresAt) return this.reachabilityCache.value
 
     try {
@@ -418,7 +444,7 @@ export class AdminSyncEngine extends EventTarget {
 
     for (const op of queuedOps) {
       if (this.stopped) break
-      if (isPocketBaseRateLimited()) { rateLimited = true; break }
+      if (this.isBlockedByRateLimit()) { rateLimited = true; break }
 
       try {
         await this.uploadOperation(op)
@@ -459,7 +485,7 @@ export class AdminSyncEngine extends EventTarget {
 
     for (const log of queuedLogs) {
       if (this.stopped) break
-      if (isPocketBaseRateLimited()) { rateLimited = true; break }
+      if (this.isBlockedByRateLimit()) { rateLimited = true; break }
 
       try {
         await this.uploadActivityLog(log)
@@ -492,7 +518,7 @@ export class AdminSyncEngine extends EventTarget {
     }
 
     let pulled = false
-    if (!rateLimited && !isPocketBaseRateLimited() && (uploaded > 0 || shouldPullCloud)) {
+    if (!rateLimited && !this.isBlockedByRateLimit() && (uploaded > 0 || shouldPullCloud)) {
       pulled = await refreshAdminLocalCache({ pb: this.pb }).then(() => true).catch((error) => {
         rememberPocketBaseRateLimit(error)
         if (Number(error?.status) === 429) rateLimited = true

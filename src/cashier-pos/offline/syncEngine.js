@@ -14,6 +14,7 @@ import { activityLogPayloadForSync, minimalActivityLogPayload } from './activity
 import { quantizeQty } from '../../utils/quantity'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
+import { isPrivateNetworkHost } from '../../utils/privateNetworkHost'
 import {
   activatePeakProtection,
   getPeakProtectionSettings,
@@ -81,6 +82,26 @@ function errorMessage(error) {
 
 function isPocketBaseRecordId(value) {
   return /^[a-z0-9]{15}$/.test(String(value || '').trim())
+}
+
+// `sharedGovernor`'s rate-limit cooldown is a single flag shared by every
+// caller in the app -- including this engine's own PocketBase client AND the
+// unrelated Vercel-hosted /api/cashier/* calls (barcode login, manager
+// approval) in desktopApi.js, which still legitimately go to PocketHost and
+// can still be rate-limited by it. Once this engine's own `pb` points at a
+// private-network target (the client's local server, which has no rate
+// limit at all -- see pacedPocketBase.js's identical bypass), a 429 from
+// that unrelated PocketHost-facing traffic must not pause THIS engine's
+// catalog refresh / sale uploads for up to 5 minutes (MAX_COOLDOWN_MS) over
+// a limit that was never about this engine's own target in the first place.
+function targetsPrivateNetwork(pb) {
+  const baseUrl = pb.baseURL || pb.baseUrl
+  if (!baseUrl) return false
+  try {
+    return isPrivateNetworkHost(new URL(baseUrl).hostname)
+  } catch {
+    return false
+  }
 }
 
 function retryDelay(attempts) {
@@ -386,6 +407,19 @@ export class CashierSyncEngine extends EventTarget {
     this.catalogRefreshFailures = 0
     this.reachabilityCache = { value: false, expiresAt: 0 }
     this.jitterMs = Math.floor(Math.random() * SCHEDULE_JITTER_MS)
+    this.targetsPrivateNetwork = targetsPrivateNetwork(this.pb)
+  }
+
+  // See targetsPrivateNetwork's comment above -- this engine's own work must
+  // never be paused by a rate limit that was recorded against a different
+  // (PocketHost-facing) caller when this engine's own target has no rate
+  // limit at all.
+  isBlockedByRateLimit() {
+    return !this.targetsPrivateNetwork && isPocketBaseRateLimited()
+  }
+
+  rateLimitDelayMs() {
+    return this.targetsPrivateNetwork ? 0 : pocketBaseRateLimitRemainingMs()
   }
 
   start() {
@@ -411,7 +445,7 @@ export class CashierSyncEngine extends EventTarget {
   schedule(delay = null) {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
-    const rateLimitDelay = pocketBaseRateLimitRemainingMs()
+    const rateLimitDelay = this.rateLimitDelayMs()
     const peakDelay = getPeakProtectionSettings().syncIntervalMinutes * 60_000
     const normalDelay = peakProtectionStatus().active ? peakDelay : this.intervalMs
     const requestedDelay = delay == null ? normalDelay + this.jitterMs : delay
@@ -424,7 +458,7 @@ export class CashierSyncEngine extends EventTarget {
 
   async isCloudReachable({ forceNetworkCheck = false } = {}) {
     if (!forceNetworkCheck && globalThis.navigator && !globalThis.navigator.onLine) return false
-    if (!forceNetworkCheck && isPocketBaseRateLimited()) return false
+    if (!forceNetworkCheck && this.isBlockedByRateLimit()) return false
     if (!forceNetworkCheck && Date.now() < this.reachabilityCache.expiresAt) return this.reachabilityCache.value
 
     try {
@@ -527,7 +561,7 @@ export class CashierSyncEngine extends EventTarget {
       })
     }
 
-    if (shouldRefreshProducts && !isPocketBaseRateLimited()) {
+    if (shouldRefreshProducts && !this.isBlockedByRateLimit()) {
       try {
         products = await refreshLocalProductCatalog({ pb: this.pb })
         this.lastProductRefreshAt = Date.now()
@@ -568,7 +602,7 @@ export class CashierSyncEngine extends EventTarget {
 
     for (const sale of queuedSales) {
       if (this.stopped) break
-      if (rateLimited || isPocketBaseRateLimited()) { rateLimited = true; break }
+      if (rateLimited || this.isBlockedByRateLimit()) { rateLimited = true; break }
 
       try {
         await this.uploadSale(sale)
@@ -605,7 +639,7 @@ export class CashierSyncEngine extends EventTarget {
 
     for (const op of queuedOps) {
       if (this.stopped) break
-      if (rateLimited || isPocketBaseRateLimited()) { rateLimited = true; break }
+      if (rateLimited || this.isBlockedByRateLimit()) { rateLimited = true; break }
 
       try {
         await this.uploadOperation(op)
