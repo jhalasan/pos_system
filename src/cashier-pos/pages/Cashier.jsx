@@ -709,18 +709,26 @@ const Cashier = ({ onLogout, user }) => {
     // admin-cache fallback would show up here and be fully addable to cart,
     // even though the barcode-scan path already correctly rejects it.
     const activeProducts = products.filter(isCatalogActive);
-    const matches = [];
-    for (const product of activeProducts) {
-      const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
-      if (availableStock > 0 && matchesQuery(product)) matches.push(product);
-      if (matches.length === 8) return matches;
-    }
-    for (const product of activeProducts) {
-      const availableStock = Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
-      if (availableStock <= 0 && matchesQuery(product)) matches.push(product);
-      if (matches.length === 8) break;
-    }
-    return matches;
+    // Results used to be capped at 8 and collected in raw catalog order --
+    // with more than 8 in-stock name matches (e.g. "Cup", "Cup 2" .. "Cup
+    // 10"), whichever 8 happened to come first in the catalog array would
+    // silently win, hiding the rest with no indication anything was cut.
+    // The dropdown already scrolls (max-height + overflow-y in the
+    // stylesheet), so raise the cap well above realistic same-query
+    // collision counts and rank name-prefix matches first (the ones a
+    // cashier typing "cup" actually means) ahead of mid-name/barcode
+    // substring hits.
+    const MAX_RESULTS = 40;
+    const rank = (product) => (
+      String(product.name || '').toLowerCase().startsWith(query) ? 0 : 1
+    );
+    const collect = (predicate) => activeProducts
+      .filter((product) => predicate(product) && matchesQuery(product))
+      .sort((a, b) => rank(a) - rank(b));
+    const availableStock = (product) => Number(product.stockQty ?? product.qty ?? product.quantity) || 0;
+    const inStock = collect((product) => availableStock(product) > 0);
+    const outOfStock = collect((product) => availableStock(product) <= 0);
+    return [...inStock, ...outOfStock].slice(0, MAX_RESULTS);
   }, [products, barcode]);
   const selectedSearchProduct = filteredProducts[selectedSearchIndex];
 
