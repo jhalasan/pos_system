@@ -363,6 +363,43 @@ function buildCreatedAtRangeFilter(from, to) {
   return parts.join(' && ')
 }
 
+// Batches an id-based OR-filter fetch into chunks small enough to stay well
+// under PocketBase's filter-length limit, instead of joining every id into
+// one giant OR filter. Confirmed live: 5,953 sale ids in one filter produced
+// a ~184,000-character query string and PocketBase rejected it outright
+// with a 400 -- exactly what broke the Dashboard ("Unable to load
+// dashboard: Something went wrong") once this store's sales volume grew
+// past a few days' worth. This preserves EXACT sale_id-join precision
+// (unlike filtering the target collection by its own `created` timestamp,
+// which would silently miss items from a sale that synced late after being
+// made offline -- sale_items has no app-set created_at of its own, only
+// PocketBase's insert-time `created`, which can lag the parent sale's real
+// time by however long the device was offline). Chunks run with limited
+// concurrency so a wide date range doesn't fire dozens of requests at once.
+//
+// chunkSize=80 was picked by directly bisecting against the live server:
+// a 100-id filter (3,096 chars) succeeded, a 150-id filter (4,646 chars)
+// was rejected with the same 400 -- the real limit sits well below what a
+// naive "PocketBase's default max header/URL size is ~8KB" assumption would
+// suggest (likely the Tailscale Funnel reverse proxy in front of it, not
+// PocketBase itself). 80 leaves real margin under the confirmed-working 100.
+async function fetchByIdChunks(collectionName, idField, ids, { expand, sort, concurrency = 12, chunkSize = 80 } = {}) {
+  if (!ids.length) return []
+  const chunks = []
+  for (let i = 0; i < ids.length; i += chunkSize) chunks.push(ids.slice(i, i + chunkSize))
+  const collection = await pbCollection(collectionName)
+  const results = []
+  for (let i = 0; i < chunks.length; i += concurrency) {
+    const batch = chunks.slice(i, i + concurrency)
+    const batchResults = await Promise.all(batch.map((chunk) => {
+      const filter = chunk.map((id) => pb.filter(`${idField} = {:id}`, { id })).join(' || ')
+      return collection.getFullList({ filter, ...(expand ? { expand } : {}), ...(sort ? { sort } : {}) })
+    }))
+    for (const items of batchResults) results.push(...items)
+  }
+  return results
+}
+
 // Groups sale_items records by their sale_id, handling the same
 // one-element-array relation shape productRelationId/dashboardSaleSource
 // already handle elsewhere in this file. Used to replace one PocketBase
@@ -1294,18 +1331,13 @@ app.get('/api/receipts', asyncRoute(async (req, res) => {
     perPage: 500,
     ...(receiptsDateFilter ? { filter: receiptsDateFilter } : {}),
   })
-  // One batched request for every sale's line items instead of one request
-  // PER sale (see groupSaleItemsBySaleId's own comment for why this matters
-  // now that PocketBase lives behind a much slower network path).
-  const itemsBySaleId = sales.length
-    ? groupSaleItemsBySaleId(
-        await (await pbCollection('sale_items')).getFullList({
-          sort: 'created',
-          filter: sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || '),
-          expand: 'product_id',
-        }),
-      )
-    : new Map()
+  // Chunked instead of one giant OR-filter across every sale id -- see
+  // fetchByIdChunks' comment for the live incident this avoids (a wide
+  // enough date range here hits the identical filter-length failure that
+  // broke /api/dashboard).
+  const itemsBySaleId = groupSaleItemsBySaleId(
+    await fetchByIdChunks('sale_items', 'sale_id', sales.map((sale) => sale.id), { expand: 'product_id', sort: 'created' }),
+  )
 
   const records = sales.map((sale) => receiptRecordFromSale(sale, itemsBySaleId.get(sale.id) || []))
 
@@ -2106,19 +2138,12 @@ app.get('/api/dashboard', asyncRoute(async (req, res) => {
     dashboardDateFilter ? { filter: dashboardDateFilter } : {},
   )).filter((sale) => source === 'all' || dashboardSaleSource(sale) === source)
 
-  const saleIdFilter = sales.length
-    ? sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
-    : ''
-
-  const saleItems = saleIdFilter
-    ? await (await pbCollection('sale_items')).getFullList({ expand: 'product_id', filter: saleIdFilter })
-    : []
+  const saleIds = sales.map((sale) => sale.id)
+  const saleItems = await fetchByIdChunks('sale_items', 'sale_id', saleIds, { expand: 'product_id' })
   // sale_adjustments may not exist on an un-migrated PocketBase instance
   // (M1's schema migration is additive and applied separately) -- fall back
   // to no netting rather than failing the whole dashboard.
-  const adjustments = saleIdFilter
-    ? await (await pbCollection('sale_adjustments')).getFullList({ filter: saleIdFilter }).catch(() => [])
-    : []
+  const adjustments = await fetchByIdChunks('sale_adjustments', 'sale_id', saleIds).catch(() => [])
   const refundedUnits = refundedUnitsBySaleAndProduct(adjustments)
   const now = new Date()
   const { year: todayYear, month: todayMonth, day: todayDay } = phDateParts(now)

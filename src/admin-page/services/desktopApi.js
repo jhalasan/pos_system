@@ -26,6 +26,7 @@ import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { forceRetryNow } from '../../utils/pendingQueueRetry'
 import { groupSaleItemsBySaleId } from '../../utils/saleItemGrouping'
+import { fetchByIdChunks } from '../../utils/fetchByIdChunks'
 import { cashierUpdatePayload } from '../utils/cashierUpdatePayload'
 import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../../utils/saleTotals'
 import { getProductBarcodes, isCatalogActive } from '../../utils/productLifecycle'
@@ -676,21 +677,15 @@ async function fetchReceiptRecords(filters = {}) {
     // deleted. Keep the offline history until a successful read can reconcile it.
     return filterReceiptRecords([...localRecords, ...cachedRecords], filters)
   }
-  // One bulk fetch grouped in memory, instead of one request per sale — the
-  // latter reliably exceeds PocketHost's per-IP concurrent-request cap once
-  // there are more than a handful of sales, silently dropping line items on
-  // the overflowed requests.
-  const saleIdFilter = sales.length
-    ? sales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
-    : ''
+  // Chunked (fetchByIdChunks) instead of one giant OR-filter across every
+  // sale id -- see that helper's comment for the live incident this avoids.
   let allSaleItems = []
-  if (saleIdFilter) {
+  if (sales.length) {
     try {
-      allSaleItems = await pb.collection('sale_items').getFullList({
+      allSaleItems = await fetchByIdChunks(pb, 'sale_items', 'sale_id', sales.map((sale) => sale.id), {
         sort: 'created',
         expand: 'product_id',
-        filter: saleIdFilter,
-        requestKey: null,
+        requestKeyPrefix: 'receipts-items',
       })
     } catch {
       // A failed line-item fetch is NOT evidence that these sales have zero
@@ -2030,20 +2025,26 @@ export const desktopAdminApi = {
       ...(salesFilter ? { filter: pb.filter(salesFilter, salesParams) } : {}),
       requestKey: null,
     }).catch(() => [])
-    const saleIdFilter = cloudSales.length
-      ? cloudSales.map((sale) => pb.filter('sale_id = {:saleId}', { saleId: sale.id })).join(' || ')
-      : ''
-    const [cloudSaleItems, cloudAdjustments] = saleIdFilter ? await Promise.all([
-      pb.collection('sale_items').getFullList({
-        filter: saleIdFilter,
+    // Chunked (fetchByIdChunks) instead of one giant OR-filter across every
+    // sale id -- confirmed live: a wide-enough date range on this same join
+    // (5,953 sales -> a ~184,000-character filter) got PocketBase's server-
+    // side counterpart of this exact function (server/index.js's
+    // /api/dashboard) flatly rejected with a 400, breaking the Vercel admin
+    // Dashboard. Fixed proactively here too, before this desktop path hits
+    // the same wall.
+    const saleIds = cloudSales.map((sale) => sale.id)
+    const [cloudSaleItems, cloudAdjustments] = await Promise.all([
+      fetchByIdChunks(pb, 'sale_items', 'sale_id', saleIds, {
         expand: 'product_id',
-        requestKey: null,
+        requestKeyPrefix: 'dashboard-items',
       }).catch(() => []),
       // sale_adjustments may not exist on an un-migrated PocketBase (M1's
       // schema migration is additive and applied separately) -- degrade to
       // un-netted figures rather than failing the whole dashboard.
-      pb.collection('sale_adjustments').getFullList({ filter: saleIdFilter, requestKey: null }).catch(() => []),
-    ]) : [[], []]
+      fetchByIdChunks(pb, 'sale_adjustments', 'sale_id', saleIds, {
+        requestKeyPrefix: 'dashboard-adjustments',
+      }).catch(() => []),
+    ])
 
     const overriddenTransactionNos = new Set(
       localCompletedSales
