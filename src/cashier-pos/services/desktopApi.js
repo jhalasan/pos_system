@@ -431,8 +431,16 @@ async function ensureProducts() {
   return products
 }
 
-function canUseOfflineLoginFallback(error) {
+export function canUseOfflineLoginFallback(error) {
   return error?.status === 0
+    // A 5xx from our own /api/cashier/* endpoints means the server itself
+    // could not verify the request (its own PocketBase connection failed,
+    // timed out, or errored) -- it is not an authoritative "this barcode/
+    // account doesn't exist," unlike a 401/404. Treating it the same as a
+    // definitive rejection skipped the cached offline account entirely on a
+    // transient backend outage. See server/index.js's /cashier/auth/barcode
+    // for the matching server-side fix.
+    || (Number(error?.status) >= 500)
     || isPocketBaseRateLimit(error)
     || error instanceof TypeError
     || /network|fetch|timeout|offline|connection/i.test(String(error?.message || ''))

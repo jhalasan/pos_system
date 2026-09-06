@@ -981,7 +981,20 @@ app.post('/api/cashier/auth/barcode', asyncRoute(async (req, res) => {
   const user = await usersCollection.getFirstListItem(
     pb.filter('void_barcode = {:barcode} && role = "cashier" && status != "inactive"', { barcode }),
     { requestKey: null },
-  ).catch(() => null)
+  ).catch((error) => {
+    // A genuine 404 ("no matching user") is the only failure that actually
+    // means "this barcode doesn't exist." Swallowing every other error here
+    // (a PocketBase timeout, an outage, a network blip) into the same 401
+    // used to be indistinguishable from a truly invalid barcode -- the
+    // client's offline-login fallback (see canUseOfflineLoginFallback in
+    // cashier-pos/services/desktopApi.js) treats a 401 from this endpoint as
+    // an authoritative "verified, not found," so it skipped the cached
+    // quick-login account entirely instead of falling back to it. Letting a
+    // non-404 error propagate here surfaces as a 500, which the client does
+    // treat as offline-permissible.
+    if (error?.status === 404) return null
+    throw error
+  })
 
   if (!user) {
     return res.status(401).json({ error: 'Invalid cashier barcode.' })
