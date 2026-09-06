@@ -2352,12 +2352,13 @@ table.data tbody tr.unit-breakdown-row:hover {
   letter-spacing: .4px;
 }
 .toast {
-  position: fixed; bottom: 80px; right: 24px; z-index: 200;
+  position: fixed; bottom: 76px; right: 20px; z-index: 200;
   background: var(--text); color: #fff;
-  padding: 12px 18px; border-radius: var(--radius-sm);
-  font-size: 13px; font-weight: 600;
+  padding: 8px 14px; border-radius: var(--radius-sm);
+  font-size: 12px; font-weight: 600;
+  max-width: min(320px, calc(100vw - 40px));
   box-shadow: var(--shadow-lg);
-  display: flex; align-items: center; gap: 9px;
+  display: flex; align-items: center; gap: 7px;
   animation: pop .18s ease;
 }
 
