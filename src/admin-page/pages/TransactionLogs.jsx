@@ -128,7 +128,12 @@ export default function TransactionLogs() {
   const [action, setAction] = useState('all')
   const [status, setStatus] = useState('all')
   const [subTab, setSubTab] = useState('transactions')
-  const [selectedReceipt, setSelectedReceipt] = useState(null)
+  // Tracks only the id, not a snapshot of the receipt object -- the actual
+  // receipt shown is derived below via useMemo, always from the current
+  // `receipts` list. This is what makes the modal self-heal when the list
+  // refetches correct data (e.g. Refresh fixing a stuck "Untracked" receipt)
+  // without an extra effect+setState to keep two copies in sync.
+  const [selectedReceiptId, setSelectedReceiptId] = useState(null)
   const [toast, setToast] = useState('')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [sortOrder, setSortOrder] = useState('newest')
@@ -170,19 +175,18 @@ export default function TransactionLogs() {
     }
   }, [setReceipts, dateRange, customFrom, customTo])
 
-  // The receipt modal shows a snapshot captured at click time
-  // (setSelectedReceipt(receipt)) -- it does NOT automatically track later
-  // changes to the `receipts` list. This is why clicking "Refresh" while a
-  // receipt is already open "did nothing" from the client's point of view:
-  // the underlying list had refetched correct data, but the already-open
-  // modal kept rendering its stale snapshot. Whenever the list changes,
-  // re-point an open modal at its own row's fresh copy so a refresh visibly
-  // fixes what's on screen without requiring the client to close and reopen it.
-  useEffect(() => {
-    if (!selectedReceipt) return
-    const fresh = (receipts || []).find((receipt) => receipt.id === selectedReceipt.id)
-    if (fresh && fresh !== selectedReceipt) setSelectedReceipt(fresh)
-  }, [receipts, selectedReceipt])
+  // Derived, not stored: previously this was its own `selectedReceipt`
+  // state captured as a snapshot at click time, which meant clicking
+  // "Refresh" while a receipt was already open "did nothing" from the
+  // client's point of view -- the underlying list had refetched correct
+  // data, but the already-open modal kept rendering its stale snapshot.
+  // Deriving it here instead means the modal is always showing whatever
+  // `receipts` currently holds for that id, with no separate state to fall
+  // out of sync.
+  const selectedReceipt = useMemo(
+    () => (selectedReceiptId ? (receipts || []).find((receipt) => receipt.id === selectedReceiptId) || null : null),
+    [receipts, selectedReceiptId],
+  )
 
   useEffect(() => {
     const handleSyncStatus = (event) => {
@@ -652,7 +656,7 @@ export default function TransactionLogs() {
                     <tr
                       key={receipt.id}
                       className="clickable-row"
-                      onClick={() => setSelectedReceipt(receipt)}
+                      onClick={() => setSelectedReceiptId(receipt.id)}
                       title="Open transaction details"
                     >
                       <td>
@@ -676,7 +680,7 @@ export default function TransactionLogs() {
                           className="icon-btn transaction-action-button"
                           onClick={(event) => {
                             event.stopPropagation()
-                            setSelectedReceipt(receipt)
+                            setSelectedReceiptId(receipt.id)
                           }}
                         >
                           •••
@@ -731,7 +735,7 @@ export default function TransactionLogs() {
       {selectedReceipt && (
         <Modal
           title={`Transaction ${selectedReceipt.receiptNo || selectedReceipt.transactionNo}`}
-          onClose={() => setSelectedReceipt(null)}
+          onClose={() => setSelectedReceiptId(null)}
           footer={(
             <>
               <button className="btn btn-outline" onClick={() => handleExportTransaction(selectedReceipt)}>

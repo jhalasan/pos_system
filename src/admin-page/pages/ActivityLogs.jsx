@@ -188,6 +188,15 @@ export default function ActivityLogs() {
     const range = exportFilters.dateRange === 'Custom'
       ? getCustomDateRange(exportFilters.from, exportFilters.to)
       : getDateRange(exportFilters.dateRange)
+    // This is React's own documented "fetch on dependency change" pattern
+    // (react.dev/learn/you-might-not-need-an-effect#fetching-data) -- kick
+    // off the loading flag synchronously, then resolve it in the fetch's
+    // .then/.catch/.finally below. There's no derivable-during-render value
+    // to replace this with (it's a genuine async side effect keyed off
+    // exportOpen/exportFilters), so the lint rule's general "don't setState
+    // synchronously in an effect" guidance doesn't have a better
+    // alternative to offer here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExportPreviewLoading(true)
     api.activityLogs({ fromDate: range.start, toDate: range.end })
       .then((logs) => {
