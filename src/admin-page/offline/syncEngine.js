@@ -277,6 +277,23 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
   }, {
     requestKey: `stock-movement:${op.id}`,
   })
+  // adjustInventoryCount is a physical stock COUNT: nextQuantity IS the new
+  // ground truth the counter just declared, by definition superseding
+  // whatever the movement history says came before it. reconcileProductStock
+  // below exists to self-heal a *different* problem -- two terminals racing
+  // a stock_in/stock_out/sale off the same stale baseline -- by re-deriving
+  // quantity from a delta-summed window of recent movements. Running that
+  // same pass after a stock count re-applies whatever concurrent-sale chain
+  // drift already existed in that window on top of the just-declared count,
+  // silently overwriting it with a different number the counter never typed
+  // and never saw (confirmed live: a count that wrote previous_quantity=180,
+  // new_quantity=360 was immediately re-derived to 366 by a 50-movement
+  // window carrying 31 pre-existing chain mismatches from concurrent
+  // multi-terminal sales). Skip reconciliation entirely for this op type --
+  // the count itself already IS the reconciliation for this product, and
+  // must not be moved off the value that was physically counted.
+  if (op.type === 'adjustInventoryCount') return quantizeQty(nextQuantity)
+
   // reconcileProductStock re-derives the true quantity by summing every
   // movement's own delta, which self-heals a concurrent-write race (two
   // terminals reading the same stale baseline -- see

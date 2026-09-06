@@ -255,7 +255,19 @@ test('the same fix applies to stockOutInventory', { concurrency: false }, async 
   await adminDb.delete()
 })
 
-test('the same fix applies to adjustInventoryCount (Stock Count)', { concurrency: false }, async () => {
+// adjustInventoryCount (Stock Count) is DELIBERATELY NOT reconciled the same
+// way as scanInventory/stockOutInventory -- see syncEngine.js's
+// createStockMovement comment. A physical count declares the new ground
+// truth; unlike a stock-in/stock-out race, there is no "true intended value"
+// to recover by delta-summing movement history, because the count itself
+// supersedes that history. Confirmed via a live incident: a real Stock Count
+// wrote previous_quantity=180, new_quantity=360, and the (since-removed)
+// reconcile-after-adjustment call silently re-derived it to 366 from a
+// movement window carrying pre-existing concurrent-sale chain drift -- the
+// counted value never reached the screen. This test used to assert that
+// same drift-prone behavior as "the fix" (matching scanInventory's math);
+// it was actually the bug. It now asserts the count sticks.
+test('adjustInventoryCount (Stock Count) always applies the counted value as-is, even with unrelated concurrent movement drift in history', { concurrency: false }, async () => {
   await adminDb.delete()
   await initializeAdminDb()
   resetPocketBaseRateLimit()
@@ -283,10 +295,11 @@ test('the same fix applies to adjustInventoryCount (Stock Count)', { concurrency
 
   await engine.uploadOperation(op)
 
-  // Count op's own delta is 410 - 400 = 10, same reconciled math as scanInventory: 510.
-  assert.equal(Number(getCurrentProduct().quantity), 510)
+  // The counted value (410) is applied exactly -- unrelated movement history
+  // (the other terminal's stock_in) must never pull it off that value.
+  assert.equal(Number(getCurrentProduct().quantity), 410)
   const localProduct = await adminDb.products.get(PRODUCT_ID)
-  assert.equal(localProduct.qty, 510, 'local cache must match the reconciled total, not the raw write result of 410')
+  assert.equal(localProduct.qty, 410, 'local cache must match the physically counted quantity, not a value re-derived from unrelated movement history')
 
   await adminDb.delete()
 })
