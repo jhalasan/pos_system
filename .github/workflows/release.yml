@@ -24,6 +24,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # The client's store migrated off PocketHost to a self-hosted local
+          # PocketBase (192.168.0.114:8090). Without this, vite.config.js's
+          # DEFAULT_POCKETBASE_URL fallback silently bakes in the old
+          # PocketHost URL -- confirmed live: this workflow had NEVER set
+          # this, so every past CI-built release pointed at PocketHost the
+          # whole time, and the v0.1.29 run building when this was caught
+          # was cancelled before it could be published for exactly that
+          # reason. This is a LAN-only address with no exposure risk from
+          # being a plain (non-secret) workflow env var.
+          VITE_POCKETBASE_URL: http://192.168.0.114:8090
         with:
           tagName: v__VERSION__
           releaseName: Nexa POS v__VERSION__
