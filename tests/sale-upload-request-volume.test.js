@@ -64,6 +64,10 @@ function makeCountingFakePb({ products = [] } = {}) {
       }
       if (name === 'stock_movements') {
         return {
+          // No Stock Count ever recorded for these products -- reconcile
+          // falls back to its windowed heuristic, which is exercised via
+          // getList below (not counted separately here).
+          async getFirstListItem() { const err = new Error('not found'); err.status = 404; throw err },
           async getList() {
             counts.stockMovementsGetList += 1
             return { items: [] }

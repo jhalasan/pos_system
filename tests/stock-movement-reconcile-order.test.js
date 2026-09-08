@@ -181,6 +181,13 @@ test('reconcileProductStock calls getList (not getFullList) with a bounded perPa
     collection(name) {
       if (name === 'stock_movements') {
         return {
+          // No Stock Count ever recorded for this product -- reconcile falls
+          // back to the windowed heuristic this test exercises.
+          async getFirstListItem() {
+            const err = new Error('not found');
+            err.status = 404;
+            throw err;
+          },
           async getList(page, perPage, options) {
             capturedPage = page;
             capturedPerPage = perPage;
@@ -255,6 +262,13 @@ test('reconcileProductStock uses the MOST RECENT window, not the oldest, once a 
     collection(name) {
       if (name === 'stock_movements') {
         return {
+          // No Stock Count ever recorded -- falls back to the windowed
+          // heuristic this test exercises.
+          async getFirstListItem() {
+            const err = new Error('not found');
+            err.status = 404;
+            throw err;
+          },
           async getList(page, perPage, options) {
             assert.equal(page, 1);
             assert.equal(options.sort, '-created,-created_at');
@@ -293,6 +307,13 @@ test('reconcileProductStock still reconciles (calls products.update with the sum
     collection(name) {
       if (name === 'stock_movements') {
         return {
+          // No Stock Count ever recorded -- falls back to the windowed
+          // heuristic this test exercises.
+          async getFirstListItem() {
+            const err = new Error('not found');
+            err.status = 404;
+            throw err;
+          },
           async getList() {
             // reconcileProductStock now requests -created,-created_at (newest
             // first) and reverses the result itself -- return newest-first

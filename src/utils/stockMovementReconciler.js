@@ -62,14 +62,32 @@ export async function findExistingStockMovementsByReference(pb, referenceIds = [
 // exactly in floating point, and the reconcile step below compares the
 // replayed total against the stored value with strict equality — any drift
 // would make it write a "correction" on every single run.
+//
+// Prefers the movement's own recorded `quantity` (the actual magnitude that
+// was scanned/typed for THIS event) + a sign from movement_type, over
+// diffing previous_quantity/new_quantity. Root-caused from a live incident
+// (WILKINS PURE 500ml CASE): a Stock In of 20 cases was applied while the
+// product's true cloud quantity was ~204, but the op's own fresh read of
+// product.quantity raced against nine other concurrent writes and landed on
+// a stale snapshot, so its previous_quantity/new_quantity pair (0 -> 20) was
+// simply wrong -- diffing it produced a wrong delta. `quantity` (20, times
+// the unit conversion the cashier/admin actually selected) is immune to
+// this: it's the intrinsic size of the event, unaffected by what any
+// concurrent read of product.quantity happened to see. Only falls back to
+// the previous/new diff when `quantity` is absent (defensive only -- every
+// real movement always has one; kept for callers/tests that construct
+// movements from previous/new snapshots alone).
 function movementDeltaMillis(movement) {
+  const rawQuantity = Number(movement.quantity)
+  if (Number.isFinite(rawQuantity)) {
+    const positive = ['stock_in', 'void_return', 'refund_return', 'exchange_return'].includes(movement.movement_type)
+    const magnitudeMillis = Math.abs(toMillis(rawQuantity))
+    return positive ? magnitudeMillis : -magnitudeMillis
+  }
   const previous = Number(movement.previous_quantity)
   const next = Number(movement.new_quantity)
   if (Number.isFinite(previous) && Number.isFinite(next)) return toMillis(next) - toMillis(previous)
-  const quantityMillis = Math.abs(toMillis(Number(movement.quantity) || 0))
-  return ['stock_in', 'void_return', 'refund_return', 'exchange_return'].includes(movement.movement_type)
-    ? quantityMillis
-    : -quantityMillis
+  return 0
 }
 
 // Walks movements (oldest-first, per the existing contract) and checks
@@ -117,20 +135,90 @@ export function stockQuantityFromMovements(movements = []) {
   return Math.max(0, fromMillis(totalMillis))
 }
 
-export async function reconcileProductStock(pb, productId) {
-  // Page 1 must be sorted DESCENDING (newest first). Page 1 of an ASCENDING
-  // sort is the OLDEST page once a product has accumulated more than
-  // WINDOW_SIZE lifetime movements -- that silently anchors every
-  // reconciliation on a stale, frozen-in-time total and overwrites every
-  // subsequent correct products.update() back to it. Fetch newest-first,
-  // then reverse to the ascending order stockQuantityFromMovements expects
-  // (movements[0] as the window's baseline anchor).
-  const { items: recentDescending } = await pb.collection('stock_movements').getList(1, WINDOW_SIZE, {
-    filter: pb.filter('product_id = {:productId}', { productId }),
-    sort: '-created,-created_at',
-    requestKey: null,
+// Cap on how many movements since the last Stock Count reconciliation will
+// fetch in full. A product recounted at any reasonable cadence never gets
+// close to this; it exists only so a product that has genuinely NEVER been
+// counted (or not in a very long time) can't turn one reconcile call into an
+// unbounded fetch of its entire lifetime history.
+const MAX_MOVEMENTS_SINCE_ANCHOR = 1000
+
+// Root-caused from a live incident (WILKINS PURE 500ml CASE, 2026-09-07): a
+// Stock In of 20 cases was immediately wiped back down to (effectively) 0.
+// The old algorithm anchored on whatever movement happened to be oldest in a
+// fixed 50-item window and trusted ITS previous_quantity as the true
+// baseline -- but for a high-velocity product, that window can be entirely
+// made of movements from concurrent multi-terminal sales that all raced off
+// the same stale read (confirmed live: nine separate movements for this one
+// product all independently recorded previous_quantity=43, because nine
+// terminal-side reads happened before any of their writes landed). None of
+// those previous_quantity values reflect reality, so anchoring on one of
+// them and diffing forward produced a number with no relationship to the
+// truth -- in this incident, exactly 0.
+//
+// A Stock Count (or the one-time PocketHost-migration merge) is the one kind
+// of movement whose previous_quantity/new_quantity pair is NOT subject to
+// this race: it's an absolute declaration, written once, valid by
+// definition at the moment it was made. Anchoring on the most recent one of
+// those instead -- and summing every real movement's own recorded `quantity`
+// (see movementDeltaMillis) since then -- means every number that goes into
+// the total is either a trusted checkpoint or an intrinsic, race-proof
+// magnitude. No previous_quantity/new_quantity chain is trusted at all.
+async function findReconciliationAnchor(pb, productId) {
+  return pb.collection('stock_movements').getFirstListItem(
+    pb.filter('product_id = {:productId} && movement_type = "adjustment"', { productId }),
+    { sort: '-created,-created_at', requestKey: null },
+  ).catch((error) => {
+    if (error?.status === 404) return null
+    throw error
   })
-  const movements = recentDescending.slice().reverse()
+}
+
+export async function reconcileProductStock(pb, productId) {
+  const anchor = await findReconciliationAnchor(pb, productId)
+
+  let movements
+  if (anchor) {
+    const { items: sinceAnchorAscending } = await pb.collection('stock_movements').getList(1, MAX_MOVEMENTS_SINCE_ANCHOR, {
+      filter: pb.filter('product_id = {:productId} && created > {:since}', { productId, since: anchor.created }),
+      sort: 'created',
+      requestKey: null,
+    })
+    if (sinceAnchorAscending.length >= MAX_MOVEMENTS_SINCE_ANCHOR) {
+      // This product hasn't been counted in a very long time relative to its
+      // sales velocity -- fetching the true remainder would be unbounded.
+      // Fall back to the old windowed heuristic rather than either failing
+      // or reading a product's entire history; flagged so it's visible this
+      // product is overdue for a fresh physical count.
+      console.warn('[stockMovementReconciler] product has too many movements since its last count to anchor on it safely -- falling back to the recent-window heuristic; this product should be recounted', { productId, anchorCreated: anchor.created })
+    } else {
+      // Synthetic leading entry: baseline = the count's own declared value,
+      // contributing zero further delta itself (quantity: 0), so the
+      // existing baseline-plus-delta-sum walk in stockQuantityFromMovements
+      // needs no changes to consume it.
+      movements = [
+        { ...anchor, previous_quantity: anchor.new_quantity, quantity: 0 },
+        ...sinceAnchorAscending,
+      ]
+    }
+  }
+
+  if (!movements) {
+    // No Stock Count ever recorded (or the safety cap above was hit) --
+    // Page 1 must be sorted DESCENDING (newest first). Page 1 of an
+    // ASCENDING sort is the OLDEST page once a product has accumulated more
+    // than WINDOW_SIZE lifetime movements -- that silently anchors every
+    // reconciliation on a stale, frozen-in-time total and overwrites every
+    // subsequent correct products.update() back to it. Fetch newest-first,
+    // then reverse to the ascending order stockQuantityFromMovements expects
+    // (movements[0] as the window's baseline anchor).
+    const { items: recentDescending } = await pb.collection('stock_movements').getList(1, WINDOW_SIZE, {
+      filter: pb.filter('product_id = {:productId}', { productId }),
+      sort: '-created,-created_at',
+      requestKey: null,
+    })
+    movements = recentDescending.slice().reverse()
+  }
+
   const quantity = stockQuantityFromMovements(movements)
   if (quantity === null) return null
   const product = await pb.collection('products').getOne(productId, { requestKey: null })
