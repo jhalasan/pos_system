@@ -2,12 +2,15 @@
 //
 // Turns a product's raw `sellingUnits`/`selling_units` array (plus its legacy
 // purchaseUnit/conversionQuantity fields) into a consistent list of
-// { barcode, unit, conversion, price } entries, always non-empty.
+// { barcode, unit, conversion, price, wholesalePrice, pricingTier } entries,
+// always non-empty.
 //
-// Note: the cashier POS (Cashier.jsx) has its own richer version that also
-// expands retail/wholesale pricing tiers into separate pickable units — that
-// one is intentionally not merged here, since its shape differs (adds
-// `pricingTier`) and is consumed only by the cart UI.
+// Note: the cashier POS (Cashier.jsx) has its own richer wrapper on top of
+// this that expands a per-unit wholesale price into a separate pickable
+// "Wholesale" unit option -- that expansion logic isn't duplicated here since
+// it's only meaningful for the cart UI, but wholesalePrice/pricingTier must
+// still be passed through per row below, or the cashier's wrapper has nothing
+// to expand.
 export function normalizeSellingUnits(product = {}) {
   const rawUnits = Array.isArray(product.sellingUnits)
     ? product.sellingUnits
@@ -21,6 +24,13 @@ export function normalizeSellingUnits(product = {}) {
     unit: String(unit?.unit || '').trim() || fallbackUnit,
     conversion: Number(unit?.conversion) > 0 ? Number(unit.conversion) : 1,
     price: Number(unit?.price) || fallbackPrice,
+    // Preserved so the cashier POS's own richer wrapper (Cashier.jsx's local
+    // normalizeSellingUnits) can expand a per-unit wholesale price into a
+    // separate pickable "Wholesale" unit option -- dropping these here was a
+    // live bug: a product's wholesale price was invisible at the register
+    // even though it was correctly saved in Product Management.
+    wholesalePrice: Number(unit?.wholesalePrice) || 0,
+    pricingTier: String(unit?.pricingTier || '').trim().toLowerCase(),
   }))
 
   // Some legacy cigarette records stored a ream conversion as the number of
