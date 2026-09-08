@@ -22,6 +22,20 @@ export function isCatalogActive(product) {
   return !HIDDEN_CATALOG_LIFECYCLE_STATUSES.has(status)
 }
 
+// Stricter than isCatalogActive on purpose: 'inactive' is deliberately kept
+// IN the catalog for stats/reporting (see above), but it means "an admin
+// marked this temporarily not for sale" -- ProductManagement's own UI calls
+// this action "Mark Inactive" / filters an "Inactive Products" view, and the
+// desktop cashier has always enforced this at checkout (its own inline
+// `lifecycleStatus !== 'active'` guard). The web-mode (Vercel) cashier route
+// used isCatalogActive for this instead, which only excludes archived/
+// deleted -- so an inactive product stayed scannable and sellable there even
+// though the same product correctly refused to sell on the desktop terminal.
+export function isSellable(product) {
+  const status = product?.lifecycleStatus || product?.lifecycle_status || 'active'
+  return status === 'active'
+}
+
 // The database's barcode uniqueness constraint (idx_products_barcode_nonempty
 // in pocketbase/pb_schema.json) applies to every product row regardless of
 // lifecycle_status -- an archived product still "owns" its barcode forever,

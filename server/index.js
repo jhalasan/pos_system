@@ -11,7 +11,7 @@ import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleT
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import { accountDeletionError } from '../src/utils/accountDeletionGuard.js'
 import { isSameHost } from '../src/utils/corsOrigin.js'
-import { getProductBarcodes, isCatalogActive } from '../src/utils/productLifecycle.js'
+import { getProductBarcodes, isCatalogActive, isSellable } from '../src/utils/productLifecycle.js'
 import {
   authenticateAdminUser,
   authenticateAdminToken,
@@ -734,12 +734,15 @@ async function findProductByScanBarcode(barcode) {
     fields: 'id,barcode,name,quantity,selling_units,sellingUnits,lifecycle_status',
   }).catch(() => [])
 
-  // An archived/deleted product must never be scannable at checkout -- it
-  // stays in PocketBase (for historical sales/reports) but is no longer
-  // part of the sellable catalog. The desktop cashier already enforces this
-  // via its own local catalog filtering; this web-mode route had no
-  // equivalent check at all.
-  return records.filter(isCatalogActive).find((record) => {
+  // An archived/deleted/inactive product must never be scannable at
+  // checkout -- it stays in PocketBase (for historical sales/reports) but is
+  // no longer part of the sellable catalog. isCatalogActive is deliberately
+  // NOT used here: it's the stats-oriented check that keeps 'inactive'
+  // products counted for reporting, not a "can this be sold" gate -- see
+  // isSellable's own comment. The desktop cashier already enforces the
+  // stricter sellability rule via its own local catalog filtering; this
+  // web-mode route had no equivalent check at all.
+  return records.filter(isSellable).find((record) => {
     if (String(record.barcode || '').trim() === normalizedBarcode) return true
     return parseSellingUnits(record.selling_units ?? record.sellingUnits)
       .some((unit) => String(unit?.barcode || '').trim() === normalizedBarcode)
@@ -1112,7 +1115,10 @@ app.post('/api/categories', asyncRoute(async (req, res) => {
 
 app.get('/api/cashier/products', asyncRoute(async (_req, res) => {
   const records = await listRecords('products', '?sort=name&expand=category&perPage=500')
-  res.json(records.filter(isCatalogActive).map(toProduct))
+  // isSellable, not isCatalogActive -- a product an admin marked "Inactive"
+  // must not appear in the cashier's own product list either, matching the
+  // desktop cashier's behavior.
+  res.json(records.filter(isSellable).map(toProduct))
 }))
 
 app.get('/api/cashier/products/barcode/:barcode', asyncRoute(async (req, res) => {
@@ -1393,10 +1399,12 @@ app.post('/api/cashier/sales', asyncRoute(async (req, res) => {
   for (const item of items) {
     const product = await products.getOne(item.productId)
     // Defense in depth: the barcode lookup that populates the cart already
-    // excludes archived/deleted products, but a sale request built from a
-    // stale cached productId must not slip past that check entirely.
-    if (!isCatalogActive(product)) {
-      return res.status(409).json({ error: `"${product.name}" is archived and cannot be sold.` })
+    // excludes archived/deleted/inactive products (isSellable, not
+    // isCatalogActive -- see that function's comment), but a sale request
+    // built from a stale cached productId must not slip past that check
+    // entirely.
+    if (!isSellable(product)) {
+      return res.status(409).json({ error: `"${product.name}" is not available for sale.` })
     }
     const quantity = Number(item.quantity) || 0
     if (quantity <= 0) return res.status(400).json({ error: `Invalid quantity for "${product.name}".` })
