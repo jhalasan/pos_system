@@ -633,7 +633,18 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   }
 
   const baseUnitCost = Number(form.conversionQuantity) > 0 ? Number(form.cost) / Number(form.conversionQuantity) : Number(form.cost)
-  const retailPrice = deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))
+  // Mirrors submit()'s savedProductPrice exactly (line ~611-613) -- this is
+  // the actual price that will be saved and charged at the register, not
+  // just the cost*margin formula. Previously this always recomputed from
+  // cost/margin regardless of a manual override, so setting a manual Final
+  // Retail Price different from the auto-calculated one made this preview
+  // row silently show the WRONG number: the field above it correctly showed
+  // the manual price, while this row still showed the ignored formula
+  // result, as if two different prices were both "the" current price.
+  const baseSellingRow = form.hasMultipleUnits ? sellingUnits.find((row) => Number(row.conversion) === 1) : null
+  const retailPrice = form.hasMultipleUnits
+    ? Number(baseSellingRow?.isPriceManual ? baseSellingRow.price : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))) || 0
+    : Number(form.isPriceManual ? form.price : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), 1, Number(form.conversionQuantity))) || 0
   const hasSamePurchaseAndBaseUnit = form.hasMultipleUnits && normalizeUnitKey(form.purchaseUnit) === normalizeUnitKey(form.unit)
   const conversionText = form.hasMultipleUnits && form.purchaseUnit && form.unit && Number(form.conversionQuantity) > 0
     ? `1 ${form.purchaseUnit || 'Purchase Unit'} = ${Number(form.conversionQuantity) || 0} ${unitLabel(form.unit, Number(form.conversionQuantity))}`
