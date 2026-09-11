@@ -91,9 +91,18 @@ export default function CashierSalesReport({ dateRangeFilter }) {
     }
   }
 
+  // isStale means reportReceipts was fetched for a DIFFERENT cashier and/or
+  // date range than what's currently selected (see currentKey above) --
+  // changing the Product/Category dropdowns alone never sets it, since those
+  // re-filter the same already-fetched receipts client-side. Without this
+  // guard, switching the Cashier dropdown without re-clicking "Show Report"
+  // left the table rendering the PREVIOUS cashier's numbers under the NEWLY
+  // selected cashier's name -- e.g. selecting "ARLIE VELASCO" + "PEPSI
+  // PRODUCT" could silently show whatever cashier's report was already
+  // loaded, making a real sale look like "this cashier sold none of this."
   const productSummary = useMemo(
-    () => summarizeSalesByProductFiltered(reportReceipts || [], { productFilter: selectedProduct, categoryFilter: selectedCategory }),
-    [reportReceipts, selectedProduct, selectedCategory],
+    () => (isStale ? [] : summarizeSalesByProductFiltered(reportReceipts || [], { productFilter: selectedProduct, categoryFilter: selectedCategory })),
+    [isStale, reportReceipts, selectedProduct, selectedCategory],
   )
   const categorySummary = useMemo(() => summarizeByCategory(productSummary), [productSummary])
   const rows = groupBy === 'category' ? categorySummary : productSummary
@@ -187,7 +196,7 @@ export default function CashierSalesReport({ dateRangeFilter }) {
               </thead>
               <tbody>
                 {rows.length === 0 ? (
-                  <tr><td colSpan={groupBy === 'product' ? 4 : 3}>No sales match the current filters.</td></tr>
+                  <tr><td colSpan={groupBy === 'product' ? 4 : 3}>{isStale ? 'Cashier or date range changed — click "Show Report" to see this cashier\'s results.' : 'No sales match the current filters.'}</td></tr>
                 ) : rows.map((row) => (
                   <tr key={`${row.category}-${row.product || ''}`}>
                     {groupBy === 'product' && <td>{row.product}</td>}
