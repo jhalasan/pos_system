@@ -289,6 +289,19 @@ function deriveSellingPrice(costValue, profitMargin, conversionValue, conversion
   return Number((baseUnitCost * normalizedConversion * (1 + normalizedMargin / 100)).toFixed(2))
 }
 
+// The inverse of deriveSellingPrice for the base (conversion=1) unit: when the
+// admin types a price directly, back-solve what margin that price implies at
+// the current cost, so the Margin field never silently goes stale next to a
+// manually-typed price. Returns null when cost/price aren't set yet (nothing
+// meaningful to show).
+function deriveImpliedMargin(costValue, conversionQuantity, priceValue) {
+  const baseUnitCost = deriveBaseUnitCost(Number(costValue), Number(conversionQuantity))
+  if (!Number.isFinite(baseUnitCost) || baseUnitCost <= 0) return null
+  const price = Number(priceValue)
+  if (!Number.isFinite(price) || price <= 0) return null
+  return Number(Math.max(0, ((price / baseUnitCost) - 1) * 100).toFixed(2))
+}
+
 function resolveInventoryBaseQty(initialStock, conversionQuantity) {
   const normalizedInitialStock = Number(initialStock) || 0
   const normalizedConversion = Number(conversionQuantity) > 0 ? Number(conversionQuantity) : 1
@@ -370,6 +383,11 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       }
 
       if (key === 'cost' || key === 'profitMargin' || key === 'conversionQuantity') {
+        // Typing into Margin is the admin explicitly asking for a new
+        // calculated price, so it un-freezes a previously manual price --
+        // Cost changes never do this (cost is the real, independent number;
+        // see deriveImpliedMargin above for the reverse direction).
+        if (key === 'profitMargin') next.isPriceManual = false
         const { normalizedRows, baseUnitPrice } = updateSellingRows(next)
         setSellingUnits(normalizedRows)
         if (!next.isPriceManual) {
@@ -389,6 +407,8 @@ export default function ProductModal({ mode, product, categories = defaultCatego
 
       if (key === 'price') {
         next.isPriceManual = true
+        const impliedMargin = deriveImpliedMargin(next.cost, next.conversionQuantity, value)
+        if (impliedMargin !== null) next.profitMargin = impliedMargin
         setSellingUnits((current) => current.map((row, index) => (index === 0
           ? { ...row, price: value === '' ? '' : Number(value) || 0, isPriceManual: true }
           : row)))
@@ -457,10 +477,14 @@ export default function ProductModal({ mode, product, categories = defaultCatego
   function updateSellingUnit(index, key, value) {
     setFormValue('unitTemplate', 'custom')
     if (index === 0 && key === 'price') {
+      // Base row only (see deriveImpliedMargin) -- other rows have no Margin
+      // field of their own to reconcile against.
+      const impliedMargin = deriveImpliedMargin(form.cost, form.conversionQuantity, value)
       setForm((current) => ({
         ...current,
         price: value === '' ? '' : Number(value) || 0,
         isPriceManual: true,
+        profitMargin: impliedMargin !== null ? impliedMargin : current.profitMargin,
       }))
     }
     setSellingUnits((current) => current.map((row, idx) => {
@@ -796,7 +820,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             <div className="field">
               <label>Final Retail Price</label>
               <input className="input" type="number" min="0.01" step="0.01" value={form.price} onChange={(e) => setFormValue('price', e.target.value)} />
-              <small>{form.isPriceManual ? 'Manual price; cost and markup changes will not overwrite it.' : 'Calculated from cost and markup. You may edit it.'}</small>
+              <small>{form.isPriceManual ? 'Manual price; the margin above now reflects it. Editing Margin recalculates this price.' : 'Calculated from cost and markup. You may edit it.'}</small>
             </div>
             <div className="field">
               <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
