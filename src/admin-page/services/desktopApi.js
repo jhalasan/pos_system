@@ -175,12 +175,19 @@ async function isCloudReachable() {
 
 function reconcileAdminSyncStatus(operations, { force = false } = {}) {
   const failed = operations.filter((operation) => operation.status === 'failed').length
-  const pending = operations.filter((operation) => ['pending', 'conflict'].includes(operation.status)).length
-  const next = failed > 0
-    ? { state: 'failed', message: `Auto-Sync Finished with ${failed} Failed.` }
-    : pending > 0
-      ? { state: 'waiting', message: `${pending} local change${pending === 1 ? '' : 's'} waiting to sync.` }
-      : { state: 'succeeded', message: 'Everything is synchronized.' }
+  // A conflict never resolves by itself, no matter how many times the admin
+  // clicks Sync -- it needs the Sync Center's conflict-resolution UI. Lumping
+  // it into "pending" (as this used to) makes it read as "waiting to sync,"
+  // which never happens, so nobody notices the record is permanently stuck.
+  const conflicts = operations.filter((operation) => operation.status === 'conflict').length
+  const pending = operations.filter((operation) => operation.status === 'pending').length
+  const next = conflicts > 0
+    ? { state: 'conflict', message: `${conflicts} item${conflicts === 1 ? '' : 's'} need${conflicts === 1 ? 's' : ''} conflict resolution — open Sync Center.` }
+    : failed > 0
+      ? { state: 'failed', message: `Auto-Sync Finished with ${failed} Failed.` }
+      : pending > 0
+        ? { state: 'waiting', message: `${pending} local change${pending === 1 ? '' : 's'} waiting to sync.` }
+        : { state: 'succeeded', message: 'Everything is synchronized.' }
 
   let current = null
   try {
@@ -189,7 +196,7 @@ function reconcileAdminSyncStatus(operations, { force = false } = {}) {
     // A corrupt or unavailable status cache should not block queue maintenance.
   }
 
-  const staleFailure = ['failed', 'waiting'].includes(current?.state)
+  const staleFailure = ['failed', 'waiting', 'conflict'].includes(current?.state)
   if (!force && !staleFailure) return
   if (current?.state === next.state && current?.message === next.message) return
 
@@ -2235,7 +2242,7 @@ export const desktopAdminApi = {
   async offlineReadiness() {
     await startAdminRuntime()
     await initializeCashierDb()
-    const [products, cashierProducts, categories, users, authorizationBarcodes, adminPending, adminFailed, pendingSales, cashierPending, cashierFailed, receipts, cashierSettings] = await Promise.all([
+    const [products, cashierProducts, categories, users, authorizationBarcodes, adminPending, adminFailed, adminConflict, pendingSales, cashierPending, cashierFailed, receipts, cashierSettings] = await Promise.all([
       adminDb.products.filter((product) => !product.deleted).count(),
       cashierDb.products.count(),
       adminDb.categories.count(),
@@ -2243,6 +2250,7 @@ export const desktopAdminApi = {
       adminDb.authorizationBarcodes.filter((record) => !record.deleted && record.status === 'active').count(),
       adminDb.pendingOps.where('status').equals('pending').count(),
       adminDb.pendingOps.where('status').equals('failed').count(),
+      adminDb.pendingOps.where('status').equals('conflict').count(),
       cashierDb.pendingSales.count(),
       cashierDb.pendingOps.where('status').equals('pending').count(),
       cashierDb.pendingOps.where('status').equals('failed').count(),
@@ -2262,10 +2270,16 @@ export const desktopAdminApi = {
     const managerBarcodes = await adminDb.users.filter((user) => String(user.void_barcode || user.cashierBarcode || '').startsWith('92') && user.status !== 'inactive').count()
     const pending = adminPending + pendingSales + cashierPending
     const failed = adminFailed + cashierFailed
-    const [failedAdminOps, failedCashierOps, failedCashierSales] = await Promise.all([
+    // Conflicts are counted separately from "failed" -- a failed op still
+    // retries and can resolve itself, a conflict never will (see
+    // reconcileAdminSyncStatus above), so this panel must not read "healthy"
+    // while one sits unresolved.
+    const conflicts = adminConflict
+    const [failedAdminOps, failedCashierOps, failedCashierSales, conflictAdminOps] = await Promise.all([
       adminDb.pendingOps.where('status').equals('failed').toArray(),
       cashierDb.pendingOps.where('status').equals('failed').toArray(),
       cashierDb.pendingSales.where('status').equals('failed').toArray(),
+      adminDb.pendingOps.where('status').equals('conflict').toArray(),
     ])
     const failedDetails = [
       ...failedAdminOps.map((operation) => ({ ...operation, source: 'Admin' })),
@@ -2278,10 +2292,17 @@ export const desktopAdminApi = {
         record: operation.payload?.name || operation.transactionNo || operation.payload?.barcode || operation.id,
         error: operation.lastError || 'Unknown synchronization error.',
       }))
+    const conflictDetails = conflictAdminOps.map((operation) => ({
+      id: operation.id,
+      source: 'Admin',
+      type: operation.type,
+      record: operation.conflict?.local?.name || operation.payload?.name || operation.payload?.barcode || operation.id,
+      error: 'Open Sync Center to resolve this conflict — it will not sync on its own.',
+    }))
     const lastAdminSync = JSON.parse(localStorage.getItem('nexa_sync_status_admin') || 'null')
     const lastCashierSync = JSON.parse(localStorage.getItem('nexa_sync_status_cashier') || 'null')
     return {
-      ready: products > 0 && cashierProducts > 0 && categories > 0 && users > 0 && offlineCashierLogins > 0 && (authorizationBarcodes + managerBarcodes + offlineManagerPasswords) > 0 && failed === 0,
+      ready: products > 0 && cashierProducts > 0 && categories > 0 && users > 0 && offlineCashierLogins > 0 && (authorizationBarcodes + managerBarcodes + offlineManagerPasswords) > 0 && failed === 0 && conflicts === 0,
       terminalId: getTerminalId(),
       terminalName: getTerminalName(),
       products,
@@ -2294,6 +2315,8 @@ export const desktopAdminApi = {
       offlineCashierPasswordLogins,
       offlineCashierBarcodeLogins,
       receipts,
+      conflicts,
+      conflictDetails,
       pending,
       failed,
       failedDetails,

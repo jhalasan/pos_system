@@ -28,7 +28,7 @@ import {
   savePeakProtectionSettings,
 } from '../../utils/peakProtection'
 
-const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0 }
+const emptyReadiness = { ready: false, products: 0, cashierProducts: 0, categories: 0, users: 0, authorizationBarcodes: 0, managerApprovals: 0, offlineCashierLogins: 0, receipts: 0, pending: 0, failed: 0, conflicts: 0, conflictDetails: [] }
 
 export default function Settings() {
   const dialog = useAppDialog()
@@ -907,6 +907,7 @@ export default function Settings() {
               <div><span>Last successful sync</span><strong>{readiness.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</strong></div>
               <div><span>Pending uploads</span><strong>{readiness.pending || 0}</strong></div>
               <div><span>Failed operations</span><strong className={readiness.failed ? 'readiness-danger' : ''}>{readiness.failed || 0}</strong></div>
+              <div><span>Sync conflicts</span><strong className={readiness.conflicts ? 'readiness-danger' : ''}>{readiness.conflicts || 0}</strong></div>
             </div>
 
             <div className="offline-readiness-grid">
@@ -920,6 +921,7 @@ export default function Settings() {
                 ['Authorization barcodes', readiness.authorizationBarcodes, true],
                 ['Cached transactions', readiness.receipts, true],
                 ['Sync queue health', readiness.failed ? `${readiness.failed} failed` : 'Healthy', readiness.failed === 0],
+                ['Sync conflicts', readiness.conflicts ? `${readiness.conflicts} need resolution in Sync Center` : 'None', readiness.conflicts === 0],
               ].map(([label, value, passed]) => (
                 <div className={`offline-check ${passed ? 'passed' : 'missing'}`} key={label}>
                   <span className="offline-check-icon">{passed ? '✓' : '!'}</span>
@@ -951,6 +953,17 @@ export default function Settings() {
               <div><strong>{offlineTest.passed ? 'Offline self-test passed' : 'Offline setup needs attention'}</strong><small>Tested {new Date(offlineTest.testedAt).toLocaleString('en-PH')}</small></div>
               <div className="offline-test-checks">{offlineTest.checks?.map((check) => <div key={check.key}><b>{check.passed ? '✓' : '!'}</b><span><strong>{check.label}</strong><small>{check.detail}</small></span></div>)}</div>
             </div>}
+            {Array.isArray(readiness.conflictDetails) && readiness.conflictDetails.length > 0 && (
+              <div className="offline-failure-list">
+                <h4>Sync Conflicts</h4>
+                {readiness.conflictDetails.map((conflict) => (
+                  <div className="offline-failure-row" key={conflict.id}>
+                    <div><strong>{conflict.record}</strong><small>{conflict.source} · {conflict.type}</small></div>
+                    <p>{conflict.error}</p>
+                  </div>
+                ))}
+              </div>
+            )}
             {Array.isArray(readiness.failedDetails) && readiness.failedDetails.length > 0 && (
               <div className="offline-failure-list">
                 <h4>Failed Operations</h4>
@@ -975,9 +988,9 @@ export default function Settings() {
                   <option value="sync-status">Clear old sync status</option>
                   <option value="full">Full terminal cache reset</option>
                 </select>
-                <button className="btn btn-danger" onClick={resetLocalData} disabled={resettingLocalData || downloadingOfflineData || readiness.pending > 0 || readiness.failed > 0}>{resettingLocalData ? 'Resetting…' : 'Reset Selected Cache'}</button>
+                <button className="btn btn-danger" onClick={resetLocalData} disabled={resettingLocalData || downloadingOfflineData || readiness.pending > 0 || readiness.failed > 0 || readiness.conflicts > 0}>{resettingLocalData ? 'Resetting…' : 'Reset Selected Cache'}</button>
               </div>
-              {(readiness.pending > 0 || readiness.failed > 0) && <small className="readiness-danger">Reset is locked until all pending and failed synchronization items are resolved.</small>}
+              {(readiness.pending > 0 || readiness.failed > 0 || readiness.conflicts > 0) && <small className="readiness-danger">Reset is locked until all pending, failed, and conflicting synchronization items are resolved.</small>}
               <small>This does not delete PocketBase records. A catalog, login, or full reset automatically downloads fresh data when online.</small>
             </div>
           </div>

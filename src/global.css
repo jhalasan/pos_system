@@ -899,7 +899,8 @@ table.data tbody tr:hover { background: var(--surface-2); }
 .sync-indicator.peak-protection { border-color:#f59e0b; color:#713f12; background:#fef3c7; box-shadow:0 0 0 2px rgba(245,158,11,.15); }
 .sync-indicator.peak-protection .sync-indicator-dot { background:#f59e0b; }
 .sync-indicator.offline,
-.sync-indicator.failed { border-color: #fecaca; color: #b91c1c; }
+.sync-indicator.failed,
+.sync-indicator.conflict { border-color: #fecaca; color: #b91c1c; }
 
 .sync-indicator-dot {
   width: 7px; height: 7px; border-radius: 999px;

@@ -8,6 +8,7 @@ const defaultMessages = {
   'auth-required': 'Cashier Online Login Required',
   offline: 'Auto-Sync Waiting for Connection',
   failed: 'Auto-Sync Failed',
+  conflict: 'Sync Conflict Needs Attention',
 }
 
 export default function SyncStatusIndicator({ scope }) {
@@ -38,7 +39,7 @@ export default function SyncStatusIndicator({ scope }) {
   }, [scope])
 
   useEffect(() => {
-    if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required', 'peak-protection'].includes(status.state)) return undefined
+    if (!status || status.state === 'running' || ['offline', 'failed', 'waiting', 'auth-required', 'peak-protection', 'conflict'].includes(status.state)) return undefined
 
     const timeoutId = window.setTimeout(() => {
       setStatus(null)

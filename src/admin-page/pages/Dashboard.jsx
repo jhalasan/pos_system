@@ -141,7 +141,7 @@ export default function Dashboard() {
       <div className="dashboard-action-grid">
         <button className="dashboard-attention warning" onClick={() => navigate('/admin/inventory')}><IconAlert size={20} /><span><strong>{stats.criticalStock || 0} stock alerts</strong><small>Review low, critical, and out-of-stock products</small></span></button>
         <button className="dashboard-attention" onClick={() => navigate('/admin/products')}><IconBox size={20} /><span><strong>{qualityTotal} data-quality warnings</strong><small>{data.dataQuality?.generatedBarcodes || 0} generated barcodes · {data.dataQuality?.uncategorized || 0} uncategorized · {data.dataQuality?.nonPositivePrices || 0} price issues</small></span></button>
-        <button className={`dashboard-attention ${readiness?.failed ? 'danger' : ''}`} onClick={() => navigate('/admin/settings')}><IconCloud size={20} /><span><strong>{readiness?.failed || 0} failed · {readiness?.pending || 0} pending sync</strong><small>Last sync: {readiness?.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</small></span></button>
+        <button className={`dashboard-attention ${readiness?.failed || readiness?.conflicts ? 'danger' : ''}`} onClick={() => navigate('/admin/settings')}><IconCloud size={20} /><span><strong>{readiness?.failed || 0} failed · {readiness?.conflicts || 0} conflicts · {readiness?.pending || 0} pending sync</strong><small>Last sync: {readiness?.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</small></span></button>
       </div>
 
       <section className={`card dashboard-readiness ${terminalReady ? 'ready' : 'attention'}`}>
@@ -155,7 +155,7 @@ export default function Dashboard() {
           <div><span>Cached catalog</span><strong>{Number(readiness?.cashierProducts || 0).toLocaleString()} products</strong></div>
           <div><span>Cashier access</span><strong>{readiness?.offlineCashierBarcodeLogins || 0} barcode · {readiness?.offlineCashierPasswordLogins || 0} password</strong></div>
           <div><span>Manager approvals</span><strong>{readiness?.managerApprovals || 0} methods</strong></div>
-          <div><span>Sync queue</span><strong className={readiness?.failed ? 'readiness-danger' : ''}>{readiness?.pending || 0} pending · {readiness?.failed || 0} failed</strong></div>
+          <div><span>Sync queue</span><strong className={readiness?.failed || readiness?.conflicts ? 'readiness-danger' : ''}>{readiness?.pending || 0} pending · {readiness?.failed || 0} failed · {readiness?.conflicts || 0} conflicts</strong></div>
           <div><span>Last successful sync</span><strong>{readiness?.lastDownloadAt ? new Date(readiness.lastDownloadAt).toLocaleString('en-PH') : 'Not recorded'}</strong></div>
         </div>
         <div className="dashboard-readiness-actions">
