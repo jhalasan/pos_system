@@ -38,23 +38,47 @@ export async function findStockMovement(pb, productId, referenceId) {
 // here must propagate so the caller's existing per-op retry/backoff runs
 // again, instead of silently treating an unknown state as "not yet
 // deducted," which is exactly what would cause a double deduction on retry.
+// Root-caused from a live incident: a sale with three dozen-plus line items
+// (a large bulk/wholesale cart is not unusual for this store) built a single
+// filter with one "reference_id = '...'" clause per line OR-chained together
+// -- PocketBase itself hard-rejects any filter past its own length ceiling
+// with a 400 ("max filter length limit reached") once enough clauses pile
+// up. That exception was never caught here, so it propagated out of
+// ensureCloudStockDeduction (syncEngine.js) and aborted the whole upload
+// AFTER the sale and its sale_items had already been durably created --
+// meaning every retry re-hit the exact same oversized query and never got
+// past it. Symptom on the wire looked like a totally different bug: the
+// sale's own create() call started failing forever with a transaction_no
+// uniqueness collision (because the create genuinely had succeeded the
+// first time), which masked the real failure sitting one step further in.
+// Chunking the reference IDs into small batches keeps every single filter
+// comfortably under any plausible server-side length limit, regardless of
+// how many lines a sale has.
+const REFERENCE_LOOKUP_CHUNK_SIZE = 20
+
 export async function findExistingStockMovementsByReference(pb, referenceIds = []) {
   const uniqueReferenceIds = [...new Set(referenceIds.filter(Boolean))]
   if (!uniqueReferenceIds.length) return new Map()
 
-  const filter = uniqueReferenceIds
-    .map((referenceId) => pb.filter('reference_id = {:referenceId}', { referenceId }))
-    .join(' || ')
+  const found = new Map()
+  for (let start = 0; start < uniqueReferenceIds.length; start += REFERENCE_LOOKUP_CHUNK_SIZE) {
+    const chunk = uniqueReferenceIds.slice(start, start + REFERENCE_LOOKUP_CHUNK_SIZE)
+    const filter = chunk
+      .map((referenceId) => pb.filter('reference_id = {:referenceId}', { referenceId }))
+      .join(' || ')
 
-  // getList (not getFullList) to match the bounded-read convention already
-  // established by reconcileProductStock above -- a single sale never has
-  // more lines than this page size, so one page is always enough.
-  const { items: movements } = await pb.collection('stock_movements').getList(1, 200, {
-    filter,
-    requestKey: null,
-  })
+    // getList (not getFullList) to match the bounded-read convention already
+    // established by reconcileProductStock above -- a single chunk never has
+    // more lines than this page size, so one page per chunk is always enough.
+    const { items: movements } = await pb.collection('stock_movements').getList(1, 200, {
+      filter,
+      requestKey: null,
+    })
 
-  return new Map(movements.map((movement) => [movement.reference_id, movement]))
+    for (const movement of movements) found.set(movement.reference_id, movement)
+  }
+
+  return found
 }
 
 // Movement deltas are summed in integer thousandths (millis) rather than as
