@@ -90,3 +90,56 @@ test('buildShiftCloseReceiptText Gross Sale is exactly cash + gcash, unaffected 
 
   assert.match(receipt, /Gross Sale\s+3,350\.00/); // 2500 + 850, not touched by the 200 cash-in/100 cash-out
 });
+
+// Root-caused from a live incident: printing this receipt used to happen
+// BEFORE the shift was actually closed in the app, and it printed a
+// "Closed" label/timestamp regardless -- a cashier who printed it, then
+// logged out without a separate "Complete End of Day" click, walked away
+// holding a receipt that claimed the shift was closed while the app still
+// considered it open. The next login silently resumed the same shift with
+// the same totals. `finalized` now defaults to false so any caller that
+// forgets to pass it explicitly gets the safe, non-misleading receipt.
+test('buildShiftCloseReceiptText defaults to an unmistakable "not yet closed" preview', () => {
+  const receipt = buildShiftCloseReceiptText({
+    cashierName: 'Cashier One',
+    openedAt: '2026-07-08T09:00:00.000Z',
+    closedAt: '2026-07-08T17:30:00.000Z',
+    openingAmount: 0,
+    cashSales: 100,
+    gcashSales: 0,
+    cashIn: 0,
+    cashOut: 0,
+    expectedCash: 100,
+    actualCash: 100,
+    variance: 0,
+    countMode: 'manual',
+    denominations: [],
+  });
+
+  assert.match(receipt, /Z-READ REPORT \(PREVIEW\)/);
+  assert.match(receipt, /SHIFT NOT YET CLOSED/);
+  assert.doesNotMatch(receipt, /\bClosed\b/, 'a not-yet-closed receipt must never print a "Closed" label');
+});
+
+test('buildShiftCloseReceiptText with finalized:true prints the real closed report, no preview warning', () => {
+  const receipt = buildShiftCloseReceiptText({
+    cashierName: 'Cashier One',
+    openedAt: '2026-07-08T09:00:00.000Z',
+    closedAt: '2026-07-08T17:30:00.000Z',
+    openingAmount: 0,
+    cashSales: 100,
+    gcashSales: 0,
+    cashIn: 0,
+    cashOut: 0,
+    expectedCash: 100,
+    actualCash: 100,
+    variance: 0,
+    countMode: 'manual',
+    denominations: [],
+    finalized: true,
+  });
+
+  assert.match(receipt, /Z-READ REPORT(?!\s*\(PREVIEW\))/);
+  assert.doesNotMatch(receipt, /SHIFT NOT YET CLOSED/);
+  assert.match(receipt, /Closed/);
+});

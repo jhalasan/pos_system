@@ -248,6 +248,12 @@ const DEFAULT_SHORTCUT_SETTINGS = {
 };
 const CASHIER_AUDIT_ENTRY_KEY = 'nexa_cashier_audit_entry';
 const CASHIER_SHIFT_KEY = 'nexa_cashier_shift_session';
+// Safety net for the SYRA MAE ENARIO incident: a shift that's still open
+// this long almost certainly should have been closed already (an ordinary
+// single shift is well under this). Resuming it silently is what let the
+// same prior-day sales total quietly reappear -- this instead surfaces a
+// warning at login pointing straight at End of Day.
+const STALE_SHIFT_WARNING_HOURS = 18;
 const CASHIER_SESSION_END_EVENTS_KEY = 'nexa_cashier_session_end_events';
 const CASHIER_TRANSACTIONS_KEY = 'nexa_cashier_transactions';
 const CASHIER_DEVICE_KEY = 'nexa_cashier_device_id';
@@ -605,6 +611,7 @@ const Cashier = ({ onLogout, user }) => {
   const [resumeCashAmount, setResumeCashAmount] = useState('');
   const [resumeCashError, setResumeCashError] = useState('');
   const [resumeCashSaving, setResumeCashSaving] = useState(false);
+  const [resumedShiftIsStale, setResumedShiftIsStale] = useState(false);
   const [showShiftClose, setShowShiftClose] = useState(false);
   const [endOfDaySync, setEndOfDaySync] = useState({ pending: 0, failed: 0, sales: 0, loading: false });
   const [logoutTab, setLogoutTab] = useState('session');
@@ -1437,121 +1444,120 @@ const Cashier = ({ onLogout, user }) => {
     setShiftError('');
   };
 
-  const printShiftCloseDraft = async () => {
+  // Actually closes the shift (writes the cash audit/activity log, resets
+  // local session state) -- extracted from the old closeShift so it can run
+  // BEFORE printing (see printAndCompleteShiftClose below). Returns the
+  // variance so the caller can report it without re-reading state that this
+  // function just cleared (setShiftSession(null), etc).
+  const performShiftClose = async (draft, shouldSkipCashCount) => {
+    const { closed, variance, denominationBreakdown, countModeUsed, closingAmount } = draft;
+    await cashierApi.closeCashRegisterSession?.(closed);
+    await cashierApi.recordCashAudit?.({
+      cashierId: closed.cashierId || user?.id || '',
+      sessionId: closed.id,
+      cashBeginning: shiftOpeningCash,
+      cashSales: completedCashSales,
+      cashIn: shiftCashIn,
+      cashOut: shiftCashOut,
+      expectedCash: expectedShiftCash,
+      cashEnding: closingAmount,
+      actualCash: closingAmount,
+      cashOnHand: closingAmount,
+      denominationTotal: countModeUsed === 'denomination' ? closingAmount : 0,
+      variance,
+      countMode: countModeUsed,
+      denominations: denominationBreakdown,
+      note: closed.closeNote,
+      deviceId,
+      createdAt: closed.closedAt,
+    });
+    const denominationSummary = denominationBreakdown.length > 0
+      ? `; denominations: ${denominationBreakdown.map(d => `${d.count}x${d.denomination}`).join(', ')}`
+      : '';
+    await cashierApi.logActivity({
+      cashierId: user?.id,
+      action: 'Shift Close',
+      // gcashSales is printed on the physical Z-read receipt but, before
+      // this, was never written anywhere durable -- there was no way to
+      // later verify what a Z-read actually showed for GCash against the
+      // underlying sale records (see the "SYRA MAE ENARIO gcash mismatch"
+      // investigation: the only way to reconstruct it was recomputing from
+      // sales directly, with nothing to check that reconstruction against).
+      detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, gcash sales PHP ${completedGcashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${shouldSkipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
+    }).catch(() => {});
+    appendCashCountHistory({
+      type: shouldSkipCashCount ? 'admin-override-close' : 'shift-close',
+      cashierId: closed.cashierId || user?.id || '',
+      cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
+      countedAt: closed.closedAt,
+      openedAt: closed.openedAt,
+      openingAmount: shiftOpeningCash,
+      cashSales: completedCashSales,
+      cashIn: shiftCashIn,
+      cashOut: shiftCashOut,
+      expectedCash: expectedShiftCash,
+      actualCash: closingAmount,
+      variance,
+      countMode: countModeUsed,
+      denominations: denominationBreakdown,
+      deviceId,
+    });
+    // Clearing this key is what stops the shift from silently reappearing on
+    // the next login -- see the SYRA MAE ENARIO incident that motivated this
+    // whole refactor. It now always runs BEFORE printAndCompleteShiftClose
+    // ever prints anything, instead of depending on a separate "Complete End
+    // of Day" click that a cashier could skip after already printing what
+    // looked like a final receipt.
+    localStorage.removeItem(shiftStorageKey(user?.id));
+    clearCashierTransactions(user?.id);
+    setRetainedCompletedSales([]);
+    saveRetainedCompletedSales([], user?.id);
+    setShiftLedgerOverride(null);
+    setShiftSession(null);
+    setShowShiftClose(false);
+    setShowAdminLogout(false);
+    resetShiftCloseForm();
+    return { variance };
+  };
+
+  // The normal cashier path: printing the Z-read now performs the actual
+  // close first, then prints a receipt that reports a real "Closed" time
+  // instead of a preview timestamp -- a cashier can no longer end up holding
+  // a receipt that says the shift is closed while the app still thinks it's
+  // open (previously: print, then a SEPARATE "Complete End of Day" click was
+  // required, and skipping it left the same shift open and silently
+  // reappearing at the next login, still showing the prior day's totals).
+  const printAndCompleteShiftClose = async () => {
     const draft = shiftCloseDraft || buildShiftCloseDraft(false);
     if (!draft) return;
     setShiftSaving(true);
     setShiftError('');
     try {
-      await printShiftCloseReceipt(draft.receiptData, { documentName: `Z-Read ${draft.cashierName}` });
-      setShiftCloseDraft(draft);
-      setShiftCloseStep('printed');
-      showNotification('Z-read printed. Review the drawer, then close/logout.');
-    } catch (printError) {
-      const message = (typeof printError === 'string' ? printError : printError?.message) || 'Z-read could not be printed.';
-      setShiftError(`${message} Fix the printer, then print again before closing the shift.`);
-      showNotification(message);
-    } finally {
-      setShiftSaving(false);
-    }
-  };
-
-  const closeShift = async (skipCashCount = false) => {
-    const shouldSkipCashCount = skipCashCount === true;
-    const draft = shouldSkipCashCount ? buildShiftCloseDraft(true) : shiftCloseDraft;
-    if (!draft) {
-      // When the ledger check is still in flight, buildShiftCloseDraft has
-      // already set the accurate "Verifying today's sales..." message -- don't
-      // stomp on it with a preview/print instruction that doesn't even apply
-      // to the admin-override path (which has no preview step).
-      if (shiftLedgerReady) setShiftError('Preview and print the Z-read before closing the shift.');
-      return false;
-    }
-    if (!shouldSkipCashCount && shiftCloseStep !== 'printed') {
-      setShiftError('Print the Z-read before closing the shift.');
-      return false;
-    }
-
-    setShiftSaving(true);
-    setShiftError('');
-    try {
-      const { closed, variance, denominationBreakdown, countModeUsed, closingAmount } = draft;
-      await cashierApi.closeCashRegisterSession?.(closed);
-      await cashierApi.recordCashAudit?.({
-        cashierId: closed.cashierId || user?.id || '',
-        sessionId: closed.id,
-        cashBeginning: shiftOpeningCash,
-        cashSales: completedCashSales,
-        cashIn: shiftCashIn,
-        cashOut: shiftCashOut,
-        expectedCash: expectedShiftCash,
-        cashEnding: closingAmount,
-        actualCash: closingAmount,
-        cashOnHand: closingAmount,
-        denominationTotal: countModeUsed === 'denomination' ? closingAmount : 0,
-        variance,
-        countMode: countModeUsed,
-        denominations: denominationBreakdown,
-        note: closed.closeNote,
-        deviceId,
-        createdAt: closed.closedAt,
-      });
-      const denominationSummary = denominationBreakdown.length > 0
-        ? `; denominations: ${denominationBreakdown.map(d => `${d.count}x${d.denomination}`).join(', ')}`
-        : '';
-      await cashierApi.logActivity({
-        cashierId: user?.id,
-        action: 'Shift Close',
-        // gcashSales is printed on the physical Z-read receipt but, before
-        // this, was never written anywhere durable -- there was no way to
-        // later verify what a Z-read actually showed for GCash against the
-        // underlying sale records (see the "SYRA MAE ENARIO gcash mismatch"
-        // investigation: the only way to reconstruct it was recomputing from
-        // sales directly, with nothing to check that reconstruction against).
-        detail: withDevice(`Shift closed by ${closed.cashierName || user?.name || user?.email || 'Cashier'}: beginning PHP ${shiftOpeningCash.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, gcash sales PHP ${completedGcashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${expectedShiftCash.toFixed(2)}, actual PHP ${closingAmount.toFixed(2)}, variance PHP ${variance.toFixed(2)}, count mode: ${countModeUsed}${shouldSkipCashCount ? '; admin override: admin' : ''}${denominationSummary}${closed.closeNote ? `; note ${closed.closeNote}` : ''}.`),
-      }).catch(() => {});
-      appendCashCountHistory({
-        type: shouldSkipCashCount ? 'admin-override-close' : 'shift-close',
-        cashierId: closed.cashierId || user?.id || '',
-        cashierName: closed.cashierName || user?.name || user?.email || 'Cashier',
-        countedAt: closed.closedAt,
-        openedAt: closed.openedAt,
-        openingAmount: shiftOpeningCash,
-        cashSales: completedCashSales,
-        cashIn: shiftCashIn,
-        cashOut: shiftCashOut,
-        expectedCash: expectedShiftCash,
-        actualCash: closingAmount,
-        variance,
-        countMode: countModeUsed,
-        denominations: denominationBreakdown,
-        deviceId,
-      });
-      localStorage.removeItem(shiftStorageKey(user?.id));
-      clearCashierTransactions(user?.id);
-      setRetainedCompletedSales([]);
-      saveRetainedCompletedSales([], user?.id);
-      setShiftLedgerOverride(null);
-      setShiftSession(null);
-      setShowShiftClose(false);
-      setShowAdminLogout(false);
-      resetShiftCloseForm();
-      showNotification(`End of day completed${shouldSkipCashCount ? ' (admin override)' : ''}. Cashier drawer reconciled with a variance of ${money(variance)}.`);
+      const { variance } = await performShiftClose(draft, false);
+      try {
+        await printShiftCloseReceipt({ ...draft.receiptData, finalized: true }, { documentName: `Z-Read ${draft.cashierName}` });
+        showNotification(`End of day completed. Cashier drawer reconciled with a variance of ${money(variance)}.`);
+      } catch (printError) {
+        // The shift is ALREADY closed at this point -- a printer jam must
+        // not look like the close failed, or a cashier could be tempted to
+        // re-run the whole flow and produce a second, redundant close
+        // attempt. Surface it as a printing problem only.
+        const message = (typeof printError === 'string' ? printError : printError?.message) || 'Z-read could not be printed.';
+        showNotification(`Shift closed, but the Z-read did not print: ${message}`);
+      }
+      await finishLogoutAfterShiftClose();
       return true;
     } finally {
       setShiftSaving(false);
     }
   };
 
-  const handleCloseShiftAndLogout = async (skipCashCount = false) => {
-    const closedSuccessfully = await closeShift(skipCashCount);
-    if (!closedSuccessfully) return false;
-
-    // The drawer close and cash count are already saved on this terminal at
-    // this point. Cloud sync of the day's queued sales/operations continues
-    // in the background rather than blocking the cashier here — the sync
-    // engine safely retries once any cashier is authenticated again, so
-    // there's nothing to wait for before logging out.
+  // The drawer close and cash count are already saved on this terminal at
+  // this point. Cloud sync of the day's queued sales/operations continues in
+  // the background rather than blocking the cashier here — the sync engine
+  // safely retries once any cashier is authenticated again, so there's
+  // nothing to wait for before logging out.
+  const finishLogoutAfterShiftClose = async () => {
     try {
       const queue = await cashierApi.syncQueueSummary();
       const total = (Number(queue?.pending) || 0) + (Number(queue?.failed) || 0);
@@ -1574,7 +1580,6 @@ const Cashier = ({ onLogout, user }) => {
       onLogout();
       navigate('/login');
     }
-    return true;
   };
 
   const saveCashierAuditEntry = async () => {
@@ -2019,6 +2024,8 @@ const Cashier = ({ onLogout, user }) => {
       // expects — confirm it before letting them ring up any sales.
       setResumeCashAmount('');
       setResumeCashError('');
+      const openedAtMs = session.openedAt ? new Date(session.openedAt).getTime() : NaN;
+      setResumedShiftIsStale(Number.isFinite(openedAtMs) && (Date.now() - openedAtMs) / 3_600_000 >= STALE_SHIFT_WARNING_HOURS);
       setShowResumeCashCheck(true);
     } else {
       setTransactions([createTransaction(1)]);
@@ -4616,13 +4623,31 @@ const Cashier = ({ onLogout, user }) => {
         title="Confirm Cash Beginning"
         closeButton={false}
         footer={
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', width: '100%' }}>
+            {resumedShiftIsStale ? (
+              <button
+                className="btn btn-outline"
+                onClick={() => {
+                  setShowResumeCashCheck(false);
+                  resetShiftCloseForm();
+                  setShowShiftClose(true);
+                }}
+                disabled={resumeCashSaving}
+              >
+                Go to End of Day Instead
+              </button>
+            ) : <span />}
             <button className="btn btn-primary" onClick={confirmResumeCash} disabled={resumeCashSaving || !shiftLedgerReady}>
               {resumeCashSaving ? 'Confirming...' : !shiftLedgerReady ? 'Verifying sales…' : 'Resume Session'}
             </button>
           </div>
         }
       >
+        {resumedShiftIsStale && (
+          <div style={{ background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 8, padding: '10px 12px', marginBottom: 12, color: '#92400e', fontSize: 13 }}>
+            <strong>This drawer has been open since {shiftSession?.openedAt ? new Date(shiftSession.openedAt).toLocaleString('en-PH') : 'earlier'}</strong> — longer than a normal shift. If you already finished and printed a Z-read for this drawer, don't resume with new sales. Use &quot;Go to End of Day Instead&quot; below to close it properly first.
+          </div>
+        )}
         <p>Welcome back. Count the cash you're putting back in the drawer before resuming.</p>
         <div className={styles['shared-drawer-summary']}>
           <span>System expects</span>
@@ -4672,14 +4697,9 @@ const Cashier = ({ onLogout, user }) => {
                 <button className="btn btn-outline" onClick={editShiftCloseCount} disabled={shiftSaving}>
                   Edit Count
                 </button>
-                <button className="btn btn-outline" onClick={printShiftCloseDraft} disabled={shiftSaving}>
-                  {shiftSaving ? 'Printing...' : shiftCloseStep === 'printed' ? 'Reprint Z-Read' : 'Print Z-Read'}
+                <button className="btn btn-primary" onClick={printAndCompleteShiftClose} disabled={shiftSaving}>
+                  {shiftSaving ? 'Closing & Printing...' : 'Close Shift & Print Z-Read'}
                 </button>
-                {shiftCloseStep === 'printed' && (
-                  <button className="btn btn-primary" onClick={() => handleCloseShiftAndLogout(false)} disabled={shiftSaving}>
-                    {shiftSaving ? 'Completing...' : 'Complete End of Day'}
-                  </button>
-                )}
               </>
             )}
           </div>
@@ -4714,7 +4734,6 @@ const Cashier = ({ onLogout, user }) => {
           <div className={styles['end-of-day-checks']}>
             <span className={shiftSession ? styles.ready : styles.warning}><b>{shiftSession ? '✓' : '!'}</b> Drawer session open</span>
             <span className={shiftCloseCountReady ? styles.ready : styles.warning}><b>{shiftCloseCountReady ? '✓' : '!'}</b> Cash count {shiftCloseCountReady ? 'ready' : 'required'}</span>
-            <span className={shiftCloseStep === 'printed' ? styles.ready : styles.warning}><b>{shiftCloseStep === 'printed' ? '✓' : '○'}</b> Z-read {shiftCloseStep === 'printed' ? 'printed' : 'not printed'}</span>
             <span className={endOfDaySync.failed === 0 ? styles.ready : styles.warning}><b>{endOfDaySync.failed === 0 ? '✓' : '!'}</b> {endOfDaySync.loading ? 'Checking sync queue…' : `${endOfDaySync.pending} pending · ${endOfDaySync.failed} failed`}</span>
           </div>
         </div>
@@ -4814,7 +4833,7 @@ const Cashier = ({ onLogout, user }) => {
           <div className={styles['z-read-preview-panel']}>
             <div className={styles['z-read-preview-head']}>
               <strong>Z-Read Thermal Preview</strong>
-              <span>{shiftCloseStep === 'printed' ? 'Printed' : 'Ready to print'}</span>
+              <span>Preview — not yet closed</span>
             </div>
             <pre>{buildShiftCloseReceiptText(shiftCloseDraft.receiptData)}</pre>
           </div>

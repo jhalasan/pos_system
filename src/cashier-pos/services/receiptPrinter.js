@@ -195,6 +195,16 @@ export function buildShiftCloseReceiptText({
   variance,
   countMode,
   denominations = [],
+  // Printing this receipt only PREVIEWS the end-of-day numbers -- the shift
+  // itself is not actually closed until "Complete End of Day" is pressed
+  // separately in the app (Cashier.jsx's closeShift). A real incident showed
+  // this receipt printed with a "Closed" timestamp/label made a cashier
+  // believe the shift was done, so she logged out without ever pressing
+  // Complete -- the shift stayed open, and the exact same sales total
+  // reappeared the next day. Defaulting to false (a real "already closed"
+  // reprint is not a code path that exists yet) so the paper itself never
+  // claims a finality the system hasn't reached.
+  finalized = false,
 }) {
   const openedDate = openedAt ? new Date(openedAt) : new Date()
   const closedDate = closedAt ? new Date(closedAt) : new Date()
@@ -208,11 +218,16 @@ export function buildShiftCloseReceiptText({
   return [
     center(STORE_NAME),
     ...STORE_ADDRESS_LINES.map(center),
-    center('Z-READ REPORT'),
+    center(finalized ? 'Z-READ REPORT' : 'Z-READ REPORT (PREVIEW)'),
     line(),
     columns('Cashier', cashierName || 'Cashier'),
     columns('Opened', openedDate.toLocaleString('en-PH')),
-    columns('Closed', closedDate.toLocaleString('en-PH')),
+    columns(finalized ? 'Closed' : 'Report Time', closedDate.toLocaleString('en-PH')),
+    ...(finalized ? [] : [
+      center('*** SHIFT NOT YET CLOSED ***'),
+      center('Press "Complete End of Day"'),
+      center('in the app to finish closing.'),
+    ]),
     line(),
     columns('Gross Sale', moneyValue(grossSale)),
     line(),
