@@ -11,6 +11,18 @@ import { cashierApi } from './cashier-pos/services/api'
 import './admin-page/index.css'
 
 const CASHIER_AUTH_KEY = 'nexa_cashier_auth'
+// The cloud session token is valid for 7 days (PocketBase default), but this
+// used to only ever get silently refreshed once, right at login -- never
+// again for the rest of a shift. A cashier who floats between terminals only
+// needs the interactive "Connect Cashier to Cloud" re-verification on a
+// terminal she genuinely hasn't used in a while (or a brand new one); this
+// keeps an already-verified, currently-open session continuously fresh so it
+// doesn't drift toward that boundary just from being left open, which is
+// what was making the popup feel like it kept following one specific
+// high-volume, multi-terminal cashier around. Interval is far shorter than
+// the 7-day token life purely for safety margin against a terminal being
+// asleep/suspended for a while, not because refreshes need to be frequent.
+const CASHIER_SESSION_REFRESH_INTERVAL_MS = 30 * 60 * 1000
 const Inventory = lazy(() => import('./admin-page/pages/Inventory'))
 const ProductManagement = lazy(() => import('./admin-page/pages/ProductManagement'))
 const BarcodeTools = lazy(() => import('./admin-page/pages/BarcodeTools'))
@@ -75,15 +87,24 @@ export default function DesktopApp() {
     if (!cashierUser?.id) return
     const signedInCashierId = cashierUser.id
     let active = true
-    cashierApi.currentUser?.().then((currentUser) => {
-      if (!active || !currentUser || String(currentUser.id) !== String(signedInCashierId)) return
-      setCashierUser((existingUser) => {
-        const refreshedUser = { ...existingUser, ...currentUser }
-        sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(refreshedUser))
-        return refreshedUser
-      })
-    }).catch(() => {})
-    return () => { active = false }
+
+    const refreshCashierSession = () => {
+      cashierApi.currentUser?.().then((currentUser) => {
+        if (!active || !currentUser || String(currentUser.id) !== String(signedInCashierId)) return
+        setCashierUser((existingUser) => {
+          const refreshedUser = { ...existingUser, ...currentUser }
+          sessionStorage.setItem(CASHIER_AUTH_KEY, JSON.stringify(refreshedUser))
+          return refreshedUser
+        })
+      }).catch(() => {})
+    }
+
+    refreshCashierSession()
+    const intervalId = window.setInterval(refreshCashierSession, CASHIER_SESSION_REFRESH_INTERVAL_MS)
+    return () => {
+      active = false
+      window.clearInterval(intervalId)
+    }
   }, [cashierUser?.id])
 
   const handleLogin = (user) => {
