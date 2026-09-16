@@ -3839,7 +3839,7 @@ const Cashier = ({ onLogout, user }) => {
                 role="combobox"
                 aria-expanded={Boolean(barcode && filteredProducts.length)}
                 aria-controls="cashier-product-search-results"
-                aria-activedescendant={barcode && selectedSearchProduct ? `cashier-product-option-${selectedSearchIndex}` : undefined}
+                aria-activedescendant={barcode && selectedSearchProduct && (dropdownNavigated || filteredProducts.length === 1) ? `cashier-product-option-${selectedSearchIndex}` : undefined}
               />
               <Button variant="primary" className={styles['btn-scan']} onClick={handleScan} disabled={isLockedTxn}>Add</Button>
             </div>
@@ -3869,15 +3869,28 @@ const Cashier = ({ onLogout, user }) => {
                   filteredProducts.map((product, index) => {
                     const stock = stockState({ ...product, qty: stockForProduct(product) });
                     const units = normalizeSellingUnits(product);
+                    // Only show this item as "selected" (and let Enter act on
+                    // it) once the cashier has actually pressed an arrow key,
+                    // or when it's the sole match -- those are the only two
+                    // cases handleScan() honors without an exact barcode hit.
+                    // Previously the first result was highlighted by default
+                    // even with zero navigation, so Enter looked like it
+                    // should ring it up but instead tried (and failed) an
+                    // exact-barcode lookup and refused to guess among
+                    // multiple candidates, printing "No local product found
+                    // for barcode ..." -- confusing since a product was
+                    // clearly highlighted on screen. Arrowing away and back
+                    // "fixed" it only because that set dropdownNavigated.
+                    const isHonoredSelection = index === selectedSearchIndex && (dropdownNavigated || filteredProducts.length === 1);
                     return (
                       <button
                         key={product.id}
                         id={`cashier-product-option-${index}`}
                         role="option"
-                        aria-selected={index === selectedSearchIndex}
+                        aria-selected={isHonoredSelection}
                         data-search-index={index}
                         tabIndex={-1}
-                        className={`${styles['search-result-item']} ${index === selectedSearchIndex ? styles.selected : ''} ${stock.key === 'out' ? styles.disabled : ''}`}
+                        className={`${styles['search-result-item']} ${isHonoredSelection ? styles.selected : ''} ${stock.key === 'out' ? styles.disabled : ''}`}
                         onClick={() => handleAddToCart(product)}
                         disabled={stock.key === 'out'}
                       >
