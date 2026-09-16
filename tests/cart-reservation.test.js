@@ -81,3 +81,38 @@ test('handles missing/malformed transactions gracefully', () => {
   assert.doesNotThrow(() => reservedQuantityDetail([null, undefined, txn(1)], 'p1'))
   assert.equal(reservedQuantityDetail(null, 'p1').reservedBaseQty, 0)
 })
+
+// M36: growing one cart line's quantity must count a SIBLING line of the
+// same product in the SAME cart against available stock (e.g. one line sold
+// as a Piece, another as a Case of the same product) -- Cashier.jsx's
+// quantity-stepper check used to pass excludedTransactionId for the whole
+// active tab, which hid every sibling line, not just the one being edited.
+// The fix calls this with excludedTransactionId: null and only
+// excludedCartItemId set to the line actually being edited.
+test('M36: a sibling line of the same product in the SAME transaction counts against availability when only excludedCartItemId is set (the fixed call pattern)', () => {
+  const transactions = [
+    txn(1, {
+      cartItems: [
+        cartItem('p1', 30, { id: 'case-line', conversion: 24 }), // a Case line: 30*24=720 base units already reserved
+        cartItem('p1', 2, { id: 'piece-line', conversion: 1 }),  // the Piece line being grown
+      ],
+    }),
+  ]
+  // Fixed call pattern: exclude only the line being edited, not the whole transaction.
+  const detail = reservedQuantityDetail(transactions, 'p1', { excludedTransactionId: null, excludedCartItemId: 'piece-line' })
+  assert.equal(detail.reservedBaseQty, 720) // the Case line's reservation is correctly counted
+})
+
+test('M36: documents the pre-fix bug -- excluding the whole transaction hides a sibling line entirely', () => {
+  const transactions = [
+    txn(1, {
+      cartItems: [
+        cartItem('p1', 30, { id: 'case-line', conversion: 24 }),
+        cartItem('p1', 2, { id: 'piece-line', conversion: 1 }),
+      ],
+    }),
+  ]
+  // The old, buggy call pattern: excludedTransactionId set to the active tab.
+  const detail = reservedQuantityDetail(transactions, 'p1', { excludedTransactionId: 1, excludedCartItemId: 'piece-line' })
+  assert.equal(detail.reservedBaseQty, 0) // bug: the Case line's 720 reserved units vanish from the count
+})

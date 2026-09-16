@@ -2050,3 +2050,59 @@ reasoning above) and M36's stock-reservation exclusion change. Recommend a real 
 non-production terminal before the next release: a multi-unit product sold as two cart lines at
 once, a peso discount followed by adding another item, and a split payment with a centavo-level
 total, specifically.
+
+---
+
+## Verification pass, 2026-09-16 (client: "are you sure these are real fixes? can you check also
+the concurrency")
+
+Re-verified M35, M36, and M37 above with actual executable tests against the real production
+functions, rather than resting on the code-trace reasoning they originally shipped with. New tests:
+`tests/quantity.test.js` (`roundMoney closes the split-payment under-sum gap (M35)`, three real
+float-drift reproductions verified against production `roundMoney`), `tests/cart-reservation.test.js`
+(two new M36 cases proving the exact before/after difference: excluding only the edited line counts
+a sibling line's reservation correctly; excluding the whole transaction, the old buggy call
+pattern, hides it entirely), and a new `tests/discount-staleness.test.js` (8 cases) after extracting
+M37's decision logic out of its `useEffect` into a pure, testable function,
+`src/cashier-pos/utils/discountStaleness.js`'s `shouldClearStaleDiscount` — including a case that
+proves the guard cannot loop (re-evaluating immediately after a clear returns false).
+
+**One of my own claims was wrong and the new tests caught it before it shipped further:** the
+initial split-payment test asserted `10.10 + 10.10` was a float-drift reproduction below `20.20` —
+it isn't; that particular pair happens to sum exactly in IEEE754. Caught by the assertion failing
+on first run, corrected to only the three pairs that actually reproduce the drift. Left in as a
+demonstration that this verification pass is checking real behavior, not restating assumptions.
+
+`npm run test:offline` 415/415 (404 + 11 new), lint clean, `npm run build:cashier` clean.
+
+**Concurrency review, scoped two ways: (1) did today's fixes introduce any new race, (2) is there
+a pre-existing one worth flagging.**
+
+No new concurrency issue was introduced by any fix in this pass or the previous one. Specifically
+checked: M39's bulk-update rewrite uses `setList((current) => current.map(...))` and
+`setSelectedProducts((current) => ...)` — functional updates throughout, which is precisely what
+makes it safe against a background sync refresh landing mid-batch (the actual bug M39 fixed); the
+reporting fixes (M32-M34) are pure derived `useMemo`/filter computations over already-fetched data
+with no state mutation at all, so they carry no race surface; M38's Stock-Out fix only tightened a
+validation bound, the underlying write path (already hardened by M18/M19/M28 for concurrent
+multi-terminal writes) is untouched; M41's category-creation fix has the same check-then-create
+race window the original code already had (fetch, decide, create if not found) — not narrowed, but
+not widened either.
+
+**One pre-existing (not introduced by any fix in this register), narrow concurrency gap found while
+checking, and deliberately not fixed this pass:** the cart's stock-availability checks --
+`handleQuantityChange` (the quantity stepper) and `commitProductToCart`/`handleScan` (add-to-cart,
+barcode scanning) alike -- read `transactions`/`cartItems` from the component's render-time closure,
+not atomically from inside a `setTransactions` functional updater. Two sufficiently fast actions on
+the same product (a double-click on the stepper, or two barcode scans close enough together) before
+React commits a re-render from the first one could each validate against the same pre-action
+snapshot. **This is not a stock-loss or money-correctness bug**: `finalizeSaleLocally`'s own
+sequential per-item stock check at actual sale-completion time (already covered by this register)
+independently re-validates and rejects an oversold line regardless of what the cart briefly showed
+-- confirmed by the cashier-checkout audit that surfaced M36 in the first place. It's a transient
+UI-level inconsistency window, not a correctness gap. A proper fix means giving
+`updateActiveTransaction` (and its siblings) a way to read the *full* `transactions` array
+atomically inside its own updater, not just the single active transaction it exposes today --
+a real, if contained, refactor touching every stock-check call site, not a one-line change. Given
+the actual failure mode is fully absorbed by the existing checkout-time check, this was not rushed
+into this pass; flagging it here rather than leaving it silently undiscovered.

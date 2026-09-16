@@ -32,6 +32,28 @@ test('roundMoney rounds to centavos', () => {
   assert.equal(roundMoney(1.004), 1);
 });
 
+// M35 (POS_AUDIT_REGISTER.md): Cashier.jsx compared an unrounded
+// splitCash + splitGcash against the sale total, which binary-float
+// addition can land a hair below the true sum for a cashier's
+// mathematically-correct centavo split -- rejecting a valid payment.
+// roundMoney on the sum is the fix; verify it actually closes the gap
+// using real reproductions, not just the general rounding case above.
+test('roundMoney closes the split-payment under-sum gap (M35)', () => {
+  const cases = [
+    [0.01, 0.06, 0.07],
+    [0.01, 2.01, 2.02],
+    [0.01, 3.01, 3.02],
+  ];
+  for (const [cash, gcash, total] of cases) {
+    const raw = cash + gcash;
+    // Confirms these are genuine reproductions of the float-drift bug, not
+    // just arbitrary numbers -- the raw sum really does land short.
+    assert.ok(raw < total, `expected ${cash} + ${gcash} = ${raw} to be a float-drift reproduction below ${total}`);
+    assert.ok(!(roundMoney(raw) < total), `roundMoney(${raw}) = ${roundMoney(raw)} should no longer read as short of ${total}`);
+    assert.equal(roundMoney(raw), total);
+  }
+});
+
 test('formatQty trims trailing zeros', () => {
   assert.equal(formatQty(2), '2');
   assert.equal(formatQty(0.5), '0.5');

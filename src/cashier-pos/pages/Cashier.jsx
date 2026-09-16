@@ -20,6 +20,7 @@ import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, getGcashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { restoreCashierTransactions } from '../utils/transactionRestore';
 import { reservedQuantityDetail } from '../utils/cartReservation';
+import { shouldClearStaleDiscount } from '../utils/discountStaleness';
 import { addDays, isToday, toDateInputValue, dateInputValueToDate } from '../utils/historyDateRange';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
@@ -978,21 +979,12 @@ const Cashier = ({ onLogout, user }) => {
     window.setTimeout(() => setNotification(''), 3200);
   };
 
-  // A peso discount is stored as the percent it worked out to against the
-  // subtotal at approval time (discountBaseSubtotal), not a standalone peso
-  // amount -- and the cart isn't locked until payment starts, so a cashier
-  // can still add/remove items after applying one. Left unguarded, that
-  // stale percentage would silently re-apply to a *different* subtotal
-  // (e.g. a ₱50-off-₱500 approval, stored as 10%, becomes ₱100 off if a
-  // ₱500 item is added afterward) -- clearing the discount here instead
-  // means it fails safe (a stale approval disappears and must be redone)
-  // rather than silently mis-charging. A discount applied directly as a
-  // percentage has no such drift -- it's meant to scale with the cart -- so
-  // this only fires for the peso-then-cart-changed sequence.
+  // See shouldClearStaleDiscount's own header comment for why this exists.
+  // Clearing (rather than silently letting it re-apply) fails safe -- a
+  // stale approval disappears and must be redone, instead of silently
+  // mis-charging at a different scale than what was actually approved.
   useEffect(() => {
-    if (isLockedTxn || !(discount > 0)) return;
-    const baseline = activeTxn.discountBaseSubtotal;
-    if (baseline == null || Math.abs(subtotal - baseline) < 0.005) return;
+    if (!shouldClearStaleDiscount({ isLockedTxn, discount, discountBaseSubtotal: activeTxn.discountBaseSubtotal, subtotal })) return;
     updateActiveTransaction({ discount: 0, discountBaseSubtotal: null });
     showNotification('Cart changed after the discount was applied — discount cleared. Re-apply it if it still applies.');
     // eslint-disable-next-line react-hooks/exhaustive-deps
