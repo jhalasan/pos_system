@@ -16,7 +16,6 @@ import {
   getShiftLedgerTotals,
   voidLocalSale,
 } from '../offline/saleRepository'
-import { peakProtectionStatus, recordCompletedSale } from '../../utils/peakProtection'
 import { peekNextTransactionNumber } from '../offline/transactionNumber'
 import { startCashierRuntime } from '../offline/runtime'
 import {
@@ -690,7 +689,7 @@ export const desktopCashierApi = {
     const activeRuntime = await runtime()
     if (!activeRuntime.pb.authStore.isValid) return null
     let record = activeRuntime.pb.authStore.record
-    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited() && !peakProtectionStatus().active) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       record = await activeRuntime.pb.collection('users').authRefresh({ requestKey: null })
         .then((auth) => auth.record)
         .catch(() => record)
@@ -746,7 +745,7 @@ export const desktopCashierApi = {
     void cashierApiRequest('/cashier/quick-login-accounts').then(cacheQuickLoginAccounts).catch(() => {})
     void refreshManagerApprovalHashes()
     startManagerApprovalHashesRefreshLoop()
-    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited() && !peakProtectionStatus().active) {
+    if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       activeRuntime.refreshProducts().catch((error) => {
         rememberPocketBaseRateLimit(error)
         console.warn('Product catalog refresh failed after cashier login:', error)
@@ -1081,13 +1080,7 @@ export const desktopCashierApi = {
     // value passed here is ignored (see transactionNumber.js).
     const queued = await finalizeSaleLocally(sale)
     const activeRuntime = await runtime()
-    const pending = await cashierDb.pendingSales.count()
-    const protection = recordCompletedSale({
-      itemCount: queued.items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0),
-      pending,
-    })
-    if (protection.active) activeRuntime.syncEngine.schedulePeakSync()
-    else void activeRuntime.syncEngine.syncNow()
+    void activeRuntime.syncEngine.syncNow()
     return {
       id: queued.clientSaleId,
       transactionNo: queued.transactionNo,
@@ -1116,10 +1109,6 @@ export const desktopCashierApi = {
     await forceRetryNow(cashierDb.pendingSales)
     await forceRetryNow(cashierDb.pendingOps)
     return activeRuntime.syncEngine.syncNow({ forceProductRefresh: true })
-  },
-
-  peakProtectionStatus() {
-    return peakProtectionStatus()
   },
 
   async syncQueueSummary() {

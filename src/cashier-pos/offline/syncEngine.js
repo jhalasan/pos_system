@@ -16,13 +16,6 @@ import { quantizeQty } from '../../utils/quantity'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { isPrivateNetworkHost } from '../../utils/privateNetworkHost'
-import {
-  activatePeakProtection,
-  getPeakProtectionSettings,
-  isPredictedPeak,
-  peakProtectionStatus,
-  protectAfterCloudPressure,
-} from '../../utils/peakProtection'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60_000
@@ -461,14 +454,8 @@ export class CashierSyncEngine extends EventTarget {
     if (this.stopped) return
     if (this.timer) clearTimeout(this.timer)
     const rateLimitDelay = this.rateLimitDelayMs()
-    const peakDelay = getPeakProtectionSettings().syncIntervalMinutes * 60_000
-    const normalDelay = peakProtectionStatus().active ? peakDelay : this.intervalMs
-    const requestedDelay = delay == null ? normalDelay + this.jitterMs : delay
+    const requestedDelay = delay == null ? this.intervalMs + this.jitterMs : delay
     this.timer = setTimeout(() => void this.syncNow(), Math.max(requestedDelay, rateLimitDelay))
-  }
-
-  schedulePeakSync() {
-    this.schedule(getPeakProtectionSettings().syncIntervalMinutes * 60_000 + this.jitterMs)
   }
 
   async isCloudReachable({ forceNetworkCheck = false } = {}) {
@@ -515,20 +502,13 @@ export class CashierSyncEngine extends EventTarget {
       operation.type === 'voidCompletedSale' || operation.type === 'adjustCompletedSale'
     ))
     const hasQueuedWrites = queuedSales.length > 0 || queuedOps.length > 0
-    let peakProtection = peakProtectionStatus({ now })
-    if (!peakProtection.active && isPredictedPeak({ now })) {
-      peakProtection = activatePeakProtection('A historically busy period is starting.', {
-        pending: queuedSales.length,
-        now,
-      })
-    }
     // A queued write unrelated to the catalog (e.g. a due-for-retry
     // recordCashMovement or activityLog op) must not starve the periodic
     // catalog refresh — that left a stale/partial catalog in place
     // indefinitely on any terminal with an unrelated op stuck in the queue.
     const shouldRefreshProducts = forceProductRefresh
       || operationNeedsCatalog
-      || (!peakProtection.active && now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS)
+      || now - this.lastProductRefreshAt >= PRODUCT_REFRESH_INTERVAL_MS
 
     if (!hasQueuedWrites && !shouldRefreshProducts) {
       return { uploaded: 0, failed: 0, products: 0, pending: await this.pendingCount() }
@@ -584,7 +564,6 @@ export class CashierSyncEngine extends EventTarget {
       } catch (error) {
         rememberPocketBaseRateLimit(error)
         if (Number(error?.status) === 429) rateLimited = true
-        if (Number(error?.status) === 429) protectAfterCloudPressure('PocketHost rate limit reached.', await this.pendingCount())
         catalogRefreshFailed = true
         // A 401, or the SDK having already invalidated the auth store in
         // response to this same request, means the session token expired --
@@ -630,7 +609,6 @@ export class CashierSyncEngine extends EventTarget {
             lastError: pocketBaseRateLimitMessage(),
             nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
           })
-          protectAfterCloudPressure('PocketHost rate limit reached.', await this.pendingCount())
           break
         }
         rememberPocketBaseRateLimit(error)
@@ -667,7 +645,6 @@ export class CashierSyncEngine extends EventTarget {
             lastError: pocketBaseRateLimitMessage(),
             nextAttemptAt: Date.now() + pocketBaseRateLimitRemainingMs(),
           })
-          protectAfterCloudPressure('PocketHost rate limit reached.', await this.pendingCount())
           break
         }
         rememberPocketBaseRateLimit(error)
@@ -693,13 +670,9 @@ export class CashierSyncEngine extends EventTarget {
     emitSyncStatus(
       catalogRefreshAuthFailed
         ? 'auth-required'
-        : peakProtectionStatus().active
-        ? 'peak-protection'
         : failed > 0 ? 'failed' : (rateLimited || pending > 0 || catalogRefreshFailed) ? 'waiting' : 'succeeded',
       catalogRefreshAuthFailed
         ? CLOUD_AUTH_REQUIRED_MESSAGE
-        : peakProtectionStatus().active
-        ? `Peak Protection Active — checkout is operating normally. ${pending} transaction(s) safely queued.`
         : failed > 0
           ? `Auto-Sync Finished with ${failed} Failed`
           : rateLimited

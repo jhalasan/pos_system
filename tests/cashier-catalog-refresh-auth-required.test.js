@@ -5,7 +5,6 @@ import { cashierDb, initializeCashierDb } from '../src/cashier-pos/offline/db.js
 import { CashierSyncEngine } from '../src/cashier-pos/offline/syncEngine.js'
 import { resetPocketBaseRateLimit } from '../src/utils/pocketbaseRateLimit.js'
 import { resetProductCatalogRefreshThrottle } from '../src/cashier-pos/offline/cloudBootstrap.js'
-import { activatePeakProtection, savePeakProtectionSettings } from '../src/utils/peakProtection.js'
 
 const storage = new Map()
 globalThis.localStorage = {
@@ -90,34 +89,4 @@ test('a catalog refresh that fails for an unrelated reason (not 401, token still
   assert.doesNotMatch(result.warnings[0], /no cloud authorization/i, 'a genuine non-auth failure must not be misreported as an expired session')
 
   await cashierDb.delete()
-})
-
-test('an expired session still surfaces auth-required even while Peak Protection is active', { concurrency: false }, async () => {
-  await cashierDb.delete()
-  await initializeCashierDb()
-  resetPocketBaseRateLimit()
-  resetProductCatalogRefreshThrottle()
-  localStorage.clear()
-
-  savePeakProtectionSettings({ mode: 'on' })
-  activatePeakProtection('test setup', { safety: true })
-
-  const events = []
-  const onStatus = (event) => events.push(event.detail)
-  globalThis.addEventListener('nexa-sync-status', onStatus)
-
-  try {
-    const pb = makeFakePb({ refreshError: authError(401) })
-    const engine = new CashierSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
-
-    await engine.syncNow({ forceNetworkCheck: true, forceProductRefresh: true })
-
-    const finalEvent = events[events.length - 1]
-    assert.equal(finalEvent.state, 'auth-required', 'an expired session must not be masked by an active Peak Protection status, or the re-auth popup never fires')
-    assert.match(finalEvent.message, /no cloud authorization/i)
-  } finally {
-    globalThis.removeEventListener('nexa-sync-status', onStatus)
-    localStorage.clear()
-    await cashierDb.delete()
-  }
 })
