@@ -2106,3 +2106,60 @@ atomically inside its own updater, not just the single active transaction it exp
 a real, if contained, refactor touching every stock-check call site, not a one-line change. Given
 the actual failure mode is fully absorbed by the existing checkout-time check, this was not rushed
 into this pass; flagging it here rather than leaving it silently undiscovered.
+
+---
+
+## Live-support question, 2026-09-16 (client: "when the admin stocks in a product on the other
+terminal, does the other terminal get that stock update?")
+
+**M42. HIGH — ✅ FIXED. Neither the Cashier screen nor the admin Inventory screen ever refreshed
+their on-screen product list when the background sync engine's periodic catalog pull landed fresh
+data from the cloud — including a Stock In done on a different terminal.** Both `products` (Cashier)
+and `products` (Inventory) are plain `useState`, populated once at mount and only ever updated
+again by that same terminal's OWN local actions (completing/voiding a sale on the cashier side;
+scanning/stock-out/count on the admin side). Neither had a listener for the `nexa-sync-status`
+event's `state: 'succeeded'` signal the sync engine already emits every time its periodic pull (every
+5 minutes, or sooner if a queued write forces one) succeeds — `ProductManagement.jsx` and
+`TransactionLogs.jsx` already had exactly this listener; `Cashier.jsx` and `Inventory.jsx` didn't.
+Concretely: an admin does a Stock In on Terminal A; Terminal B's Dexie cache genuinely does receive
+the update within the system's normal ~5-minute cadence (or sooner) — but Terminal B's *screen*
+would keep showing the old quantity indefinitely, until something else happened to trigger a reload
+(a sale completing, a navigation remount) that had nothing to do with the sync actually landing. A
+cashier could keep telling customers an item is out of stock well after it was restocked, or an
+admin's Inventory screen could sit stale through an entire scanning session.
+**A second, compounding bug specific to the cashier's barcode-scan path:** even a barcode scan that
+itself fetches a genuinely fresh product record straight from Dexie (`cashierApi.productByBarcode`,
+already correctly implemented) had that freshness silently discarded — `stockForProduct(item, ...)`
+looks the product up in the (stale) `products` React array FIRST and only falls back to the
+freshly-scanned `item` if the array has no match at all, which it almost always will (the product
+already exists, just with an outdated quantity). So even the single most common cashier action --
+scanning the exact item in question -- didn't reliably surface a stock change made elsewhere,
+independent of the missing-listener bug above.
+Fix: added a `nexa-sync-status`/`state === 'succeeded'` listener to `Cashier.jsx` (scoped to
+`scope === 'cashier'`, calling the existing `loadProducts()`) and to `Inventory.jsx` (matching
+`ProductManagement.jsx`'s existing pattern exactly, including surfacing a refresh failure via the
+same `flash()` toast instead of swallowing it silently). This closes the propagation gap for the
+realistic, designed cadence (within the existing ~5-minute periodic-pull window, or immediately on
+the next forced refresh) — it does not, and was not meant to, make cross-terminal updates
+instantaneous; that interval is an existing, deliberately-tuned design choice (see T1-T3's
+request-volume/rate-limit work) that this fix doesn't touch.
+**Deliberately not fixed this pass:** `stockForProduct`'s precedence (stale cached array over a
+freshly-passed item) was left as-is rather than reordered — with the listener fix in place,
+`products` itself now stays within the system's designed freshness window, which addresses the
+realistic case directly; reordering the precedence is a separate, smaller-blast-radius change that
+risks affecting other callers of `stockForProduct` (e.g. cart-item price/qty snapshots) in ways
+that need their own dedicated review, not bundled into this fix.
+**Also checked, found already correct:** `Dashboard.jsx`/`Analytics.jsx` don't have this listener
+either, but weren't flagged — both naturally refetch on every navigation to them (a route change
+remounts the component and its `useApi` call), unlike Inventory/Cashier, which staff can legitimately
+stay parked on for an entire shift or scanning session without ever navigating away. `TransactionLogs.jsx`
+already had the correct listener.
+**Also noticed, not acted on (separate, pre-existing hygiene item, not this question):**
+`src/admin-page/services/cloud.js` — the file the now-deleted `updateProductStock` dead code lived in
+(see the earlier 2026-09-16 audit pass) — is itself entirely unimported anywhere in the app; its
+`subscribeToProducts`/`subscribeToSales` realtime-subscription helpers are also dead code. Not
+touched this pass since it's unrelated to the question asked and deleting a whole file deserves its
+own deliberate pass, not a drive-by while investigating something else.
+`npm run test:offline` 415/415 (unaffected — this is UI-wiring in files this register's established
+pattern already excludes from automated coverage), lint clean, both `npm run build`/`npm run
+build:cashier` clean.

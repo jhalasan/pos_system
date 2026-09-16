@@ -1968,6 +1968,24 @@ const Cashier = ({ onLogout, user }) => {
     return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncProgress);
   }, []);
 
+  // `products` is a plain useState populated once at mount (below) and after
+  // this terminal's OWN sale/void/refund actions -- nothing previously told
+  // it to re-read Dexie after the background sync engine's own periodic
+  // catalog pull (every 5 minutes, or sooner if a queued op forces one)
+  // landed fresh data from the cloud (e.g. another terminal's Stock In, or
+  // another terminal's sale deducting stock). The catalog itself was
+  // up to date; the screen just never asked it for the update. Mirrors the
+  // identical fix already on the admin side (ProductManagement.jsx).
+  useEffect(() => {
+    function handleCatalogSynced(event) {
+      const detail = event.detail || {};
+      if (detail.scope !== 'cashier' || detail.state !== 'succeeded') return;
+      loadProducts();
+    }
+    globalThis.addEventListener?.('nexa-sync-status', handleCatalogSynced);
+    return () => globalThis.removeEventListener?.('nexa-sync-status', handleCatalogSynced);
+  }, []);
+
   useEffect(() => {
     barcodeInputRef.current?.focus();
   }, [activeTransaction]);

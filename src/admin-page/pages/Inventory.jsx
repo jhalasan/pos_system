@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../../components/AppDialogProvider'
 import PageLoader from '../components/PageLoader'
@@ -169,6 +169,26 @@ export default function Inventory() {
   const dialog = useAppDialog()
   const { data: products, setData: setProducts, loading, error } = useApi(api.products, [])
   const { data: categoryRecords } = useApi(api.categories, [])
+
+  // `products` here is loaded once at mount and otherwise only updated by
+  // this screen's OWN scan/stock-out/count actions -- nothing previously
+  // refreshed it when a background sync (this terminal's own periodic pull,
+  // or a cloud-sourced change from another terminal: another admin device's
+  // Stock In, or a cashier's sale deducting stock) landed fresh data. This
+  // is the same fix already on ProductManagement.jsx, applied to the screen
+  // Stock In/Out/Count actually happen on. A mid-batch scan queue
+  // (stockOutBatch/stockInBatch) is unaffected -- those snapshot their own
+  // quantities at scan time and don't re-read `products` afterward.
+  useEffect(() => {
+    const handleSyncStatus = (event) => {
+      if (event.detail?.state !== 'succeeded') return
+      void api.products().then(setProducts).catch(() => {
+        flash('Product list could not refresh after sync — showing the last loaded data.')
+      })
+    }
+    globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus)
+    return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus)
+  }, [setProducts])
   const barcodeRef = useRef(null)
   const stockOutRef = useRef(null)
   const [inventoryTab, setInventoryTab] = useState('stock-in')
