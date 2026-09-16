@@ -1860,3 +1860,193 @@ collisions on Create/Update already throw a clean, actionable error
 barcodes, not just the primary one — against the live catalog before writing, and name the
 colliding product) rather than leaking a raw database error; the existing archived-product
 barcode-release flow in `ProductManagement.jsx` was also re-confirmed working as designed.
+
+---
+
+## Full-system sweep, 2026-09-16 (client: "sweep everything until you can confidently say the
+system is good for production and release")
+
+Four parallel read-only reviews (admin reporting/analytics; inventory/stock flows; the cashier
+checkout flow end to end; the remaining Product Management features not already covered by
+M29-M31), each scoped to skip everything already in this register. Findings below are grouped by
+area; every fix landed with `npm run test:offline` (404/404 throughout, unaffected — all of these
+are UI-wiring fixes in files this codebase's established pattern already excludes from automated
+coverage), `npm run lint` (0 errors), and all three builds (`build`, `build:cashier`,
+`build:vercel`) clean, checked after each batch.
+
+### Reporting/analytics — three screens counted voided sales as real money
+
+**M32. HIGH — ✅ FIXED. Transaction Logs' "Matched Sales"/"Average Sale" KPI cards and its
+Product/Category Summary tabs summed every filtered receipt regardless of status, including
+voided ones.** A void never zeroes `total_amount` (only flips `status`), so a voided ₱500 sale
+inflated "Matched Sales" by the full ₱500 on top of being separately reported in the dedicated
+"Voided" stat — genuine double-reporting, not just a missing net. The Product/Category Summary
+tabs had the identical gap, so a voided sale's line items still counted as "sold." Fix: new
+`settledReceipts` (excludes `rawStatus === 'voided'`) feeds the KPI totals, the average, and
+`summarizeSalesByProduct`; the underlying transaction list itself is unchanged (a voided sale
+should still be visible there when filtering "All").
+
+**M33. HIGH — ✅ FIXED. Audit page's cash reconciliation counted voided cash/split sales toward
+"Cash Sales," directly corrupting Expected Cash and the shortage/overage flag.** This is a
+different code path from the already-fixed M8 (`Cashier.jsx`'s own local Cash Sales figure) — this
+is the admin's separate cloud-receipt-based reconciliation (`Audit.jsx`), which had no status check
+at all before this fix. A voided ₱1,000 cash sale made Expected Cash ₱1,000 too high, flagging a
+genuinely balanced drawer as short, or masking a real shortage of the same size. Fix: skip
+`rawStatus === 'voided'` receipts before adding to `row.cashSales`. **Deliberately not changed:**
+a partially refunded ("adjusted") sale is still counted at its full original amount — the cash from
+that sale genuinely did enter the drawer, and this codebase doesn't currently track which payment
+method a refund was paid back out of, so netting the cash portion of a partial refund needs that
+tracking built first rather than being guessed at in a cash-reconciliation screen, of all places.
+
+**M34. MEDIUM — ✅ FIXED. GCash Payments' KPI totals also included voided GCash sales by
+default.** Same class as M32/M33, lower severity since GCash reconciliation is typically checked
+against the payment app's own ledger. Fix: `settledPayments` (excludes `status === 'voided'`) feeds
+`totalAmount`/`directTotal`/`splitTotal`.
+
+### Cashier checkout — one real blocker, one money-rounding family, one stock-check bug
+
+**M35. HIGH — ✅ FIXED. Split payment rejected mathematically correct exact-total payments due to
+unrounded float addition.** `splitCash + splitGcash` compared directly against `total` — binary
+float addition of two centavo amounts frequently lands a hair below the true sum (e.g.
+`0.01 + 0.06 === 0.06999999999999999`), so a cashier entering the exact correct split for the
+printed total got a spurious "must total at least ₱X" error and had to overpay by a centavo to get
+past validation. Fix: wrap the comparison value in `roundMoney(...)`.
+**Same pass, closed out the rest of this rounding family while already in this code:** `subtotal`
+was summed from already-rounded line totals with no final rounding step (unlike `discountAmount`
+and `total`, both already rounded with an explicit comment explaining why) and persisted as-is on
+every sale; `change` (both the live on-screen figure and the value actually stored on the completed
+sale, including the split-payment path's own separate `paidSplitCash + paidSplitGcash - total`
+addition) had the identical unrounded-float exposure. All three now go through `roundMoney`.
+
+**M36. MEDIUM — ✅ FIXED. Growing one cart line's quantity (stepper or manual entry) didn't count
+a sibling line of the same product in the same cart against available stock.** `getRemainingStock`
+was called with the entire active transaction excluded (`getRemainingStock(item, activeTransaction,
+item.id)`), not just the one line being edited — so when a product was sold as two separate cart
+lines (e.g. one as a Piece, one as a Case, the exact multi-unit-per-sale scenario T3 already fixed
+for cloud stock deduction), neither line's quantity stepper saw the other as already-committed
+stock. Example: 40 base units in stock, a Case line already reserving 30; the Piece line's stepper
+would let a cashier push it up to 40 on its own — 70 demanded against 40 in stock. This was still
+caught at the very end by `finalizeSaleLocally`'s own sequential stock check (no actual stock-loss
+bug), but only after the cash-drawer-open command had already fired in parallel with sale
+finalization, producing a confusing late failure with a drawer that opened for a sale that didn't
+complete. Fix: both the stepper's max-quantity calculation and the displayed max on the quantity
+input now call `getRemainingStock(item, null, item.id)` — excluding only this exact line (matching
+the pattern `commitProductToCart`'s add-to-cart check already uses), so every other line, including
+a same-product sibling in the same cart, correctly counts.
+
+**M37. MEDIUM — ✅ FIXED. A peso (fixed-amount) discount silently re-based itself if the cart
+changed after approval, instead of holding the approved amount.** A peso discount is only ever
+stored as the percent it works out to against the subtotal at approval time (there's no separate
+"fixed peso" storage mode) — and the cart isn't locked until payment starts, so a cashier could add
+another item after a manager approved, say, a ₱50-off-₱500 discount (stored as 10%); adding a ₱500
+item afterward would silently recompute as 10% of ₱1000 = ₱100 off, doubling the approved discount
+with no new approval. A discount entered directly as a percentage is unaffected by design — it's
+meant to scale with the cart. Fix: `discountBaseSubtotal` records the subtotal at approval time for
+peso-mode discounts only (`null` for percentage mode); a new effect clears the discount (with a
+clear notification asking the cashier to re-apply) if the cart's subtotal has moved since, rather
+than silently letting a stale approval re-apply at a different scale.
+**Not fixed, flagged for a future pass (needs a UI walkthrough this session couldn't do — see the
+"Not independently verified" note below):** the Exchange flow (`adjustLocalSale`,
+`type: 'exchange'`) has no structural price-difference computation at all — it restocks the
+returned item and credits its price, identical to a plain refund, with no code path that computes
+or enforces an owed/refunded difference against whatever replacement item is rung up. Ringing up the
+replacement correctly and collecting/refunding the right difference is entirely manual today,
+tracked only by a free-text note. This is a real gap but a proper fix means designing what
+"correct" looks like (link the replacement sale to the adjustment? enforce the difference at
+checkout?) — a scoped feature, not a bug fix, and needs the client's input on the intended workflow
+before building it.
+
+### Inventory — one workflow-blocking validation bug
+
+**M38. HIGH — ✅ FIXED. Stock-Out batch confirm rejected legitimate fractional quantities under 1
+base unit.** `confirmStockOutBatch`'s validation hardcoded a `< 1` floor and `Math.floor(...)` for
+the "how much is available" calculation regardless of `allowFractional` — so queuing a stock-out of
+0.5 kg (spoilage/damage on a fractional product) in the batch scan-then-confirm flow made the whole
+line read as invalid and blocked confirmation entirely with a nonsensical "must be between 1 and N"
+message, even though the equivalent live per-item quantity editor
+(`updateStockOutBatchItemQty`, a few lines above in the same file) already handled fractional
+quantities correctly down to 0.001. Stock-In had no equivalent check, so only Stock-Out was
+affected. Fix: mirrored `updateStockOutBatchItemQty`'s existing fractional-aware min/max logic
+(`floorQty` instead of `Math.floor`, a 0.001 floor instead of 1) into the batch-confirm validation.
+**Also fixed, defensive/latent (no live bug found, but closes a real gap):**
+`productSyncUtils.js`'s `matchesStockOp` only recognized `scanInventory`/`stockOutInventory`, not
+`adjustInventoryCount` (Stock Count) — currently masked because `adjustInventoryCount` always sets
+`pendingSync: true` independently, but a queued Stock Count would silently lose its
+local-preservation protection during a concurrent cloud pull if that changed in the future. Added
+`adjustInventoryCount` to the recognized set.
+
+### Product Management — bulk actions and export
+
+**M39. CRITICAL — ✅ FIXED. A bulk category/lifecycle-status update on multiple selected products
+lost every successfully-applied change and gave zero per-item detail the moment any single product
+in the batch failed.** `applyBulkUpdate` awaited every product sequentially inside one `try` around
+the whole loop, only ever calling `setList`/`setSelectedProducts` once, at the very end — if product
+3 of 10 threw, the `catch` fired before that final call ever ran, so even though products 1-2 had
+already been updated successfully server-side, the admin's screen showed zero changes applied, with
+a generic "Bulk update failed." toast giving no indication anything had actually succeeded or which
+product(s) failed. There was also a related race: because the whole batch was built from the `list`
+value captured when the function started, a background sync refresh (the page's own
+`nexa-sync-status` listener) landing mid-batch would have its fresher data silently overwritten by
+the bulk update's own stale, pre-sync snapshot once that final `setList` ran.
+Fix: each product is now updated and reflected individually — `setList` is a functional update
+(`current => current.map(...)`) called right after each success, so it can never clobber a
+concurrent sync refresh, and an already-applied change survives regardless of what happens later in
+the same batch. Failures are collected separately (product name + error) instead of aborting the
+loop; the toast reports exactly how many succeeded and lists up to 3 failed product names (plus a
+count of any more); only the failed products stay selected afterward, so the admin can immediately
+retry just those instead of re-selecting the whole batch.
+
+**M40. HIGH — ✅ FIXED. Product CSV export omitted lifecycle status and wholesale price
+entirely.** The "Status" column exported `product.status` (stock status: in-stock/low/critical),
+not `lifecycleStatus` (active/archived/deleted) — so exporting with the Archived or "All" lifecycle
+filter produced a CSV with no way to tell which rows were archived/deleted from the data alone.
+`wholesalePrice` (a real, save-able field per product) was never exported at all. Fix: added
+separate "Stock Status" and "Lifecycle Status" columns (the old "Status" column is now correctly
+labeled and joined by the new one, not replaced), and a "Wholesale Price" column reading the base
+selling unit's `wholesalePrice`. The export's data source was already correctly scoped to the
+currently-filtered product list (`filtered`, not the full unfiltered `list`) — confirmed, not
+changed.
+
+**M41. MEDIUM — ✅ FIXED. Creating a category was case-sensitive online but case-insensitive
+offline, so "Snacks" and "snacks" could end up as two distinct categories depending on
+connectivity.** The online path's PocketBase lookup (`name = {:name}`) is an exact, case-sensitive
+match under SQLite's default collation; the offline fallback has always deduped case-insensitively
+via a lowercase-derived local id. Fix: the online path now fetches the (small) category list and
+compares case-insensitively in JS before deciding whether to create a new record, matching the
+offline path's behavior. No rename/delete-category feature exists, so there was no orphaned-product
+cascade risk to address alongside this.
+
+**Also reviewed this pass, confirmed already correct:** the Integrity dashboard's filter counts
+(missing-barcode, uncategorized, invalid-price, negative-stock, duplicate-barcode) always match
+what clicking through to that filter actually shows; Archive/Delete/Restore button logic never
+offers a nonsensical combination (e.g. "Archive" on an already-archived product); a failed image
+upload can't leave a product half-saved, since the image is bundled into the same queued
+create/update operation as everything else, not uploaded as a separate step.
+
+### Deliberately left open, needs a decision or capability this session doesn't have
+
+- **S11** (any authenticated cashier token can void/refund any sale directly against PocketBase,
+  with no server-side proof that manager approval happened) — unchanged from the prior pass; still
+  needs either a PocketBase server hook or a live production rule change this session has no safe
+  way to test.
+- **M17** (Sales-by-Cashier report drops refunded sales) — unchanged, client explicitly deferred.
+- **The Exchange flow's missing price-difference computation** (new finding this pass, see M37's
+  note) — a scoped feature to design, not a quick fix.
+- **Thermal inventory report only prints a product's primary barcode**, not every selling-unit
+  barcode — reviewed and deliberately left as-is: this is a human-readable stock report (title
+  "Inventory Report"), not a barcode-label printer, and every other field on it is already
+  per-product, not per-selling-unit; printing every barcode would clutter a report whose purpose is
+  a readable stock summary, not scannable labels (that's `barcodePrinter.js`'s job, separately
+  reviewed and not flagged).
+
+**Not independently verified in a running app this pass either** (same constraint noted throughout
+this register for `Cashier.jsx`/`ProductModal.jsx`-class files — no React component test harness
+exists in this repo): every fix above was verified by direct code trace, full-suite regression
+(404/404 unaffected — none of these changes touch code paths the existing automated tests exercise),
+lint, and all three production builds. The one class of risk that can't fully close without a live
+walkthrough is a UI-wiring mistake invisible in a diff read — particularly M37's new discount-reset
+effect (a `useEffect` with real, if narrow, room to misfire on an edge case not covered by the
+reasoning above) and M36's stock-reservation exclusion change. Recommend a real walkthrough on a
+non-production terminal before the next release: a multi-unit product sold as two cart lines at
+once, a peso discount followed by adding another item, and a split payment with a centavo-level
+total, specifically.

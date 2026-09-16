@@ -662,10 +662,22 @@ export default function Inventory() {
   async function confirmStockOutBatch() {
     if (stockOutBatch.length === 0 || confirmingStockOut) return
 
-    const invalidItem = stockOutBatch.find((item) => (Number(item.qty) || 0) < 1 || (Number(item.baseQty) || 0) > (Number(item.currentQty) || 0))
+    // The minimum-quantity floor and the "how much is actually available"
+    // math must both respect allowFractional -- hardcoding "< 1" and
+    // Math.floor here (unlike updateStockOutBatchItemQty just above, which
+    // already gets this right) rejected a perfectly legitimate fractional
+    // stock-out (e.g. 0.5 kg of rice marked spoiled) as if it were invalid.
+    const invalidItem = stockOutBatch.find((item) => {
+      const minQty = item.fractional ? 0.001 : 1
+      return (Number(item.qty) || 0) < minQty || (Number(item.baseQty) || 0) > (Number(item.currentQty) || 0)
+    })
     if (invalidItem) {
-      const maxQty = Math.floor((Number(invalidItem.currentQty) || 0) / (Number(invalidItem.conversion) || 1))
-      setStockOutError(`Check quantity for "${invalidItem.name}". It must be between 1 and ${maxQty} ${invalidItem.unit || 'unit(s)'}.`)
+      const conversion = Number(invalidItem.conversion) || 1
+      const minQty = invalidItem.fractional ? 0.001 : 1
+      const maxQty = invalidItem.fractional
+        ? Math.max(0.001, floorQty((Number(invalidItem.currentQty) || 0) / conversion))
+        : Math.max(1, Math.floor((Number(invalidItem.currentQty) || 0) / conversion))
+      setStockOutError(`Check quantity for "${invalidItem.name}". It must be between ${minQty} and ${maxQty} ${invalidItem.unit || 'unit(s)'}.`)
       focusStockOutBarcode()
       return
     }

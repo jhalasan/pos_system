@@ -118,11 +118,17 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
     })
   }, [cashierName, customFrom, customTo, dateRange, payments, query, status, type])
 
-  const totalAmount = filteredPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
-  const directTotal = filteredPayments
+  // A voided sale's amount is never zeroed out (only its status changes),
+  // so counting it here would overstate GCash revenue by the full voided
+  // amount until an admin manually filters to "Completed" -- these totals
+  // should reflect settled money by default, same fix as TransactionLogs'
+  // "Matched Sales" and Audit's cash reconciliation.
+  const settledPayments = filteredPayments.filter((payment) => String(payment.status || 'completed').toLowerCase() !== 'voided')
+  const totalAmount = settledPayments.reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
+  const directTotal = settledPayments
     .filter((payment) => payment.paymentType === 'GCash')
     .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
-  const splitTotal = filteredPayments
+  const splitTotal = settledPayments
     .filter((payment) => payment.paymentType === 'Split')
     .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
   const visiblePayments = filteredPayments.slice(0, visibleCount)

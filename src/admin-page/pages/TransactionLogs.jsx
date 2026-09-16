@@ -275,10 +275,20 @@ export default function TransactionLogs() {
     })
   }, [action, cashierName, categoryFilter, customerNameFilter, customFrom, customTo, dateRange, maxAmount, minAmount, paymentFilter, productFilter, query, resolvedReceipts, status])
 
-  const totalAmount = filteredReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
+  // A voided sale's total_amount is never zeroed out (only its status
+  // changes -- see server/index.js's void handler), so a "Matched Sales" or
+  // "Average Sale" figure that sums filteredReceipts unconditionally counts
+  // money that never stayed in the drawer. The dedicated "Voided" stat below
+  // already reports that amount separately -- excluding it here avoids
+  // double-reporting it as both real revenue AND a voided total.
+  const settledReceipts = useMemo(
+    () => filteredReceipts.filter((receipt) => normalizedStatus(receipt) !== 'voided'),
+    [filteredReceipts],
+  )
+  const totalAmount = settledReceipts.reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
   const voidedCount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').length
   const voidedAmount = filteredReceipts.filter((receipt) => normalizedStatus(receipt) === 'voided').reduce((sum, receipt) => sum + (Number(receipt.totalAmount) || 0), 0)
-  const averageAmount = filteredReceipts.length ? totalAmount / filteredReceipts.length : 0
+  const averageAmount = settledReceipts.length ? totalAmount / settledReceipts.length : 0
   const sortedReceipts = useMemo(
     () => sortTransactionRecords(filteredReceipts, sortOrder),
     [filteredReceipts, sortOrder],
@@ -286,7 +296,7 @@ export default function TransactionLogs() {
   const visibleReceipts = sortedReceipts.slice(0, visibleCount)
   const activeFilterCount = [query, customerNameFilter, customFrom, customTo, minAmount, maxAmount].filter((value) => String(value).trim()).length
     + [dateRange, cashierName, action, status, productFilter, categoryFilter, paymentFilter].filter((value) => value !== 'all').length
-  const productSummary = useMemo(() => summarizeSalesByProduct(filteredReceipts), [filteredReceipts])
+  const productSummary = useMemo(() => summarizeSalesByProduct(settledReceipts), [settledReceipts])
   const categorySummary = useMemo(() => summarizeByCategory(productSummary), [productSummary])
   const filterChips = [
     query && { label: `Search: ${query}`, clear: () => setQuery('') },

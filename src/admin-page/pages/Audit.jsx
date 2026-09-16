@@ -341,6 +341,19 @@ export default function Audit() {
       if (seenReceipts.has(key)) continue
       seenReceipts.add(key)
       if (!inRange(createdAt)) continue
+      // A voided sale's cash/total amount is never zeroed out (only its
+      // status changes), and the physical cash from it was never actually
+      // kept in the drawer -- counting it here directly corrupts Expected
+      // Cash and can flag a genuinely balanced drawer as short, or hide a
+      // real shortage of the same size. A partially refunded ("adjusted")
+      // sale is deliberately still counted here at its full original
+      // amount: the cash from the original sale genuinely did go into the
+      // drawer, and this codebase does not currently track which payment
+      // method a refund was paid back out of (see POS_AUDIT_REGISTER.md),
+      // so netting the cash portion of a partial refund needs that tracking
+      // built first rather than being guessed at here.
+      const rawStatus = String(receipt.rawStatus || receipt.status || receipt?.completedSale?.rawStatus || receipt?.completedSale?.status || '').toLowerCase()
+      if (rawStatus === 'voided') continue
       const row = ensure(receipt.cashierName || receipt?.cashierName || 'Cashier')
       const method = String(receipt.paymentMethod || receipt?.paymentMethod || receipt?.completedSale?.paymentMethod || '').toLowerCase()
       if (method === 'cash') row.cashSales += Number(receipt.cashAmount || receipt.totalAmount || receipt?.completedSale?.cashAmount) || 0

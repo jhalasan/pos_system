@@ -1,5 +1,5 @@
 function matchesStockOp(op, cloudProduct, localProduct) {
-  if (!['scanInventory', 'stockOutInventory'].includes(op?.type)) return false
+  if (!['scanInventory', 'stockOutInventory', 'adjustInventoryCount'].includes(op?.type)) return false
   return op.productId === cloudProduct.id
     || op.productId === localProduct?.id
     || (cloudProduct.barcode && op.payload?.barcode === cloudProduct.barcode)

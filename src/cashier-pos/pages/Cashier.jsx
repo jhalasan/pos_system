@@ -662,7 +662,11 @@ const Cashier = ({ onLogout, user }) => {
   const isVoidedTxn = activeTxn.status === 'voided' || activeTxn.completedSale?.status === 'voided';
   const isLockedTxn = isCompletedTxn || isVoidedTxn;
 
-  const subtotal = cartItems.reduce((sum, item) => sum + item.total, 0);
+  // Rounded here (not just at display time) for the same reason discountAmount
+  // and total already are just below -- summing several already-rounded line
+  // totals can still land a fraction of a centavo off due to binary float
+  // drift, and this value gets persisted as-is (subtotalAmount) on every sale.
+  const subtotal = roundMoney(cartItems.reduce((sum, item) => sum + item.total, 0));
   const itemCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   // Round to the nearest centavo here (not just at display time via money()) so
   // the amount a cashier is asked to collect can never differ from what's shown
@@ -671,7 +675,7 @@ const Cashier = ({ onLogout, user }) => {
   const discountAmount = Math.round((subtotal * discount) / 100 * 100) / 100;
   const total = Math.round((subtotal - discountAmount) * 100) / 100;
   const cashTendered = parseFloat(cashAmount) || 0;
-  const change = paymentMethod === 'cash' ? cashTendered - total : 0;
+  const change = paymentMethod === 'cash' ? roundMoney(cashTendered - total) : 0;
   const completedPaymentSnapshot = isCompletedTxn ? activeTxn.completedSale : null;
   const displayIsSplitPayment = completedPaymentSnapshot
     ? completedPaymentSnapshot.paymentMethod === 'split'
@@ -973,6 +977,26 @@ const Cashier = ({ onLogout, user }) => {
     setNotification(message);
     window.setTimeout(() => setNotification(''), 3200);
   };
+
+  // A peso discount is stored as the percent it worked out to against the
+  // subtotal at approval time (discountBaseSubtotal), not a standalone peso
+  // amount -- and the cart isn't locked until payment starts, so a cashier
+  // can still add/remove items after applying one. Left unguarded, that
+  // stale percentage would silently re-apply to a *different* subtotal
+  // (e.g. a ₱50-off-₱500 approval, stored as 10%, becomes ₱100 off if a
+  // ₱500 item is added afterward) -- clearing the discount here instead
+  // means it fails safe (a stale approval disappears and must be redone)
+  // rather than silently mis-charging. A discount applied directly as a
+  // percentage has no such drift -- it's meant to scale with the cart -- so
+  // this only fires for the peso-then-cart-changed sequence.
+  useEffect(() => {
+    if (isLockedTxn || !(discount > 0)) return;
+    const baseline = activeTxn.discountBaseSubtotal;
+    if (baseline == null || Math.abs(subtotal - baseline) < 0.005) return;
+    updateActiveTransaction({ discount: 0, discountBaseSubtotal: null });
+    showNotification('Cart changed after the discount was applied — discount cleared. Re-apply it if it still applies.');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtotal, discount, activeTxn.discountBaseSubtotal, activeTransaction, isLockedTxn]);
 
   const withDevice = (detail) => `${detail} Device ${deviceId}.`;
 
@@ -2976,7 +3000,14 @@ const Cashier = ({ onLogout, user }) => {
       cartItems: cartItems.map((item) => {
         if (item.id !== id) return item;
         const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1
-        const availableBase = getRemainingStock(item, activeTransaction, item.id)
+        // Exclude only this exact line, not the whole active transaction --
+        // excluding the whole transaction meant a sibling cart line of the
+        // same product (e.g. one sold as a Piece, another as a Case) never
+        // counted against availability while growing this one, letting the
+        // cart demand more of a product than was actually in stock. Other
+        // tabs' reservations, and every OTHER line in this same cart, still
+        // correctly count.
+        const availableBase = getRemainingStock(item, null, item.id)
         const requestedQty = item.fractional ? quantizeQty(requested) : Math.floor(requested)
         const maxAvailableQty = item.fractional
           ? Math.max(0, floorQty(availableBase / conversion))
@@ -3049,9 +3080,9 @@ const Cashier = ({ onLogout, user }) => {
       gcashAmount: effectiveIsSplitPayment ? paidSplitGcash : paidGcash,
       gcashRef: effectiveGcashRef,
       splitPayments: completedSplitPayments,
-      change: effectiveIsSplitPayment
+      change: roundMoney(effectiveIsSplitPayment
         ? Math.max(0, paidSplitCash + paidSplitGcash - total)
-        : (effectivePaymentMethod === 'cash' ? paidCash - total : Math.max(0, paidGcash - total)),
+        : (effectivePaymentMethod === 'cash' ? paidCash - total : Math.max(0, paidGcash - total))),
       completedAt,
     };
 
@@ -3245,7 +3276,12 @@ const Cashier = ({ onLogout, user }) => {
       const flowSplitPayments = paymentFlow.splitPayments || { cash: '', gcash: '', gcashRef: '' };
       const splitCash = parseFloat(flowSplitPayments.cash) || 0;
       const splitGcash = parseFloat(flowSplitPayments.gcash) || 0;
-      const splitTotal = splitCash + splitGcash;
+      // Binary float addition of two centavo amounts often lands a hair
+      // below the true sum (e.g. 0.01 + 0.06 === 0.06999999999999999) --
+      // rounding before comparing against total stops a cashier who typed
+      // the mathematically-correct split amounts from being wrongly told
+      // the payment doesn't cover the sale.
+      const splitTotal = roundMoney(splitCash + splitGcash);
       const flowGcashRef = String(paymentFlow.gcashRef || '').trim();
       const flowSplitGcashRef = String(flowSplitPayments.gcashRef || '').trim();
 
@@ -3935,9 +3971,12 @@ const Cashier = ({ onLogout, user }) => {
                 {cartItems.map((item) => {
                   const remainingStock = stockForProduct(item);
                   const conversion = Number(item.conversion) > 0 ? Number(item.conversion) : 1;
+                  // Same fix as handleQuantityChange above: exclude only
+                  // this line, so a sibling line of the same product in this
+                  // same cart still counts against the displayed max.
                   const maxQty = item.fractional
-                    ? Math.max(0.001, floorQty(getRemainingStock(item, activeTransaction) / conversion))
-                    : Math.max(1, Math.floor(getRemainingStock(item, activeTransaction) / conversion));
+                    ? Math.max(0.001, floorQty(getRemainingStock(item, null, item.id) / conversion))
+                    : Math.max(1, Math.floor(getRemainingStock(item, null, item.id) / conversion));
                   const stock = stockState({ ...item, stockQty: remainingStock });
                   return (
                     <div key={item.id} className={styles['cart-item']}>
@@ -4547,7 +4586,18 @@ const Cashier = ({ onLogout, user }) => {
                   return;
                 }
                 const discountPercent = isPercentage ? amount : (subtotal > 0 ? (amount / subtotal) * 100 : 0);
-                updateActiveTransaction({ discount: discountPercent });
+                // A peso discount is only ever stored as the percent it
+                // works out to against *this* subtotal -- discountBaseSubtotal
+                // (peso mode only; a genuine percentage discount is meant to
+                // scale with the cart) records what that subtotal was, so a
+                // later cart edit (the cart isn't locked until payment
+                // starts) can be detected and the now-stale discount
+                // cleared, instead of silently re-applying the same
+                // percentage to a different total (see the effect below).
+                updateActiveTransaction({
+                  discount: discountPercent,
+                  discountBaseSubtotal: isPercentage ? null : subtotal,
+                });
                 setShowDiscountModal(false);
                 setDiscountApproved(false);
                 discountApproval.reset();

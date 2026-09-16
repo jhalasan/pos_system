@@ -248,18 +248,39 @@ export default function ProductManagement() {
     const targets = list.filter((product) => selectedProducts.has(product.id))
     if (!targets.length) return flash('Select at least one product.')
     setBulkSaving(true)
-    try {
-      const updates = []
-      for (const product of targets) {
-        const patch = kind === 'category' ? { category: bulkCategory } : { lifecycleStatus: kind }
-        updates.push(await api.updateProduct(product.id, { ...product, ...patch }))
+    const succeededIds = []
+    const failures = []
+    for (const product of targets) {
+      const patch = kind === 'category' ? { category: bulkCategory } : { lifecycleStatus: kind }
+      try {
+        const updated = await api.updateProduct(product.id, { ...product, ...patch })
+        // Functional update, applied per-item as it succeeds: a batch that
+        // fails partway through no longer loses the changes already made to
+        // earlier products (the old version built one array from the whole
+        // batch and only ever called setList once, at the very end, inside
+        // a try that a single failure would skip entirely). This also
+        // avoids clobbering a background sync refresh that lands mid-batch
+        // (the nexa-sync-status listener above), since it never reads the
+        // possibly-stale `list` closure -- only the previous state.
+        setList((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+        succeededIds.push(product.id)
+      } catch (err) {
+        failures.push({ name: product.name, message: err.message || 'Unknown error' })
       }
-      const byId = new Map(updates.map((product) => [product.id, product]))
-      setList(list.map((product) => byId.get(product.id) || product))
-      setSelectedProducts(new Set())
-      flash(`Updated ${updates.length} product(s).`)
-    } catch (err) { flash(err.message || 'Bulk update failed.') }
-    finally { setBulkSaving(false) }
+    }
+    setSelectedProducts((current) => {
+      const next = new Set(current)
+      for (const id of succeededIds) next.delete(id)
+      return next
+    })
+    setBulkSaving(false)
+    if (failures.length === 0) {
+      flash(`Updated ${succeededIds.length} product(s).`)
+    } else {
+      const names = failures.slice(0, 3).map((f) => f.name).join(', ')
+      const more = failures.length > 3 ? `, and ${failures.length - 3} more` : ''
+      flash(`Updated ${succeededIds.length} product(s); ${failures.length} failed (${names}${more}) -- still selected, retry when ready.`)
+    }
   }
 
   async function handleCreateCategory() {
@@ -304,19 +325,24 @@ export default function ProductManagement() {
     setExportStatus('Exporting...')
     try {
       const result = await exportCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, [
-        ['Name', 'Barcodes', 'Category', 'Quantity', 'Unit', 'Price', 'Status', 'Unit Breakdown'],
-        ...filtered.map((product) => [
-          product.name,
-          getProductBarcodes(product).join(' | '),
-          product.category,
-          product.qty,
-          product.unit,
-          product.price,
-          product.status,
-          getInventoryBreakdown(product)
-            .map((unit) => `${unit.total} ${unit.unit} available (${unit.conversion} ${product.unit}; ${peso(unit.price)})`)
-            .join(' | '),
-        ]),
+        ['Name', 'Barcodes', 'Category', 'Quantity', 'Unit', 'Price', 'Wholesale Price', 'Stock Status', 'Lifecycle Status', 'Unit Breakdown'],
+        ...filtered.map((product) => {
+          const baseUnit = normalizeSellingUnits(product).find((unit) => Number(unit.conversion) === 1)
+          return [
+            product.name,
+            getProductBarcodes(product).join(' | '),
+            product.category,
+            product.qty,
+            product.unit,
+            product.price,
+            Number(baseUnit?.wholesalePrice) > 0 ? baseUnit.wholesalePrice : '',
+            product.status,
+            product.lifecycleStatus || 'active',
+            getInventoryBreakdown(product)
+              .map((unit) => `${unit.total} ${unit.unit} available (${unit.conversion} ${product.unit}; ${peso(unit.price)})`)
+              .join(' | '),
+          ]
+        }),
       ], { directory: getExportLocation(exportLocationKeys.products) })
       setExportStatus(`Exported in - "${result.path}"`)
     } catch (err) {

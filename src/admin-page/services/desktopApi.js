@@ -1677,22 +1677,25 @@ export const desktopAdminApi = {
     await startAdminRuntime()
     const categoryName = String(name || '').trim()
     if (!categoryName) throw new Error('Category name is required.')
+    const normalizedKey = categoryName.toLowerCase()
 
     if (await isCloudReachable()) {
-      const existing = await pb.collection('categories').getFirstListItem(
-        pb.filter('name = {:name}', { name: categoryName }),
-        { requestKey: null },
-      ).catch((error) => {
-        if (error.status === 404) return null
-        throw error
-      })
+      // A plain PocketBase `name = {:name}` filter is case-sensitive
+      // (SQLite's default BINARY collation), so this used to let "Snacks"
+      // and "snacks" both get created as distinct category records -- the
+      // offline fallback below has always deduped case-insensitively via
+      // its lowercase-derived local id, so the two paths silently
+      // disagreed. Fetching the (small) category list and comparing in JS
+      // keeps both paths consistent.
+      const allCategories = await pb.collection('categories').getFullList({ requestKey: null })
+      const existing = allCategories.find((record) => String(record.name || '').trim().toLowerCase() === normalizedKey) || null
       const record = existing || await pb.collection('categories').create({ name: categoryName }, { requestKey: null })
       await adminDb.categories.put({ id: record.id, name: record.name || categoryName, updated: record.updated || new Date().toISOString() })
       await recordActivity('Settings', `Created category "${record.name || categoryName}".`)
       return { id: record.id, name: record.name || categoryName }
     }
 
-    const local = { id: `category_${categoryName.toLowerCase()}`, name: categoryName, updated: new Date().toISOString() }
+    const local = { id: `category_${normalizedKey}`, name: categoryName, updated: new Date().toISOString() }
     await adminDb.transaction('rw', adminDb.categories, adminDb.pendingOps, async () => {
       await adminDb.categories.put(local)
       await queueOperation('createCategory', local.id, { name: categoryName })
