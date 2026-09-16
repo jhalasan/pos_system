@@ -4,6 +4,7 @@ import { useAppDialog } from '../../components/AppDialogProvider'
 import { IconImage, IconPlus, IconTrash } from './Icons'
 import { defaultCategories } from '../services/api'
 import { quantizeQty } from '../../utils/quantity'
+import { deriveBaseUnitCost, deriveImpliedMargin, deriveSellingPrice, rescaleCostForConversionChange } from '../utils/productMarginMath'
 
 const baseUnitOptions = ['Piece', 'Stick', 'Bottle', 'Sachet', 'Kilogram', 'Liter', 'Pack', 'Box', 'Case', 'Sack', 'Tray', 'Ream', 'Bag', 'Can', 'Jar', 'Roll']
 const purchaseUnitOptions = ['Ream', 'Box', 'Case', 'Pack', 'Sack', 'Tray', 'Carton', 'Pouch', 'Bag', 'Bundle', 'Crate']
@@ -272,36 +273,6 @@ function formatPriceInput(value) {
   return Number.isFinite(numeric) ? numeric.toFixed(2) : '0.00'
 }
 
-function deriveBaseUnitCost(costValue, conversionQuantity) {
-  if (!Number.isFinite(costValue) || costValue <= 0) return 0
-  const normalizedConversion = Number(conversionQuantity)
-  if (!Number.isFinite(normalizedConversion) || normalizedConversion <= 0) return 0
-  return costValue / normalizedConversion
-}
-
-function deriveSellingPrice(costValue, profitMargin, conversionValue, conversionQuantity) {
-  const baseUnitCost = deriveBaseUnitCost(costValue, conversionQuantity)
-  if (!Number.isFinite(baseUnitCost) || baseUnitCost <= 0) return 0
-  const normalizedConversion = Number(conversionValue)
-  if (!Number.isFinite(normalizedConversion) || normalizedConversion <= 0) return 0
-  const normalizedMargin = Number(profitMargin)
-  if (!Number.isFinite(normalizedMargin) || normalizedMargin < 0) return 0
-  return Number((baseUnitCost * normalizedConversion * (1 + normalizedMargin / 100)).toFixed(2))
-}
-
-// The inverse of deriveSellingPrice for the base (conversion=1) unit: when the
-// admin types a price directly, back-solve what margin that price implies at
-// the current cost, so the Margin field never silently goes stale next to a
-// manually-typed price. Returns null when cost/price aren't set yet (nothing
-// meaningful to show).
-function deriveImpliedMargin(costValue, conversionQuantity, priceValue) {
-  const baseUnitCost = deriveBaseUnitCost(Number(costValue), Number(conversionQuantity))
-  if (!Number.isFinite(baseUnitCost) || baseUnitCost <= 0) return null
-  const price = Number(priceValue)
-  if (!Number.isFinite(price) || price <= 0) return null
-  return Number(Math.max(0, ((price / baseUnitCost) - 1) * 100).toFixed(2))
-}
-
 function resolveInventoryBaseQty(initialStock, conversionQuantity) {
   const normalizedInitialStock = Number(initialStock) || 0
   const normalizedConversion = Number(conversionQuantity) > 0 ? Number(conversionQuantity) : 1
@@ -371,7 +342,21 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         next.unitTemplate = 'custom'
       }
       if (key === 'unit' || key === 'purchaseUnit' || key === 'hasMultipleUnits') {
-        next.conversionQuantity = defaultPurchaseConversion(next.unit, next.purchaseUnit, next.conversionQuantity)
+        // Turning Multiple Selling Units off means cost goes back to meaning
+        // "per base unit" right away, not just at submit-time -- resetting
+        // conversionQuantity to 1 here (instead of leaving it stale until
+        // the submit()-time override) keeps every live price/margin display
+        // in the form correct while the admin is still editing.
+        next.conversionQuantity = key === 'hasMultipleUnits' && !value
+          ? 1
+          : defaultPurchaseConversion(next.unit, next.purchaseUnit, next.conversionQuantity)
+      }
+
+      if (
+        (key === 'unit' || key === 'purchaseUnit' || key === 'hasMultipleUnits' || key === 'conversionQuantity')
+        && Number(next.conversionQuantity) !== Number(prev.conversionQuantity)
+      ) {
+        next.cost = rescaleCostForConversionChange(prev.cost, prev.conversionQuantity, next.conversionQuantity)
       }
 
       if (key === 'barcode') {
@@ -478,14 +463,30 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     setFormValue('unitTemplate', 'custom')
     if (index === 0 && key === 'price') {
       // Base row only (see deriveImpliedMargin) -- other rows have no Margin
-      // field of their own to reconcile against.
+      // field of their own to reconcile against. Once we know the margin this
+      // price implies, cascade it to every OTHER row that isn't itself
+      // manually priced, the same way editing the Margin field already does
+      // via updateSellingRows -- otherwise a Piece price edit would silently
+      // leave the Case/Pack rows priced off the old margin.
       const impliedMargin = deriveImpliedMargin(form.cost, form.conversionQuantity, value)
+      const effectiveMargin = impliedMargin !== null ? impliedMargin : form.profitMargin
       setForm((current) => ({
         ...current,
         price: value === '' ? '' : Number(value) || 0,
         isPriceManual: true,
         profitMargin: impliedMargin !== null ? impliedMargin : current.profitMargin,
       }))
+      setSellingUnits((current) => current.map((row, idx) => {
+        if (idx === 0) {
+          return { ...row, price: value === '' ? '' : Number(value) || 0, isPriceManual: true }
+        }
+        if (row.isPriceManual) return row
+        return {
+          ...row,
+          price: deriveSellingPrice(Number(form.cost), Number(effectiveMargin), Number(row.conversion), Number(form.conversionQuantity)),
+        }
+      }))
+      return
     }
     setSellingUnits((current) => current.map((row, idx) => {
       if (idx !== index) return row
@@ -520,6 +521,8 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       return
     }
 
+    const rescaledCost = rescaleCostForConversionChange(form.cost, form.conversionQuantity, template.conversionQuantity)
+
     const nextForm = {
       ...form,
       hasMultipleUnits: true,
@@ -527,6 +530,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       unit: template.unit,
       purchaseUnit: template.purchaseUnit,
       conversionQuantity: template.conversionQuantity,
+      cost: rescaledCost,
     }
 
     const rowsByUnit = new Map(sellingUnits.map((row) => [normalizeUnitKey(row.unit), row]))
@@ -539,7 +543,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         conversion: templateUnit.conversion,
         price: existing?.isPriceManual
           ? existing.price
-          : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), Number(templateUnit.conversion), Number(template.conversionQuantity)),
+          : deriveSellingPrice(Number(rescaledCost), Number(form.profitMargin), Number(templateUnit.conversion), Number(template.conversionQuantity)),
         isPriceManual: Boolean(existing?.isPriceManual),
         wholesalePrice: Number(existing?.wholesalePrice) || 0,
       }
@@ -656,7 +660,7 @@ export default function ProductModal({ mode, product, categories = defaultCatego
     })
   }
 
-  const baseUnitCost = Number(form.conversionQuantity) > 0 ? Number(form.cost) / Number(form.conversionQuantity) : Number(form.cost)
+  const baseUnitCost = deriveBaseUnitCost(Number(form.cost), Number(form.conversionQuantity)) || Number(form.cost) || 0
   // Mirrors submit()'s savedProductPrice exactly (line ~611-613) -- this is
   // the actual price that will be saved and charged at the register, not
   // just the cost*margin formula. Previously this always recomputed from
@@ -799,6 +803,12 @@ export default function ProductModal({ mode, product, categories = defaultCatego
             onChange={(e) => setFormNumberValue('cost', e.target.value)}
             onBlur={(e) => setFormValue('cost', formatPriceInput(e.target.value))}
           />
+          {form.hasMultipleUnits ? (
+            <small>
+              = PHP {baseUnitCost.toFixed(2)} per {form.unit || 'base unit'} (this cost is split across all {form.conversionQuantity || 1} {unitLabel(form.unit, form.conversionQuantity)} in 1 {form.purchaseUnit || 'purchase unit'}.
+              This automatically rescales to keep that per-{form.unit || 'unit'} cost the same whenever you change the units-per-{form.purchaseUnit || 'purchase unit'} or apply a Unit Template — double-check the number above still matches what you actually paid).
+            </small>
+          ) : null}
         </div>
 
         <div className="field">

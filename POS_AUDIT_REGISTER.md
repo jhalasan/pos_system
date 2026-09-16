@@ -1740,3 +1740,72 @@ it out with an unverified change.
 established pattern already excludes from plain-`node --test` coverage due to `import.meta.env` at
 module scope; verified instead via `npm run lint` (0 errors, same 3 pre-existing warnings) and both
 `npm run build`/`npm run build:cashier`, both clean), `npm run test:vercel` 7/7 unaffected.
+
+---
+
+## Live-support fix, 2026-09-16 (client-reported margin/price miscalculation in Product Management)
+
+Client report: setting a product's margin to a normal value (e.g. 7%) sometimes produced an
+obviously-wrong price, and reopening the product later showed the margin as 300%+ instead of what
+was set — described as "the percentage got bigger and the price got smaller."
+
+**M29. HIGH — ✅ FIXED. `ProductModal.jsx`'s Cost field silently changes what number it means
+(per-base-unit vs. per-purchase-unit) whenever the unit conversion structure changes, without
+rescaling the value already typed in it — corrupting every margin/price calculation downstream.**
+`cost` is always treated as "the cost of one whole purchase-unit batch" —
+`baseUnitCost = cost / conversionQuantity` (`deriveBaseUnitCost`). That's internally consistent
+only as long as `conversionQuantity` doesn't change out from under an already-entered cost. It
+does, in two ordinary admin actions, neither of which touched `cost`:
+- **Applying a Unit Template** (e.g. "Cigarette: Ream > Pack > Stick" sets `conversionQuantity` to
+  200) — `applyUnitTemplate` swapped `conversionQuantity` into the form with no adjustment to
+  `cost`.
+- **Toggling "Multiple Selling Units"** on a Stick/Ream product — `defaultPurchaseConversion` jumps
+  `conversionQuantity` from 1 to 200 the same way; turning it back off didn't reset
+  `conversionQuantity` to 1 in the live form either (only at submit-time), so the form's own
+  displayed price/margin stayed wrong even after unchecking the box.
+Concretely: an admin enters cost while the product still reads as single-unit (cost meaning "per
+stick"), then applies the cigarette template. The same number is now read as "cost of an entire
+ream of 200 sticks" — the effective per-stick cost used for every calculation drops to 1/200th of
+reality. Setting margin to 7% against that phantom cost produces an absurdly low price; when the
+admin then manually types in the price they know is correct, `deriveImpliedMargin` back-solves the
+margin against the same deflated cost and produces exactly the "300%+" (in the worst case, far
+higher) reading reported. Verified numerically in the new test suite: cost=10 entered pre-template,
+conversionQuantity jumps to 200 post-template → corrupted per-stick cost of ₱0.05 (200x too low) →
+a normal-looking manual price of ₱3.50 implies a 6900% margin.
+Fix: new `rescaleCostForConversionChange(costValue, oldConversionQuantity, newConversionQuantity)`
+(`src/admin-page/utils/productMarginMath.js`) proportionally rescales `cost` whenever
+`conversionQuantity` changes, so the real per-base-unit cost the admin already entered is preserved
+across the change instead of being silently reinterpreted. Wired into every place
+`conversionQuantity` can change: `setFormValue` (unit/purchaseUnit/hasMultipleUnits-triggered
+changes, and direct "Units per Purchase Unit" edits) and `applyUnitTemplate`. Also fixed:
+turning "Multiple Selling Units" off now resets `conversionQuantity` to 1 immediately in the live
+form (matching what `submit()` already forced at save-time) instead of leaving it stale mid-edit,
+so the rescale fires consistently in both directions. A live inline hint was also added directly
+under the Cost field (previously this was only visible in the "Inventory Preview" table further
+down the form) showing the computed per-base-unit cost and stating that it auto-rescales, so a
+wrong number is visible immediately rather than discovered after saving.
+**Client decision, made explicitly when asked:** auto-rescale cost automatically (rather than only
+warning and requiring the admin to manually re-enter it) — chosen over the more conservative
+"never silently touch a money field" option, since preserving the real per-base-unit cost across a
+unit-structure change was judged more valuable than the (smaller) risk of rescaling a cost someone
+had already correctly entered as per-purchase-unit.
+
+**Also fixed in the same pass (the "vice versa" ask): editing the base unit's price directly did
+not cascade to sibling selling-unit rows.** Editing the *Margin* field already cascaded to every
+multi-unit row's price (`updateSellingRows`). But editing the base unit's own price directly in the
+Selling Units table (`updateSellingUnit`) only updated that one row and the top-level margin number
+— it never recomputed the other rows (Pack, Case, etc.) to match the newly implied margin, so
+price→margin was one-way instead of bidirectional. Fixed: `updateSellingUnit`'s base-row
+(`index === 0`) price-edit branch now recomputes every other row that isn't itself manually priced,
+using the newly implied margin, the same way a Margin-field edit already does.
+
+**Testability:** `deriveBaseUnitCost`, `deriveSellingPrice`, `deriveImpliedMargin`, and the new
+`rescaleCostForConversionChange` were extracted from `ProductModal.jsx` (which can't be imported
+under plain `node --test` — it's JSX) into a new plain module,
+`src/admin-page/utils/productMarginMath.js`, imported by both the component and the new test file.
+New `tests/product-margin-math.test.js` (10 cases): the core margin/price formulas, the exact
+pre-fix corruption reproduced numerically (documents the bug this fix closes), the rescale's
+no-op guards (unchanged conversion, invalid/zero/negative cost, mid-typing empty conversion field),
+and rescaling back down being the exact inverse of scaling up.
+`npm run test:offline` 404/404 (394 + 10 new), `npm run test:vercel` 7/7, lint clean (0 errors,
+same 3 pre-existing warnings), both `npm run build`/`npm run build:cashier` clean.
