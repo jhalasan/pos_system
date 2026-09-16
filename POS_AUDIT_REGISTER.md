@@ -1809,3 +1809,54 @@ no-op guards (unchanged conversion, invalid/zero/negative cost, mid-typing empty
 and rescaling back down being the exact inverse of scaling up.
 `npm run test:offline` 404/404 (394 + 10 new), `npm run test:vercel` 7/7, lint clean (0 errors,
 same 3 pre-existing warnings), both `npm run build`/`npm run build:cashier` clean.
+
+**Follow-up pass (same day), client asked "does Product Management behave like a true product
+management system, nothing that doesn't make sense?" — found and fixed two more real desyncs in
+the same family, both in `ProductModal.jsx`.**
+
+**M30. MEDIUM — ✅ FIXED. The Selling Units table's "purchase unit" row (the one with the largest
+conversion, e.g. the Ream row in Stick/Pack/Ream) didn't stay in sync with the top-level "Largest
+Stock Unit" and "Units per Purchase Unit" fields after initial setup.** A Unit Template rebuilds
+every row from scratch, so this was invisible through that path — but manually editing either
+top-level field on a custom (non-templated) structure left that row showing a stale unit name
+and/or conversion count. Concretely: editing "Units per Purchase Unit" from 200 to 250 (correcting
+a mistake) rescaled `cost` correctly (per M29) but left the Ream row's own `conversion` at 200, so
+its displayed/saved retail price was still computed as if a Ream held 200 sticks, silently
+underpricing it relative to what the form now said a Ream actually contained.
+Fix: `setFormValue`'s handling of `purchaseUnit`/`conversionQuantity` edits now also finds the
+selling-unit row with the largest conversion (skipping the base row) and updates its `unit` name
+and/or `conversion` to match, before the existing price-recompute step runs against the corrected
+rows. Required consolidating what were previously several independent `setSellingUnits(...)` calls
+into one per `setFormValue` invocation — two separate calls in the same update both read the same
+stale `sellingUnits` closure, so the second would have silently discarded the first's change
+instead of merging with it, now that a `conversionQuantity` edit can hit both this sync and the
+existing price-recompute step in the same call.
+
+**M31. MEDIUM — ✅ FIXED. The reverse edit direction had the identical gap: manually editing the
+purchase-unit row's own conversion number directly in the Selling Units table didn't update the
+top-level "Units per Purchase Unit" field (or rescale cost) to match.** This one was more than
+cosmetic — `form.conversionQuantity` is the figure `resolveInventoryBaseQty` uses to convert
+"Starting Stock (in purchase units)" into how many base units actually get added to inventory, so
+editing the Ream row's conversion from 200 to 250 without this fix meant stock received would keep
+being converted at the old (200) rate even though the pricing table now said a Ream held 250.
+Fix: `updateSellingUnit`'s `conversion` branch now checks whether the edited row is the current
+largest-conversion (non-base) row and, if so, updates `form.conversionQuantity` to match and
+rescales `cost` via the same `rescaleCostForConversionChange` M29 introduced — using the OLD cost
+paired with the NEW conversionQuantity (or vice versa) here would have reproduced the exact
+per-base-unit corruption M29 fixed, just triggered from this field instead of the top-level one, so
+the rescaled cost is computed once and threaded through consistently to both the form update and
+the row's own recomputed price.
+
+**Not independently unit-tested:** both fixes live inside `ProductModal.jsx`'s component closures
+(`setFormValue`/`updateSellingUnit`), not the extracted pure `productMarginMath.js` module, and
+this codebase has no React component test harness (documented precedent throughout this register
+for `Cashier.jsx` and elsewhere). Verified by direct code trace, a fresh-clone `npm run lint`
+(0 errors), and both `npm run build`/`npm run build:cashier` clean. `npm run test:offline` 404/404
+and `npm run test:vercel` 7/7 unaffected, confirming no regression in the surrounding logic.
+
+**Also checked this pass, confirmed already correct (no fix needed):** cross-product barcode
+collisions on Create/Update already throw a clean, actionable error
+(`desktopApi.js`'s `createProduct`/`updateProduct` check every barcode — including selling-unit
+barcodes, not just the primary one — against the live catalog before writing, and name the
+colliding product) rather than leaking a raw database error; the existing archived-product
+barcode-release flow in `ProductManagement.jsx` was also re-confirmed working as designed.

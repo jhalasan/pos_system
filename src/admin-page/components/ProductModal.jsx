@@ -359,12 +359,42 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         next.cost = rescaleCostForConversionChange(prev.cost, prev.conversionQuantity, next.conversionQuantity)
       }
 
+      // Every branch below that needs to change sellingUnits accumulates its
+      // change onto this one array instead of calling setSellingUnits
+      // separately -- two independent setSellingUnits(...) calls in the same
+      // update would both read the same stale closure and the second call
+      // would silently discard the first's change instead of merging with
+      // it (this matters now that a 'conversionQuantity' edit can hit both
+      // the purchase-row sync below and the price recompute further down).
+      let rows = sellingUnits
+
       if (key === 'barcode') {
-        setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, barcode: String(value || '').trim() } : row)))
+        rows = rows.map((row, index) => (index === 0 ? { ...row, barcode: String(value || '').trim() } : row))
       }
 
       if (key === 'unit') {
-        setSellingUnits((current) => current.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row)))
+        rows = rows.map((row, index) => (index === 0 ? { ...row, unit: String(value || '').trim() || 'Piece', conversion: 1 } : row))
+      }
+
+      // Keep the row in the Selling Units table that represents "1 whole
+      // purchase unit" (the one with the largest conversion -- e.g. the
+      // Ream row in Stick/Pack/Ream) in sync with the top-level Largest
+      // Stock Unit name and Units-per-Purchase-Unit fields. Picking a Unit
+      // Template already rebuilds every row from scratch; this covers the
+      // other path -- manually editing either field on a custom structure
+      // -- which previously left that row showing a stale unit name and/or
+      // conversion count that no longer matched what the rest of the form
+      // said a purchase unit actually was.
+      if ((key === 'purchaseUnit' || key === 'conversionQuantity') && rows.length > 1) {
+        let purchaseRowIndex = 1
+        for (let i = 2; i < rows.length; i += 1) {
+          if (Number(rows[i].conversion) > Number(rows[purchaseRowIndex].conversion)) purchaseRowIndex = i
+        }
+        rows = rows.map((row, idx) => (idx === purchaseRowIndex ? {
+          ...row,
+          unit: key === 'purchaseUnit' ? (String(value || '').trim() || row.unit) : row.unit,
+          conversion: key === 'conversionQuantity' ? (Number(next.conversionQuantity) || row.conversion) : row.conversion,
+        } : row))
       }
 
       if (key === 'cost' || key === 'profitMargin' || key === 'conversionQuantity') {
@@ -373,31 +403,33 @@ export default function ProductModal({ mode, product, categories = defaultCatego
         // Cost changes never do this (cost is the real, independent number;
         // see deriveImpliedMargin above for the reverse direction).
         if (key === 'profitMargin') next.isPriceManual = false
-        const { normalizedRows, baseUnitPrice } = updateSellingRows(next)
-        setSellingUnits(normalizedRows)
+        const { normalizedRows, baseUnitPrice } = updateSellingRows(next, rows)
+        rows = normalizedRows
         if (!next.isPriceManual) {
           next.price = baseUnitPrice
         }
       }
 
       if (key === 'hasMultipleUnits' && !value) {
-        setSellingUnits((current) => current.map((row, index) => (index === 0 ? {
+        rows = rows.map((row, index) => (index === 0 ? {
           ...row,
           unit: String(next.unit || 'Piece').trim() || 'Piece',
           conversion: 1,
           price: next.isPriceManual ? (Number(next.price) || 0) : deriveSellingPrice(Number(next.cost), Number(next.profitMargin), 1, Number(next.conversionQuantity)),
           isPriceManual: Boolean(next.isPriceManual),
-        } : row)))
+        } : row))
       }
 
       if (key === 'price') {
         next.isPriceManual = true
         const impliedMargin = deriveImpliedMargin(next.cost, next.conversionQuantity, value)
         if (impliedMargin !== null) next.profitMargin = impliedMargin
-        setSellingUnits((current) => current.map((row, index) => (index === 0
+        rows = rows.map((row, index) => (index === 0
           ? { ...row, price: value === '' ? '' : Number(value) || 0, isPriceManual: true }
-          : row)))
+          : row))
       }
+
+      if (rows !== sellingUnits) setSellingUnits(rows)
 
       return next
     })
@@ -488,6 +520,53 @@ export default function ProductModal({ mode, product, categories = defaultCatego
       }))
       return
     }
+    if (key === 'conversion') {
+      const normalizedConversion = value === '' ? '' : (Number(value) > 0 ? Number(value) : 1)
+
+      // Mirror of the setFormValue sync above, in the other direction: if
+      // this row is the one representing "1 whole purchase unit" (the
+      // largest conversion among the non-base rows), editing its own
+      // conversion number here is really redefining Units per Purchase
+      // Unit -- keep the top-level field (and everything derived from it:
+      // the cost rescale, and how many base units get added to inventory
+      // when a purchase unit is received) in sync with it too.
+      let purchaseRowIndex = 1
+      for (let i = 2; i < sellingUnits.length; i += 1) {
+        if (Number(sellingUnits[i].conversion) > Number(sellingUnits[purchaseRowIndex].conversion)) purchaseRowIndex = i
+      }
+      const isPurchaseRowEdit = index === purchaseRowIndex && normalizedConversion !== '' && normalizedConversion !== Number(form.conversionQuantity)
+      // Cost and conversionQuantity must move together -- using the OLD
+      // cost with the NEW conversionQuantity (or vice versa) here would
+      // reproduce the exact per-base-unit corruption this fix elsewhere
+      // closes, just triggered from this row's own conversion field instead
+      // of the top-level one.
+      const effectiveCost = isPurchaseRowEdit
+        ? rescaleCostForConversionChange(form.cost, form.conversionQuantity, normalizedConversion)
+        : Number(form.cost)
+      const effectiveConversionQuantity = isPurchaseRowEdit ? normalizedConversion : Number(form.conversionQuantity)
+
+      if (isPurchaseRowEdit) {
+        setForm((current) => ({
+          ...current,
+          conversionQuantity: normalizedConversion,
+          cost: effectiveCost,
+        }))
+      }
+
+      setSellingUnits((current) => current.map((row, idx) => {
+        if (idx !== index) return row
+        return {
+          ...row,
+          conversion: normalizedConversion,
+          price: normalizedConversion === ''
+            ? row.price
+            : deriveSellingPrice(effectiveCost, Number(form.profitMargin), normalizedConversion, effectiveConversionQuantity),
+          isPriceManual: false,
+        }
+      }))
+      return
+    }
+
     setSellingUnits((current) => current.map((row, idx) => {
       if (idx !== index) return row
       if (key === 'price') {
@@ -495,17 +574,6 @@ export default function ProductModal({ mode, product, categories = defaultCatego
           ...row,
           price: value === '' ? '' : Number(value) || 0,
           isPriceManual: true,
-        }
-      }
-      if (key === 'conversion') {
-        const normalizedConversion = value === '' ? '' : (Number(value) > 0 ? Number(value) : 1)
-        return {
-          ...row,
-          conversion: normalizedConversion,
-          price: normalizedConversion === ''
-            ? row.price
-            : deriveSellingPrice(Number(form.cost), Number(form.profitMargin), normalizedConversion, Number(form.conversionQuantity)),
-          isPriceManual: false,
         }
       }
       return { ...row, [key]: value }
