@@ -54,6 +54,11 @@ function makeFakePb() {
           },
           async create(payload) { movementCreates.push(payload); stockMovements.push(payload); return { id: `mv-${movementCreates.length}` } },
           async getList() { return { items: [] } },
+          // The existing-movement bulk pre-check now uses getFullList (via
+          // fetchByIdChunks) -- same "always empty" behavior as getList
+          // above, for the same reason (passthrough filter() can't do a real
+          // per-reference lookup here).
+          async getFullList() { return [] },
         }
       }
       if (name === 'activity_logs') {

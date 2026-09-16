@@ -1,4 +1,5 @@
 import { toMillis, fromMillis, quantizeQty } from './quantity.js'
+import { fetchByIdChunks } from './fetchByIdChunks.js'
 
 // Reconciliation reads only a bounded, recent window of movements rather than
 // a product's entire lifetime — this is the single biggest remaining
@@ -53,31 +54,28 @@ export async function findStockMovement(pb, productId, referenceId) {
 // first time), which masked the real failure sitting one step further in.
 // Chunking the reference IDs into small batches keeps every single filter
 // comfortably under any plausible server-side length limit, regardless of
-// how many lines a sale has.
+// how many lines a sale has. Uses the same fetchByIdChunks helper as the
+// admin dashboard/receipts fetch, which bisected PocketBase's real limit
+// live (100 short ids / 3,096 chars succeeded, 150 / 4,646 chars was
+// rejected) rather than guessing at one -- this chunk size was originally a
+// guessed 20 against an unconfirmed ~2000-char ceiling, which real
+// reference ids ("sale:<uuid>:<uuid>", ~95 chars once wrapped in a clause)
+// put at ~1976 characters for 20 of them: uncomfortably close to a mere
+// guess. 20 of these longer ids lands at ~1880 characters -- safely under
+// the confirmed-working 3,096-char boundary, with real margin instead of a
+// coincidence.
 const REFERENCE_LOOKUP_CHUNK_SIZE = 20
 
 export async function findExistingStockMovementsByReference(pb, referenceIds = []) {
   const uniqueReferenceIds = [...new Set(referenceIds.filter(Boolean))]
   if (!uniqueReferenceIds.length) return new Map()
 
+  const movements = await fetchByIdChunks(pb, 'stock_movements', 'reference_id', uniqueReferenceIds, {
+    chunkSize: REFERENCE_LOOKUP_CHUNK_SIZE,
+  })
+
   const found = new Map()
-  for (let start = 0; start < uniqueReferenceIds.length; start += REFERENCE_LOOKUP_CHUNK_SIZE) {
-    const chunk = uniqueReferenceIds.slice(start, start + REFERENCE_LOOKUP_CHUNK_SIZE)
-    const filter = chunk
-      .map((referenceId) => pb.filter('reference_id = {:referenceId}', { referenceId }))
-      .join(' || ')
-
-    // getList (not getFullList) to match the bounded-read convention already
-    // established by reconcileProductStock above -- a single chunk never has
-    // more lines than this page size, so one page per chunk is always enough.
-    const { items: movements } = await pb.collection('stock_movements').getList(1, 200, {
-      filter,
-      requestKey: null,
-    })
-
-    for (const movement of movements) found.set(movement.reference_id, movement)
-  }
-
+  for (const movement of movements) found.set(movement.reference_id, movement)
   return found
 }
 

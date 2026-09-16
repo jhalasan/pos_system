@@ -10,6 +10,7 @@ import {
   rememberPocketBaseRateLimit,
 } from '../../utils/pocketbaseRateLimit'
 import { findExistingStockMovementsByReference, reconcileProductStock } from '../../utils/stockMovementReconciler'
+import { fetchByIdChunks } from '../../utils/fetchByIdChunks'
 import { activityLogPayloadForSync, minimalActivityLogPayload } from './activityLogSync'
 import { quantizeQty } from '../../utils/quantity'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
@@ -143,19 +144,33 @@ function saleActivityDetail(sale) {
 // productId the sale already has, and at most one catalog fetch (only if at
 // least one line still needs the barcode fallback afterward), shared across
 // every line that needs it.
+// Same class of bug as findExistingStockMovementsByReference in
+// stockMovementReconciler.js (see its comment): a single OR-chained filter
+// with one clause per distinct product, unbounded, can exceed PocketBase's
+// own filter-length ceiling on a large/diverse cart and come back a 400.
+// This was previously swallowed by a per-request .catch(() => []) (so it
+// never crashed an upload the way the stock-movement one did), but it still
+// hit the server and logged a "max filter length limit reached" error on
+// every large cart, then silently forced every item into the slower
+// full-catalog barcode-fallback path. Now uses the same fetchByIdChunks
+// helper as the admin dashboard/receipts fetch and findExistingStockMovementsByReference
+// above, which bisected PocketBase's real filter-length limit live (100
+// short ids / 3,096 chars succeeded, 150 / 4,646 chars was rejected) instead
+// of guessing at one. Product ids are the same short, fixed-length
+// PocketBase ids fetchByIdChunks's own default chunkSize (80) was tuned
+// against, so the default is used as-is here.
 async function resolveSaleItemProductIds(pb, items) {
   const declaredProductIds = [...new Set(
     items.map((item) => String(item.productId || '').trim()).filter(Boolean),
   )]
 
-  const verifiedProductIds = new Set()
-  if (declaredProductIds.length) {
-    const filter = declaredProductIds
-      .map((productId) => pb.filter('id = {:productId}', { productId }))
-      .join(' || ')
-    const found = await pb.collection('products').getFullList({ filter, requestKey: null }).catch(() => [])
-    for (const product of found) verifiedProductIds.add(String(product.id))
-  }
+  // Preserves the original fail-soft behavior: a lookup failure here (rate
+  // limit, network blip, still-oversized filter on some edge case) must fall
+  // back to barcode matching below, never abort the whole sale upload.
+  const found = declaredProductIds.length
+    ? await fetchByIdChunks(pb, 'products', 'id', declaredProductIds).catch(() => [])
+    : []
+  const verifiedProductIds = new Set(found.map((product) => String(product.id)))
 
   const resolved = items.map((item) => {
     const declared = String(item.productId || '').trim()

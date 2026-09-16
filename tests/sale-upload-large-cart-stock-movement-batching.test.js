@@ -73,7 +73,14 @@ function makeCountingFakePb({ products = [] } = {}) {
       if (name === 'stock_movements') {
         return {
           async getFirstListItem() { const err = new Error('not found'); err.status = 404; throw err },
-          async getList(page, perPage, { filter }) {
+          // reconcileProductStock's own windowed reads still use getList,
+          // separate from the getFullList-based existing-movement pre-check
+          // below -- unaffected by this test, just needs to exist and stay
+          // out of the way.
+          async getList() {
+            return { items: [] }
+          },
+          async getFullList({ filter }) {
             counts.stockMovementsGetList += 1
             filterLengthsSeen.push(filter.length)
             // Emulate PocketBase's own real-world safeguard: reject any
@@ -86,10 +93,9 @@ function makeCountingFakePb({ products = [] } = {}) {
               throw err
             }
             const referenceIds = [...filter.matchAll(/reference_id = '([^']+)'/g)].map((m) => m[1])
-            const items = referenceIds
+            return referenceIds
               .map((referenceId) => movementsByReference.get(referenceId))
               .filter(Boolean)
-            return { items }
           },
           async create(payload) {
             counts.stockMovementsCreate += 1

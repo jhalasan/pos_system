@@ -80,6 +80,7 @@ function makeFakePb({ existingSaleRecord }) {
           },
           async create() { return { id: 'movement0000001' } },
           async getList() { return { items: [] } },
+          async getFullList() { return [] },
         }
       }
       if (name === 'activity_logs') {

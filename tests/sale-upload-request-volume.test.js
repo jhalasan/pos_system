@@ -66,11 +66,19 @@ function makeCountingFakePb({ products = [] } = {}) {
         return {
           // No Stock Count ever recorded for these products -- reconcile
           // falls back to its windowed heuristic, which is exercised via
-          // getList below (not counted separately here).
+          // getList below (not counted separately here). getFullList is the
+          // existing-movement bulk pre-check (findExistingStockMovementsByReference,
+          // via fetchByIdChunks) -- both share the same counter, matching
+          // what it tracked before that pre-check moved from getList to
+          // getFullList.
           async getFirstListItem() { const err = new Error('not found'); err.status = 404; throw err },
           async getList() {
             counts.stockMovementsGetList += 1
             return { items: [] }
+          },
+          async getFullList() {
+            counts.stockMovementsGetList += 1
+            return []
           },
           async create(payload) {
             counts.stockMovementsCreate += 1

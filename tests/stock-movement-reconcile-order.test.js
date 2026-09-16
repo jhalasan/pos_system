@@ -106,7 +106,7 @@ test('returns an empty map without a request when there are no reference ids', a
     filter: (str) => str,
     collection() {
       calls += 1;
-      return { async getList() { return { items: [] }; } };
+      return { async getFullList() { return []; } };
     },
   };
   const result = await findExistingStockMovementsByReference(pb, []);
@@ -121,8 +121,8 @@ test('makes exactly one request regardless of how many reference ids are asked f
     collection() {
       calls += 1;
       return {
-        async getList() {
-          return { items: [{ reference_id: 'sale:s1:line-a', id: 'mv1' }] };
+        async getFullList() {
+          return [{ reference_id: 'sale:s1:line-a', id: 'mv1' }];
         },
       };
     },
@@ -130,7 +130,7 @@ test('makes exactly one request regardless of how many reference ids are asked f
   const result = await findExistingStockMovementsByReference(pb, [
     'sale:s1:line-a', 'sale:s1:line-b', 'sale:s1:line-c',
   ]);
-  assert.equal(calls, 1, 'one bulk request, not one per reference id');
+  assert.equal(calls, 1, 'one bulk request, not one per reference id (well under the chunk size)');
   assert.equal(result.get('sale:s1:line-a')?.id, 'mv1');
   assert.equal(result.has('sale:s1:line-b'), false);
 });
@@ -141,9 +141,9 @@ test('deduplicates repeated reference ids before building the request', async ()
     filter: (str) => str,
     collection() {
       return {
-        async getList(_page, _perPage, options) {
+        async getFullList(options) {
           requestedFilter = options.filter;
-          return { items: [] };
+          return [];
         },
       };
     },
@@ -161,7 +161,7 @@ test('a request failure propagates rather than silently reporting "nothing found
   const pb = {
     filter: (str) => str,
     collection() {
-      return { async getList() { throw new Error('network blip'); } };
+      return { async getFullList() { throw new Error('network blip'); } };
     },
   };
   await assert.rejects(
