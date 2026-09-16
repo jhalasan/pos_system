@@ -2097,17 +2097,21 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const verifyDiscountApproval = async (override = {}) => {
+    if (discountApproval.loading) return;
     const payload = override.code ? { code: String(override.code || '').trim() } : override.email ? { email: String(override.email || '').trim(), password: override.password } : discountApproval.getPayload();
+    if (!payload.code && (!payload.email || !payload.password)) {
+      discountApproval.setError('Invalid approval method.');
+      return;
+    }
+    discountApproval.setLoading(true);
     try {
-      if (!payload.code && (!payload.email || !payload.password)) {
-        discountApproval.setError('Invalid approval method.');
-        return;
-      }
       await cashierApi.authorizeVoid(payload);
       setDiscountApproved(true);
       discountApproval.setError('');
     } catch (err) {
       discountApproval.setError(err.message || 'Invalid manager approval code.');
+    } finally {
+      discountApproval.setLoading(false);
     }
   };
 
@@ -4106,9 +4110,9 @@ const Cashier = ({ onLogout, user }) => {
               fullWidth
               className={styles['complete-button']}
               onClick={handleCompleteTransaction}
-              disabled={cartItems.length === 0 || isLockedTxn}
+              disabled={cartItems.length === 0 || isLockedTxn || !can('process_sales')}
             >
-              {isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : withShortcut('Complete Transaction', 'completeTransaction'))}
+              {!can('process_sales') ? 'No Permission to Process Sales' : (isVoidedTxn ? 'Transaction Voided' : (isCompletedTxn ? 'Transaction Completed' : withShortcut('Complete Transaction', 'completeTransaction')))}
             </Button>
 
             {isCompletedTxn && !isVoidedTxn && (
@@ -4531,8 +4535,8 @@ const Cashier = ({ onLogout, user }) => {
               Cancel
             </button>
             {!discountApproved ? (
-              <button className="btn btn-primary" onClick={verifyDiscountApproval}>
-                Verify
+              <button className="btn btn-primary" onClick={verifyDiscountApproval} disabled={discountApproval.loading}>
+                {discountApproval.loading ? 'Verifying…' : 'Verify'}
               </button>
             ) : (
               <button className="btn btn-success" onClick={() => {
@@ -4571,6 +4575,7 @@ const Cashier = ({ onLogout, user }) => {
               password: discountApproval.password,
               setPassword: discountApproval.setPassword,
               onSubmit: verifyDiscountApproval,
+              disabled: discountApproval.loading,
             })}
           </>
         ) : (

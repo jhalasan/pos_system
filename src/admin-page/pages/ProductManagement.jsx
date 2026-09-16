@@ -73,7 +73,9 @@ export default function ProductManagement() {
   useEffect(() => {
     const handleSyncStatus = (event) => {
       if (event.detail?.state !== 'succeeded') return
-      void api.products().then(setList).catch(() => {})
+      void api.products().then(setList).catch(() => {
+        flash('Product list could not refresh after sync — showing the last loaded data.')
+      })
     }
     globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus)
     return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus)

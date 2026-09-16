@@ -154,6 +154,11 @@ export default function CashierManagement() {
       return
     }
 
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      setFormError('Enter a valid email address.')
+      return
+    }
+
     if (!isEdit && !form.password.trim()) {
       setFormError(`Password is required for new ${staffNoun.toLowerCase()}s.`)
       return

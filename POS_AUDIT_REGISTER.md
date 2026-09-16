@@ -1630,3 +1630,113 @@ New tests in `tests/admin-stock-op-idempotency.test.js`: reproduces the exact pr
 real concurrent race produces) for all three op types, asserting the local cache lands on the
 correctly-reconciled total, not the pre-reconcile write result. `npm run test:offline` 352/352,
 lint and all three builds clean.
+
+---
+
+## Full-system audit, 2026-09-16 (client request: audit both apps front-to-back before calling
+this release-ready)
+
+Three parallel read-only reviews (frontend UX/forms/error-states, a fresh security spot-check,
+and a gap review of the 8 commits landed since M28 plus the still-open SUPER COW STRAWBERRY
+stock-discrepancy lead), each scoped to skip everything already covered above. Baseline going in:
+`npm run test:offline` 394/394, `npm run test:vercel` 7/7, lint clean (0 errors), all three builds
+clean.
+
+**Fixed this pass:**
+
+- **Discount approval "Verify" had no double-submit guard.** `Cashier.jsx`'s
+  `verifyDiscountApproval` set no busy flag and the "Verify" button had no `disabled` — the same
+  double-tap class of bug M6 already fixed for cash-flow/void, missed on this one approval flow. A
+  double-click fired two concurrent `authorizeVoid` calls. Fix: reused the `loading` state the
+  `useApproval` hook already exposes (was declared but never wired up here) — guarded the function
+  with an early return while loading, wrapped the call in `setLoading(true)`/`finally
+  setLoading(false)`, disabled the "Verify" button (shows "Verifying…"), and passed
+  `disabled: discountApproval.loading` into `renderApprovalFields` so the barcode/email/password
+  inputs lock during the request too, matching every other approval flow in this file.
+- **"Complete Transaction" wasn't disabled for a cashier lacking `process_sales`.** The permission
+  check (`can('process_sales')`) only ran inside `openPaymentFlow`, after the click — a restricted
+  cashier could fill a full cart before being told no. Fix: added `!can('process_sales')` to the
+  button's `disabled` condition and swapped its label to "No Permission to Process Sales" in that
+  state, so the restriction is visible before the cashier invests time in a cart. `openPaymentFlow`'s
+  own check is unchanged and still the authoritative gate — this closes the accidental UX gap, not
+  a new enforcement layer (see S10's note on this file for why a full server-side permission system
+  is a separate, larger design question on this offline-first desktop app).
+- **`ProductManagement.jsx`'s post-sync product-list refresh silently swallowed any fetch error.**
+  `.then(setList).catch(() => {})` meant a failed refresh left the admin looking at a stale list
+  with zero indication anything went wrong (the initial page load already surfaces errors correctly
+  via `useApi` — this was a regression only on the sync-triggered refresh path). Fix: routed the
+  catch through the existing `flash()` toast helper this file already uses everywhere else.
+- **Dead code landmine removed: `src/admin-page/services/cloud.js`'s `updateProductStock()`** wrote
+  a product's `quantity` straight to PocketBase with no accompanying `stock_movements` record —
+  exactly the shape of bug that would reproduce the still-unresolved, untracked SUPER COW
+  STRAWBERRY stock gap (see the memory entry: declared 6, actual 0, no movement trail) the moment
+  anyone wired it into a UI action. Confirmed via a repo-wide grep it has zero callers anywhere
+  (including tests) — not the cause of that historical incident (nothing calls it), but a genuine
+  future risk. Deleted outright rather than fixed in place, since dead code with no test coverage
+  and no caller is a landmine either way; if a "quick stock edit" feature is wanted later, it should
+  be built calling `createStockMovement`/the existing reconciler, not this. Also removed the now-
+  unused `quantizeQty` import this function was the only consumer of.
+- **No client-side email-format validation on the Staff Management form.**
+  `CashierManagement.jsx`'s `saveCashier` only checked `email.trim()` was non-empty; any string
+  (e.g. `"abc"`) passed through to a raw PocketBase validation error. Added a standard
+  `^[^\s@]+@[^\s@]+\.[^\s@]+$` format check with a clear client-side message before the request is
+  made.
+
+**Investigated and confirmed NOT an issue (no fix made):**
+
+- The security spot-check flagged `src-tauri/tauri.conf.json`'s CSP hardcoding
+  `http://192.168.0.114:8090` as a leaked internal IP. Cross-checked against `LOCAL_SERVER_SETUP.md`
+  and the [[pockethost-rate-limit-hosting-decision]]/local-server migration: this is the real,
+  currently-live LAN address of the shop's mini-PC PocketBase host, deliberately present so desktop
+  terminals talk to it directly over the LAN (fast, and keeps working if the shop's internet drops) —
+  not a stray leftover. Removing it would have broken the primary connectivity path for both live
+  terminals. Left as-is.
+- All 8 commits since M28 (`9c08ad0` periodic session refresh, `a2996f9` Z-read/shift-close merge,
+  `8a6027b`/`03e1c89` chunked stock-movement lookups, `e5c223f` filter-batching hardening, `eab43b5`
+  unpickable-search-result fix, `afa701d` Peak Protection removal) were reviewed diff-by-diff — all
+  correct, no regressions. The Peak Protection removal left zero dangling references anywhere in the
+  repo (grepped case-insensitively for every spelling).
+
+**New finding, not yet fixed — deliberately not touched this pass, needs the client's sign-off
+before changing live infrastructure:**
+
+**S11. HIGH — Any authenticated cashier token can void/refund/edit *any* sale directly against
+PocketBase, with no ownership scoping and no server-side proof that manager approval actually
+happened.** `pocketbase/pb_schema.json`'s `sales.updateRule` is
+`'@request.auth.role = "cashier" || @request.auth.role = "admin"'` — deliberately broad today
+because the business model requires it: any cashier logged in at any terminal needs to be able to
+process a void/refund on a sale rung up by a *different* cashier or a prior shift, so a
+`cashier_id = @request.auth.id`-style ownership scope would break that legitimate flow, not just
+close the gap. `syncEngine.js`'s `adjustCompletedSale`/`voidCompletedSale` write void/refund fields
+(`status`, `refunded_amount`, `refunded_units`, `voided_by`) straight to PocketBase using the
+cashier's own token — the manager-approval barcode/password gate (S1) is enforced entirely
+client-side before this call fires; nothing at the PocketBase rule layer can currently verify that
+approval actually happened. A valid (or stolen/replayed) cashier session token used directly against
+the PocketBase SDK/REST API, bypassing the app's UI, could void or alter the refunded amount on any
+sale at any terminal.
+**Why this wasn't fixed live this pass:** this is the same class of residual risk S10 already
+documented and explicitly accepted as inherent to this app's offline-first, thick-client
+architecture — no client-side code change can fully close a determined devtools-console bypass, and
+this store's two terminals depend on PocketBase writes working even when the Express server isn't
+reachable (see S1's own regression history: routing cashier auth through the server broke desktop
+barcode login in this exact deployment topology once). A real fix needs one of:
+  1. A PocketBase server-side hook (`pb_hooks/*.pb.js`, supported by self-hosted PocketBase v0.23+,
+     which this deployment already runs per the local-mini-PC migration) that verifies a
+     short-lived, server-issued approval token before allowing a void/refund-shaped update — a real
+     feature to design and test against the live self-hosted instance, not a one-line rule edit.
+  2. Or narrowing `updateRule` with an `@request.body`-based expression that at least constrains
+     *which* fields a cashier-role token can change and to what values — PocketBase's rule language
+     can partially do this, but getting the expression exactly right for every legitimate
+     void/refund/exchange shape without an accessible way to test it against the live production
+     schema first is a real risk of breaking checkout for both working terminals if wrong.
+Both options are live-infrastructure changes to a production PocketBase instance this session has
+no safe way to test against without risking real checkout downtime for an operating 2-cashier store
+— consistent with how this register already handles this category of decision (see M1/S2's schema
+migrations, deliberately left for the client to run with confirmation at each step, and S10's
+explicit acceptance of the analogous residual risk). Flagging as the top follow-up item, not closing
+it out with an unverified change.
+
+`npm run test:offline` 394/394 (unchanged — these are UI-wiring fixes in files this codebase's
+established pattern already excludes from plain-`node --test` coverage due to `import.meta.env` at
+module scope; verified instead via `npm run lint` (0 errors, same 3 pre-existing warnings) and both
+`npm run build`/`npm run build:cashier`, both clean), `npm run test:vercel` 7/7 unaffected.
