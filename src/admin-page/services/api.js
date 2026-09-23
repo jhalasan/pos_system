@@ -145,6 +145,7 @@ const webApi = {
   createProduct: (data) => request('/products', { method: 'POST', body: productBody(data) }),
   updateProduct: (id, data) => request(`/products/${id}`, { method: 'PATCH', body: productBody(data) }),
   deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
+  productStockMovements: (id, { page = 1, perPage = 50 } = {}) => request(`/products/${id}/stock-movements?page=${page}&perPage=${perPage}`),
   scanInventory: (data) => request('/inventory/scan', { method: 'POST', body: JSON.stringify(data) }),
   stockOutInventory: (data) => request('/inventory/stock-out', { method: 'POST', body: JSON.stringify(data) }),
   adjustInventoryCount: (data) => request('/inventory/adjust-count', { method: 'POST', body: JSON.stringify(data) }),

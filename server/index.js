@@ -1090,6 +1090,50 @@ app.get('/api/products', asyncRoute(async (_req, res) => {
   res.json(records.map(toProduct))
 }))
 
+// Per-item stock ledger: every stock_movements row already carries its own
+// previous_quantity/new_quantity, so this is a straight paginated read, not
+// a running-balance computation -- see stock_movements' schema comment in
+// pocketbase/pb_schema.json. Requested by the client to trace a physical
+// vs. system count mismatch on a specific product; Transaction Logs' product
+// filter only surfaces whole receipts containing the item, not an isolated
+// in/out trail for it.
+app.get('/api/products/:id/stock-movements', asyncRoute(async (req, res) => {
+  const productId = String(req.params.id || '').trim()
+  if (!productId) return res.status(400).json({ error: 'Product id is required.' })
+
+  const page = Math.max(1, Number(req.query?.page) || 1)
+  const perPage = Math.min(100, Math.max(1, Number(req.query?.perPage) || 50))
+
+  const collection = await pbCollection('stock_movements')
+  const result = await collection.getList(page, perPage, {
+    filter: pb.filter('product_id = {:productId}', { productId }),
+    sort: '-created_at,-created',
+    expand: 'user_id',
+  })
+
+  res.json({
+    page: result.page,
+    perPage: result.perPage,
+    totalItems: result.totalItems,
+    totalPages: result.totalPages,
+    movements: result.items.map((movement) => {
+      const actor = Array.isArray(movement.expand?.user_id) ? movement.expand.user_id[0] : movement.expand?.user_id
+      return {
+        id: movement.id,
+        type: movement.movement_type || '',
+        quantity: Number(movement.quantity) || 0,
+        previousQuantity: Number(movement.previous_quantity) || 0,
+        newQuantity: Number(movement.new_quantity) || 0,
+        referenceType: movement.reference_type || '',
+        referenceId: movement.reference_id || '',
+        notes: movement.notes || '',
+        userName: actor?.name || actor?.email || '',
+        createdAt: movement.created_at || movement.created || '',
+      }
+    }),
+  })
+}))
+
 app.get('/api/categories', asyncRoute(async (_req, res) => {
   const records = await listRecords('categories', '?sort=name&perPage=500')
   res.json(records.map((record) => ({
@@ -1687,6 +1731,7 @@ app.post('/api/inventory/scan', asyncRoute(async (req, res) => {
     newQuantity: nextQty,
     referenceType: 'inventory_scan',
     notes: `Stock in by ${barcode ? `barcode ${barcode}` : `${qty} ${req.body.unitLabel || 'unit(s)'}`}`,
+    userId: req.adminUser?.id,
   })
   await createLog({ action: 'Stock Update', detail: `Added ${movementQty} base unit(s) to "${record.name}"` })
   res.json(toProduct(updated))
@@ -1728,6 +1773,7 @@ app.post('/api/inventory/stock-out', asyncRoute(async (req, res) => {
     newQuantity: nextQty,
     referenceType: 'stock_out',
     notes: `${reason}${note ? ` (${note})` : ''}`,
+    userId: req.adminUser?.id,
   })
   await createLog({
     action: 'Stock Out',
@@ -2349,7 +2395,7 @@ app.post('/api/inventory/adjust-count', asyncRoute(async (req, res) => {
   const delta = quantizeQty(countedQty - previousQty)
   if (!delta) return res.status(409).json({ error: 'Physical count already matches system stock.' })
   const updated = await products.update(record.id, { quantity: numberFieldValue(countedQty) }, { expand: 'category' })
-  await createStockMovement({ productId: record.id, movementType: 'adjustment', quantity: Math.abs(delta), previousQuantity: previousQty, newQuantity: countedQty, referenceType: 'physical_count', notes: `${reason}${note ? ` (${note})` : ''}` })
+  await createStockMovement({ productId: record.id, movementType: 'adjustment', quantity: Math.abs(delta), previousQuantity: previousQty, newQuantity: countedQty, referenceType: 'physical_count', notes: `${reason}${note ? ` (${note})` : ''}`, userId: req.adminUser?.id })
   await createLog({ action: 'Inventory Adjustment', detail: `Adjusted "${record.name}" from ${previousQty} to ${countedQty} (${reason})${note ? ` - ${note}` : ''}` })
   res.json(toProduct(updated))
 }))

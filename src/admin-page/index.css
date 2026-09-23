@@ -2788,6 +2788,9 @@ table.data tbody tr.unit-breakdown-row:hover {
 .data-admin-log.error { color: #fecaca; }
 .reconciliation-form { display: grid; gap: 14px; max-width: 760px; }
 .reconciliation-variance { padding: 12px; border-radius: 8px; background: var(--surface-muted, #f8fafc); }
+.history-current-stock { padding: 10px 12px; border-radius: 8px; background: var(--surface-muted, #f8fafc); margin: 12px 0; }
+.qty-increase { color: #15803d; font-weight: 600; }
+.qty-decrease { color: #b91c1c; font-weight: 600; }
 .bulk-product-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 
 .dashboard-control-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px; margin-bottom: 16px; }

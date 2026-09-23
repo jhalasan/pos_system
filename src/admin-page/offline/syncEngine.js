@@ -273,6 +273,7 @@ async function createStockMovement(pb, product, op, previousQuantity, nextQuanti
     reference_type: op.type,
     reference_id: op.id,
     notes: op.payload?.note || op.payload?.reason || '',
+    user_id: op.payload?.userId || '',
     created_at: new Date().toISOString(),
   }, {
     requestKey: `stock-movement:${op.id}`,

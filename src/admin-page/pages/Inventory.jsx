@@ -7,7 +7,7 @@ import ProductModal from '../components/ProductModal'
 import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTrash, IconDownload, IconPrint } from '../components/Icons'
 import { api, defaultCategories, peso, statusLabel } from '../services/api'
 import { useApi } from '../hooks/useApi'
-import { exportCsv } from '../utils/exportCsv'
+import { exportCsv, safeFilenamePart } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { buildStockOutText, printStockOutRecords } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
@@ -53,6 +53,37 @@ function productMatchesQuery(product, query) {
       String(unit.barcode || '').toLowerCase().includes(q)
       || String(unit.unit || '').toLowerCase().includes(q)
     ))
+}
+
+// Mirrors the movement_type select values configured on the stock_movements
+// collection (see scripts/configure-pocketbase-rules.mjs).
+const movementTypeLabels = {
+  stock_in: 'Stock In',
+  stock_out: 'Stock Out',
+  adjustment: 'Count Adjustment',
+  sale: 'Sale',
+  void_return: 'Void Return',
+  refund_return: 'Refund Return',
+  exchange_return: 'Exchange Return',
+}
+
+function movementTypeLabel(type) {
+  return movementTypeLabels[type] || (type ? type.replace(/_/g, ' ') : 'Movement')
+}
+
+function movementIsDecrease(type) {
+  return type === 'stock_out' || type === 'sale'
+}
+
+function formatHistoryDate(value) {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('en-PH', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 
 function scannedUnitLabel(product, barcode) {
@@ -219,6 +250,13 @@ export default function Inventory() {
   const [reconcileReason, setReconcileReason] = useState('cycle-count')
   const [reconcileNote, setReconcileNote] = useState('')
   const [reconciling, setReconciling] = useState(false)
+  const [historyProductId, setHistoryProductId] = useState('')
+  const [historySearch, setHistorySearch] = useState('')
+  const [historyMovements, setHistoryMovements] = useState([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [historyPage, setHistoryPage] = useState(0)
+  const [historyTotalPages, setHistoryTotalPages] = useState(0)
 
   // Total Products / low-stock alerts / stock value only count the active
   // catalog (see src/utils/productLifecycle.js) -- an archived or deleted
@@ -287,6 +325,13 @@ export default function Inventory() {
       .filter((product) => !query || productMatchesQuery(product, query))
       .sort((a, b) => a.name.localeCompare(b.name))
   }, [products, reconcileSearch])
+  const historySearchProducts = useMemo(() => {
+    const query = historySearch.trim()
+    return [...products]
+      .filter((product) => !query || productMatchesQuery(product, query))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }, [products, historySearch])
+  const historyProduct = useMemo(() => products.find((item) => item.id === historyProductId) || null, [products, historyProductId])
   const reconcileProduct = useMemo(() => products.find((item) => item.id === reconcileProductId) || null, [products, reconcileProductId])
   const reconcileUnitOptions = useMemo(() => reconcileProduct ? normalizeSellingUnits(reconcileProduct) : [], [reconcileProduct])
   const selectedReconcileUnit = useMemo(() => reconcileProduct ? unitFromOption(reconcileProduct, reconcileUnit) : null, [reconcileProduct, reconcileUnit])
@@ -351,6 +396,49 @@ export default function Inventory() {
     } finally {
       setReconciling(false)
     }
+  }
+
+  async function loadHistoryPage(productId, page) {
+    if (!productId) return
+    setHistoryLoading(true)
+    setHistoryError('')
+    try {
+      const result = await api.productStockMovements(productId, { page, perPage: 50 })
+      setHistoryMovements((current) => (page <= 1 ? result.movements : [...current, ...result.movements]))
+      setHistoryPage(result.page)
+      setHistoryTotalPages(result.totalPages)
+    } catch (err) {
+      setHistoryError(err.message || 'Unable to load stock history.')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  function selectHistoryProduct(productId) {
+    setHistoryProductId(productId)
+    setHistoryMovements([])
+    setHistoryPage(0)
+    setHistoryTotalPages(0)
+    setHistoryError('')
+    if (productId) void loadHistoryPage(productId, 1)
+  }
+
+  async function handleExportHistory() {
+    if (!historyProduct || !historyMovements.length) return
+    const result = await exportCsv(`stock-history-${safeFilenamePart(historyProduct.name)}.csv`, [
+      ['Date / Time', 'Type', 'Qty Change', 'Previous Qty', 'New Qty', 'Reference', 'By', 'Notes'],
+      ...historyMovements.map((movement) => [
+        movement.createdAt ? new Date(movement.createdAt).toLocaleString('en-PH') : '',
+        movementTypeLabel(movement.type),
+        (movementIsDecrease(movement.type) ? -1 : 1) * movement.quantity,
+        movement.previousQuantity,
+        movement.newQuantity,
+        [movement.referenceType, movement.referenceId].filter(Boolean).join(' '),
+        movement.userName || '',
+        movement.notes || '',
+      ]),
+    ], { directory: getExportLocation(exportLocationKeys.products) })
+    flash(`Stock history exported to ${result.path}.`)
   }
 
   function addToBatch(product, unit, count) {
@@ -1375,9 +1463,101 @@ export default function Inventory() {
         <button type="button" className={`scan-mode ${inventoryTab === 'reconcile' ? 'active' : ''}`} onClick={() => setInventoryTab('reconcile')}>
           Stock Count
         </button>
+        <button type="button" className={`scan-mode ${inventoryTab === 'history' ? 'active' : ''}`} onClick={() => setInventoryTab('history')}>
+          Item History
+        </button>
       </div>
 
-      {inventoryTab === 'stock-in' ? stockInScanner : inventoryTab === 'stock-out' ? stockOutScanner : (
+      {inventoryTab === 'stock-in' ? stockInScanner : inventoryTab === 'stock-out' ? stockOutScanner : inventoryTab === 'history' ? (
+        <div className="card">
+          <div className="panel-head">
+            <div>
+              <h3>Item Stock History</h3>
+              <span className="sub">Every stock-in, sale, void, and count adjustment for one product, oldest change first shown as a running balance.</span>
+            </div>
+            {historyProduct && historyMovements.length > 0 && (
+              <button type="button" className="btn btn-outline" onClick={handleExportHistory}>Export CSV</button>
+            )}
+          </div>
+          <div className="panel-body">
+            <div className="form-grid">
+              <label className="field span-2">
+                <span>Search Product</span>
+                <input
+                  className="input"
+                  type="search"
+                  value={historySearch}
+                  onChange={(event) => {
+                    const nextSearch = event.target.value
+                    const exactProduct = findProductByBarcode(products, nextSearch)
+                    setHistorySearch(nextSearch)
+                    if (exactProduct) selectHistoryProduct(exactProduct.id)
+                  }}
+                  placeholder="Search name, barcode, or selling unit"
+                />
+              </label>
+              <label className="field span-2">
+                <span>Product</span>
+                <select className="select" value={historyProductId} onChange={(event) => selectHistoryProduct(event.target.value)}>
+                  <option value="">{historySearchProducts.length ? `Select product (${historySearchProducts.length} found)…` : 'No matching products'}</option>
+                  {historySearchProducts.map((product) => <option value={product.id} key={product.id}>{product.name}{product.barcode ? ` — ${product.barcode}` : ''} — system {formatQty(product.qty)}</option>)}
+                </select>
+              </label>
+            </div>
+
+            {historyError && <div className="scan-error"><span>{historyError}</span></div>}
+
+            {historyProduct && (
+              <div className="history-current-stock">
+                Current system stock: <strong>{formatQty(historyProduct.qty)} {pluralizeUnit(historyProduct.unit, historyProduct.qty)}</strong>
+              </div>
+            )}
+
+            {historyProduct && !historyLoading && historyMovements.length === 0 && !historyError && (
+              <p className="sub">No recorded stock movements for this product yet.</p>
+            )}
+
+            {historyMovements.length > 0 && (
+              <div className="table-wrap">
+                <table className="data">
+                  <thead>
+                    <tr>
+                      <th>Date / Time</th>
+                      <th>Type</th>
+                      <th>Qty Change</th>
+                      <th>Before → After</th>
+                      <th>Reference</th>
+                      <th>By</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyMovements.map((movement) => (
+                      <tr key={movement.id}>
+                        <td>{formatHistoryDate(movement.createdAt)}</td>
+                        <td>{movementTypeLabel(movement.type)}</td>
+                        <td className={movementIsDecrease(movement.type) ? 'qty-decrease' : 'qty-increase'}>
+                          {movementIsDecrease(movement.type) ? '-' : '+'}{formatQty(movement.quantity)}
+                        </td>
+                        <td>{formatQty(movement.previousQuantity)} → {formatQty(movement.newQuantity)}</td>
+                        <td>{[movement.referenceType, movement.referenceId].filter(Boolean).join(' ') || '-'}</td>
+                        <td>{movement.userName || '-'}</td>
+                        <td>{movement.notes || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {historyProduct && historyPage > 0 && historyPage < historyTotalPages && (
+              <button type="button" className="btn btn-outline" disabled={historyLoading} onClick={() => loadHistoryPage(historyProductId, historyPage + 1)}>
+                {historyLoading ? 'Loading…' : 'Load more'}
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
         <div className="card">
           <div className="panel-head"><div><h3>Stock Count Adjustment</h3><span className="sub">Compare recorded stock with the counted quantity and adjust any difference.</span></div></div>
           <form className="panel-body reconciliation-form" onSubmit={reconcileInventory}>

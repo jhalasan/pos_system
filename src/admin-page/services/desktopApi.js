@@ -803,6 +803,51 @@ async function fetchGcashPayments() {
   return [...merged.values()].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 }
 
+// Per-item stock ledger, mirroring /api/products/:id/stock-movements
+// (server/index.js). Every stock_movements row already carries its own
+// previous_quantity/new_quantity, so this is a straight paginated cloud
+// read, not a running-balance computation. Unlike receipts/gcash payments
+// above, there is no local Dexie cache of stock_movements to fall back to
+// while offline -- this audit trail is written cloud-side as part of sync,
+// so the report simply requires connectivity.
+async function fetchProductStockMovements(productId, { page = 1, perPage = 50 } = {}) {
+  await startAdminRuntime()
+  if (!(await isCloudReachable())) {
+    const error = new Error('Stock history needs an internet connection to load from the cloud.')
+    error.code = 'OFFLINE'
+    throw error
+  }
+
+  const result = await pb.collection('stock_movements').getList(page, perPage, {
+    filter: pb.filter('product_id = {:productId}', { productId }),
+    sort: '-created_at,-created',
+    expand: 'user_id',
+    requestKey: null,
+  })
+
+  return {
+    page: result.page,
+    perPage: result.perPage,
+    totalItems: result.totalItems,
+    totalPages: result.totalPages,
+    movements: result.items.map((movement) => {
+      const actor = Array.isArray(movement.expand?.user_id) ? movement.expand.user_id[0] : movement.expand?.user_id
+      return {
+        id: movement.id,
+        type: movement.movement_type || '',
+        quantity: Number(movement.quantity) || 0,
+        previousQuantity: Number(movement.previous_quantity) || 0,
+        newQuantity: Number(movement.new_quantity) || 0,
+        referenceType: movement.reference_type || '',
+        referenceId: movement.reference_id || '',
+        notes: movement.notes || '',
+        userName: actor?.name || actor?.email || '',
+        createdAt: movement.created_at || movement.created || '',
+      }
+    }),
+  }
+}
+
 function refreshProductsInBackground() {
   if (productRefreshPromise) return productRefreshPromise
   if (Date.now() - lastProductRefreshAt < 30_000) return Promise.resolve()
@@ -1829,6 +1874,7 @@ export const desktopAdminApi = {
           id: updated.id,
           barcode,
           qty: quantizeQty(stockInQty * conversion),
+          userId: currentAdminUser().id || '',
         })
       })
       await recordActivity('Stock Update', `Added ${stockInQty} ${unitLabel || updated.unit || 'unit(s)'} to "${updated.name}".`)
@@ -1882,6 +1928,7 @@ export const desktopAdminApi = {
           qty: baseUnitsToRemove,
           reason,
           note,
+          userId: currentAdminUser().id || '',
         })
       })
       await recordActivity('Stock Out', `Removed ${stockOutQty} ${unitLabel || updated.unit || 'unit(s)'} from "${updated.name}" - ${reason}${note ? ` (${note})` : ''}.`)
@@ -1920,6 +1967,7 @@ export const desktopAdminApi = {
         delta,
         reason: normalizedReason,
         note: String(note || '').trim(),
+        userId: currentAdminUser().id || '',
       })
     })
     await recordActivity('Inventory Adjustment', `Adjusted "${updated.name}" from ${previousQty} to ${actual} (${normalizedReason})${note ? ` - ${note}` : ''}.`)
@@ -2676,6 +2724,7 @@ export const desktopAdminApi = {
     return listDesktopStaff(role)
   },
   receipts: fetchReceiptRecords,
+  productStockMovements: fetchProductStockMovements,
   async createCashier(data) {
     await startAdminRuntime()
     const roleLabel = String(data?.role || '').trim() === 'manager' ? 'manager' : 'cashier'
