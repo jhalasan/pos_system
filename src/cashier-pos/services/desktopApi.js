@@ -254,6 +254,7 @@ function toCashierSale(sale, pendingIds = new Set()) {
     items: sale.items || [],
     cashierId: sale.cashierId || '',
     cashierName: sale.cashierName || '',
+    customerName: sale.customerName || '',
     approvedBy: sale.voidedBy || '',
     voidedAt: sale.voidedAt || '',
     voidReason: sale.voidReason || '',
@@ -317,6 +318,7 @@ function toCashierCloudSale(sale, items = []) {
     createdAt: sale.created_at || sale.createdAt || sale.created,
     cashierId: firstRelation(sale.cashier_id) || '',
     cashierName: cloudCashierName(sale),
+    customerName: sale.customer_name || sale.customerName || '',
     items,
     adjustments: [],
   })

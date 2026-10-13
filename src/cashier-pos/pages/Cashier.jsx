@@ -1339,6 +1339,16 @@ const Cashier = ({ onLogout, user }) => {
               ...shiftSession,
               cashIn: (Number(shiftSession.cashIn) || 0) + (type === 'in' ? amount : 0),
               cashOut: (Number(shiftSession.cashOut) || 0) + (type === 'out' ? amount : 0),
+              cashMovements: [
+                ...(shiftSession.cashMovements || []),
+                {
+                  type,
+                  amount,
+                  category: 'Resume adjustment',
+                  note: `Resumed with PHP ${declared.toFixed(2)} vs expected PHP ${expectedShiftCash.toFixed(2)}.`,
+                  at: new Date().toISOString(),
+                },
+              ],
             }
           : null;
         if (nextSession) persistShiftSession(nextSession);
@@ -1428,6 +1438,8 @@ const Cashier = ({ onLogout, user }) => {
       gcashSales: completedGcashSales,
       cashIn: shiftCashIn,
       cashOut: shiftCashOut,
+      cashInMovements: (shiftSession?.cashMovements || []).filter((movement) => movement.type === 'in'),
+      cashOutMovements: (shiftSession?.cashMovements || []).filter((movement) => movement.type === 'out'),
       expectedCash: expectedShiftCash,
       actualCash: closingAmount,
       variance,
@@ -2242,6 +2254,7 @@ const Cashier = ({ onLogout, user }) => {
       const result = await printCompletedReceipt({
         transactionNo: lookupSale.transactionNo,
         cashierName: lookupSale.cashierName || user?.name || user?.email || 'Cashier',
+        customerName: lookupSale.customerName || '',
         completedAt: lookupSale.createdAt,
         items: lookupSale.items || [],
         payment: {
@@ -2284,6 +2297,7 @@ const Cashier = ({ onLogout, user }) => {
       const result = await printCompletedReceipt({
         transactionNo: sale.transactionNo,
         cashierName: sale.cashierName || user?.name || user?.email || 'Cashier',
+        customerName: sale.customerName || '',
         completedAt: sale.createdAt,
         items: sale.items || [],
         payment: {
@@ -2320,6 +2334,7 @@ const Cashier = ({ onLogout, user }) => {
       const result = await printReceiptPdf({
         transactionNo: lookupSale.transactionNo,
         cashierName: lookupSale.cashierName || user?.name || user?.email || 'Cashier',
+        customerName: lookupSale.customerName || '',
         completedAt: lookupSale.createdAt,
         items: lookupSale.items || [],
         payment: {
@@ -2612,6 +2627,10 @@ const Cashier = ({ onLogout, user }) => {
             ...shiftSession,
             cashIn: (Number(shiftSession.cashIn) || 0) + (cashFlowType === 'in' ? amount : 0),
             cashOut: (Number(shiftSession.cashOut) || 0) + (cashFlowType === 'out' ? amount : 0),
+            cashMovements: [
+              ...(shiftSession.cashMovements || []),
+              { type: cashFlowType, amount, category: cashFlowCategory, note: String(cashFlowReason || '').trim(), at: new Date().toISOString() },
+            ],
           }
         : null;
       if (nextSession) persistShiftSession(nextSession);

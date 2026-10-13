@@ -181,6 +181,54 @@ function moneyValue(value) {
   })
 }
 
+function cashMovementStamp(value) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (n) => String(n).padStart(2, '0')
+  const hours = date.getHours()
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(hours % 12 || 12)}:${pad(date.getMinutes())}${hours < 12 ? 'A' : 'P'}`
+}
+
+// One entry per cash-in/cash-out the cashier recorded during the shift, so the
+// Z-read can show where the drawer cash went instead of a single opaque
+// total. Any part of the total not covered by a recorded entry (e.g. movements
+// made on a shift that was already open before itemized entries were saved) is
+// shown as one "Earlier entries" line so the section always adds up.
+function cashMovementDetailLines(movements, totalAmount, title, fallbackLabel) {
+  const entries = (Array.isArray(movements) ? movements : []).filter((movement) => Number(movement?.amount) > 0)
+  const total = Number(totalAmount) || 0
+  if (!entries.length && !(total > 0)) return []
+
+  const itemized = roundMoney(entries.reduce((sum, movement) => sum + Number(movement.amount), 0))
+  const unitemized = roundMoney(total - itemized)
+  const noteWidth = RECEIPT_WIDTH - 2
+  return [
+    center(title),
+    ...entries.flatMap((movement) => {
+      const detail = `${cashMovementStamp(movement.at)} ${cleanText(movement.note)}`.trim()
+      const detailLines = []
+      let current = ''
+      for (const word of detail.split(' ')) {
+        const next = current ? `${current} ${word}` : word
+        if (next.length <= noteWidth) {
+          current = next
+        } else {
+          if (current) detailLines.push(`  ${current}`)
+          current = word.slice(0, noteWidth)
+        }
+      }
+      if (current) detailLines.push(`  ${current}`)
+      detailLines.length = Math.min(detailLines.length, 3)
+      return [
+        columns(cleanText(movement.category) || fallbackLabel, moneyValue(movement.amount)),
+        ...detailLines,
+      ]
+    }),
+    ...(unitemized >= 0.01 ? [columns('Earlier entries', moneyValue(unitemized))] : []),
+    line(),
+  ]
+}
+
 export function buildShiftCloseReceiptText({
   cashierName,
   openedAt,
@@ -190,6 +238,8 @@ export function buildShiftCloseReceiptText({
   gcashSales,
   cashIn,
   cashOut,
+  cashInMovements = [],
+  cashOutMovements = [],
   expectedCash,
   actualCash,
   variance,
@@ -239,6 +289,8 @@ export function buildShiftCloseReceiptText({
     columns('Counted Cash', moneyValue(actualCash)),
     columns('Variance', moneyValue(variance)),
     line(),
+    ...cashMovementDetailLines(cashInMovements, cashIn, 'CASH IN DETAILS', 'Cash in'),
+    ...cashMovementDetailLines(cashOutMovements, cashOut, 'CASH OUT DETAILS', 'Cash out'),
     // GCash never touches the physical drawer, so it's deliberately kept out
     // of the cash-count block above (Expected/Counted/Variance) -- this is a
     // separate, informational-only line for transparency on how much of the

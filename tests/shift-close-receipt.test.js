@@ -143,3 +143,81 @@ test('buildShiftCloseReceiptText with finalized:true prints the real closed repo
   assert.doesNotMatch(receipt, /SHIFT NOT YET CLOSED/);
   assert.match(receipt, /Closed/);
 });
+
+// Client request: the Z-read only showed one "Cash Out" total, with no way to
+// see where the drawer cash went. Each cash-out recorded during the shift is
+// now itemized (time, category, note, amount) in its own section.
+const zReadBase = {
+  cashierName: 'Cashier One',
+  openedAt: '2026-07-08T09:00:00.000Z',
+  closedAt: '2026-07-08T17:30:00.000Z',
+  openingAmount: 1000,
+  cashSales: 2500,
+  gcashSales: 0,
+  cashIn: 0,
+  expectedCash: 2800,
+  actualCash: 2800,
+  variance: 0,
+  countMode: 'manual',
+  denominations: [],
+  finalized: true,
+};
+
+test('Z-read itemizes each cash-out with its category, note and amount', () => {
+  const receipt = buildShiftCloseReceiptText({
+    ...zReadBase,
+    cashOut: 700,
+    cashOutMovements: [
+      { type: 'out', amount: 500, category: 'Supplier payment', note: 'Coke delivery', at: '2026-07-08T11:15:00' },
+      { type: 'out', amount: 200, category: 'Petty cash', note: '', at: '2026-07-08T14:05:00' },
+    ],
+  });
+
+  assert.match(receipt, /CASH OUT DETAILS/);
+  assert.match(receipt, /Supplier payment\s+500\.00/);
+  assert.match(receipt, /Coke delivery/);
+  assert.match(receipt, /Petty cash\s+200\.00/);
+  assert.doesNotMatch(receipt, /Earlier entries/, 'fully itemized cash-outs must not report a leftover amount');
+});
+
+test('Z-read shows an "Earlier entries" line when part of the cash-out total was never itemized', () => {
+  const receipt = buildShiftCloseReceiptText({
+    ...zReadBase,
+    cashOut: 700,
+    cashOutMovements: [{ type: 'out', amount: 200, category: 'Petty cash', note: '', at: '2026-07-08T14:05:00' }],
+  });
+
+  assert.match(receipt, /Petty cash\s+200\.00/);
+  assert.match(receipt, /Earlier entries\s+500\.00/);
+});
+
+test('Z-read has no cash-out section when nothing was cashed out', () => {
+  const receipt = buildShiftCloseReceiptText({ ...zReadBase, cashOut: 0, cashOutMovements: [] });
+  assert.doesNotMatch(receipt, /CASH OUT DETAILS/);
+});
+
+test('Z-read itemizes cash-ins in their own section, separate from cash-outs', () => {
+  const receipt = buildShiftCloseReceiptText({
+    ...zReadBase,
+    cashIn: 300,
+    cashOut: 100,
+    cashInMovements: [{ type: 'in', amount: 300, category: 'Additional drawer fund', note: 'Float top-up', at: '2026-07-08T10:00:00' }],
+    cashOutMovements: [{ type: 'out', amount: 100, category: 'Petty cash', note: '', at: '2026-07-08T14:05:00' }],
+  });
+
+  assert.match(receipt, /CASH IN DETAILS/);
+  assert.match(receipt, /Additional drawer fund\s+300\.00/);
+  assert.match(receipt, /Float top-up/);
+  assert.match(receipt, /CASH OUT DETAILS/);
+  const inAt = receipt.indexOf('CASH IN DETAILS');
+  const outAt = receipt.indexOf('CASH OUT DETAILS');
+  assert.ok(inAt < receipt.indexOf('Additional drawer fund') && receipt.indexOf('Additional drawer fund') < outAt, 'the cash-in entry must sit under the cash-in heading, not the cash-out one');
+});
+
+test('Z-read cash-in section shows an "Earlier entries" line for un-itemized cash-in, and is omitted when there is none', () => {
+  const partial = buildShiftCloseReceiptText({ ...zReadBase, cashIn: 500, cashOut: 0, cashInMovements: [{ type: 'in', amount: 200, category: 'Correction', note: '', at: '2026-07-08T10:00:00' }] });
+  assert.match(partial, /Earlier entries\s+300\.00/);
+
+  const none = buildShiftCloseReceiptText({ ...zReadBase, cashIn: 0, cashOut: 0 });
+  assert.doesNotMatch(none, /CASH IN DETAILS/);
+});
