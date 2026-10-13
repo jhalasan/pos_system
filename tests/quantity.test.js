@@ -77,3 +77,20 @@ test('isFractional reads either camelCase or snake_case flag', () => {
   assert.equal(isFractional({ allow_fractional: true }), true);
   assert.equal(isFractional({}), false);
 });
+
+// A drawer that is counted exactly right still produced a float-drift
+// remainder of about -1e-15; roundMoney turned that into -0, which
+// toLocaleString/Intl print as "-0.00" -- on the Z-read, the variance line,
+// and change due.
+test('roundMoney never returns negative zero', () => {
+  assert.equal(Object.is(roundMoney(-5.55e-17), -0), false);
+  assert.equal(Object.is(roundMoney(-0.004), -0), false);
+  assert.equal(roundMoney(-5.55e-17).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), '0.00');
+  assert.equal(roundMoney(-0.5), -0.5, 'genuine negatives are unchanged');
+});
+
+test('expected drawer cash from drifting decimals rounds to an exact centavo value', () => {
+  const expected = roundMoney(1000.1 + 250.2 + 0.1 - 0.2);
+  assert.equal(expected, 1250.2);
+  assert.equal(roundMoney(1250.2 - expected), 0, 'a drawer counted exactly right has a variance of exactly 0');
+});

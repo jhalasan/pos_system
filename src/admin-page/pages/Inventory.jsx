@@ -250,6 +250,7 @@ export default function Inventory() {
   const [reconcileReason, setReconcileReason] = useState('cycle-count')
   const [reconcileNote, setReconcileNote] = useState('')
   const [reconciling, setReconciling] = useState(false)
+  const historyRequestRef = useRef(0)
   const [historyProductId, setHistoryProductId] = useState('')
   const [historySearch, setHistorySearch] = useState('')
   const [historyMovements, setHistoryMovements] = useState([])
@@ -400,21 +401,28 @@ export default function Inventory() {
 
   async function loadHistoryPage(productId, page) {
     if (!productId) return
+    // Only the newest request may write results: switching products while an
+    // earlier (slower) fetch is still in flight must not overwrite the list
+    // with the previous product's movements, or append them to the new one.
+    const requestId = ++historyRequestRef.current
     setHistoryLoading(true)
     setHistoryError('')
     try {
       const result = await api.productStockMovements(productId, { page, perPage: 50 })
+      if (requestId !== historyRequestRef.current) return
       setHistoryMovements((current) => (page <= 1 ? result.movements : [...current, ...result.movements]))
       setHistoryPage(result.page)
       setHistoryTotalPages(result.totalPages)
     } catch (err) {
-      setHistoryError(err.message || 'Unable to load stock history.')
+      if (requestId === historyRequestRef.current) setHistoryError(err.message || 'Unable to load stock history.')
     } finally {
-      setHistoryLoading(false)
+      if (requestId === historyRequestRef.current) setHistoryLoading(false)
     }
   }
 
   function selectHistoryProduct(productId) {
+    historyRequestRef.current += 1
+    setHistoryLoading(false)
     setHistoryProductId(productId)
     setHistoryMovements([])
     setHistoryPage(0)

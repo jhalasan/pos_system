@@ -863,7 +863,7 @@ const Cashier = ({ onLogout, user }) => {
   const shiftCashIn = Number(shiftSession?.cashIn) || 0;
   const shiftCashOut = Number(shiftSession?.cashOut) || 0;
   const shiftOpeningCash = Number(shiftSession?.openingAmount) || 0;
-  const expectedShiftCash = shiftOpeningCash + completedCashSales + shiftCashIn - shiftCashOut;
+  const expectedShiftCash = roundMoney(shiftOpeningCash + completedCashSales + shiftCashIn - shiftCashOut);
   const cashFlowNet = shiftCashIn - shiftCashOut;
   const recentCashCountHistory = cashCountHistory
     .filter((entry) => !user?.id || String(entry.cashierId || '') === String(user.id))
@@ -875,7 +875,7 @@ const Cashier = ({ onLogout, user }) => {
   ), [cashierAuditEntry.denominations]);
   const auditCountMode = cashierAuditEntry.countMode || 'manual';
   const auditCashBeginning = Number(cashierAuditEntry.cashBeginning || shiftOpeningCash);
-  const auditExpectedCash = auditCashBeginning + completedCashSales + shiftCashIn - shiftCashOut;
+  const auditExpectedCash = roundMoney(auditCashBeginning + completedCashSales + shiftCashIn - shiftCashOut);
   const manualAuditActualValue = cashierAuditEntry.actualCashEnding || cashierAuditEntry.cashOnHand;
   const auditHasActualCount = auditCountMode === 'denomination'
     ? Object.values(cashierAuditEntry.denominations || {}).some((count) => String(count).trim() !== '')
@@ -1409,7 +1409,7 @@ const Cashier = ({ onLogout, user }) => {
       return null;
     }
 
-    const variance = closingAmount - expectedShiftCash;
+    const variance = roundMoney(closingAmount - expectedShiftCash);
     const denominationBreakdown = shouldSkipCashCount ? [] : (
       shiftCloseCountMode === 'denomination'
         ? shiftCloseBreakdown
@@ -1675,7 +1675,7 @@ const Cashier = ({ onLogout, user }) => {
         actualCash: actualCashEnding,
         cashOnHand,
         denominationTotal: auditDenominationTotal,
-        variance: actualCashEnding - auditExpectedCash,
+        variance: roundMoney(actualCashEnding - auditExpectedCash),
         countMode,
         denominations: denominationBreakdown,
         note: cashierAuditEntry.note || '',
@@ -1685,7 +1685,7 @@ const Cashier = ({ onLogout, user }) => {
       await cashierApi.logActivity({
         cashierId: user?.id,
         action: 'Cash Audit',
-        detail: withDevice(`Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${auditExpectedCash.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, actual PHP ${actualCashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}, automatic cash count PHP ${auditDenominationTotal.toFixed(2)}, count mode ${countMode}${breakdownText ? `, breakdown ${breakdownText}` : ''}, variance PHP ${(actualCashEnding - auditExpectedCash).toFixed(2)}.`),
+        detail: withDevice(`Cash audit by ${user?.name || user?.email || 'Cashier'}: beginning PHP ${cashBeginning.toFixed(2)}, cash sales PHP ${completedCashSales.toFixed(2)}, cash in PHP ${shiftCashIn.toFixed(2)}, cash out PHP ${shiftCashOut.toFixed(2)}, expected PHP ${auditExpectedCash.toFixed(2)}, ending PHP ${cashEnding.toFixed(2)}, actual PHP ${actualCashEnding.toFixed(2)}, on hand PHP ${cashOnHand.toFixed(2)}, automatic cash count PHP ${auditDenominationTotal.toFixed(2)}, count mode ${countMode}${breakdownText ? `, breakdown ${breakdownText}` : ''}, variance PHP ${(roundMoney(actualCashEnding - auditExpectedCash)).toFixed(2)}.`),
       });
       appendCashCountHistory({
         type: 'cash-audit',
@@ -1699,7 +1699,7 @@ const Cashier = ({ onLogout, user }) => {
         expectedCash: auditExpectedCash,
         actualCash: actualCashEnding,
         cashOnHand,
-        variance: actualCashEnding - auditExpectedCash,
+        variance: roundMoney(actualCashEnding - auditExpectedCash),
         countMode,
         denominations: denominationBreakdown,
         deviceId,
