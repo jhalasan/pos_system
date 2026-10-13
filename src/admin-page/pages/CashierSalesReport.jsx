@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api, peso } from '../services/api'
 import { exportCsv, safeFilenamePart } from '../utils/exportCsv'
+import { localDateKey } from '../utils/localDate'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import {
   resolveReceiptCategories,
@@ -117,7 +118,7 @@ export default function CashierSalesReport({ dateRangeFilter }) {
     ))
     try {
       const result = await exportCsv(
-        `cashier-sales-${safeFilenamePart(cashierLabel)}-${new Date().toISOString().slice(0, 10)}.csv`,
+        `cashier-sales-${safeFilenamePart(cashierLabel)}-${localDateKey()}.csv`,
         [['Cashier', cashierLabel], ['Date range', rangeLabel], header, ...body],
         { directory: getExportLocation(exportLocationKeys.reports) },
       )

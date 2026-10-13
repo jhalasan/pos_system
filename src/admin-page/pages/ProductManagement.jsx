@@ -8,6 +8,7 @@ import { IconPlus, IconSearch, IconEdit, IconTrash, IconArchive, IconImage, Icon
 import { api, defaultCategories, statusLabel, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
+import { localDateKey } from '../utils/localDate'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { printInventoryProducts } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
@@ -324,7 +325,7 @@ export default function ProductManagement() {
     setExporting(true)
     setExportStatus('Exporting...')
     try {
-      const result = await exportCsv(`products-${new Date().toISOString().slice(0, 10)}.csv`, [
+      const result = await exportCsv(`products-${localDateKey()}.csv`, [
         ['Name', 'Barcodes', 'Category', 'Quantity', 'Unit', 'Price', 'Wholesale Price', 'Stock Status', 'Lifecycle Status', 'Unit Breakdown'],
         ...filtered.map((product) => {
           const baseUnit = normalizeSellingUnits(product).find((unit) => Number(unit.conversion) === 1)

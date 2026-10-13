@@ -139,7 +139,7 @@ export default function GCashPayments({ embedded = false, sourceReceipts = null 
   }, [cashierName, customFrom, customTo, dateRange, query, status, type])
 
   async function handleExport() {
-    const result = await exportCsv(`gcash-payments-${new Date().toISOString().slice(0, 10)}.csv`, [
+    const result = await exportCsv(`gcash-payments-${localDateKey()}.csv`, [
       ['Date', 'Transaction No.', 'Type', 'Cashier', 'Status', 'GCash Amount', 'Reference No.', 'Sale Total', 'Cash Portion'],
       ...filteredPayments.map((payment) => [
         formatDate(payment.createdAt),

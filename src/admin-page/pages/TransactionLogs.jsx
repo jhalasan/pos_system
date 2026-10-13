@@ -378,7 +378,7 @@ export default function TransactionLogs() {
   }
 
   async function handleExportTransactions() {
-    const result = await exportCsv(`transaction-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
+    const result = await exportCsv(`transaction-logs-${localDateKey()}.csv`, [
       ['Transaction No.', 'Date / Time', 'Customer', 'Cashier', 'Status', 'Products', 'Categories', 'Items', 'Cash', 'GCash', 'Cash Subtotal', 'GCash Subtotal', 'Total'],
       ...sortedReceipts.map((receipt) => {
         const payment = paymentBreakdown(receipt)

@@ -8,6 +8,7 @@ import { IconBox, IconAlert, IconDollar, IconScan, IconCheck, IconTrash, IconDow
 import { api, defaultCategories, peso, statusLabel } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv, safeFilenamePart } from '../utils/exportCsv'
+import { localDateKey } from '../utils/localDate'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { buildStockOutText, printStockOutRecords } from '../utils/thermalInventoryPrinter'
 import { normalizeSellingUnits } from '../../utils/sellingUnits'
@@ -835,7 +836,7 @@ export default function Inventory() {
 
   async function handleExportStockOut() {
     if (!stockOutFeed.length) return
-    const result = await exportCsv(`stock-out-${new Date().toISOString().slice(0, 10)}.csv`, [
+    const result = await exportCsv(`stock-out-${localDateKey()}.csv`, [
       ['Date / Time', 'Product', 'Barcode', 'Reason', 'Note', 'Qty Out', 'Previous Qty', 'New Qty'],
       ...stockOutFeed.map((item) => [
         item.time.toLocaleString('en-PH'),
@@ -863,7 +864,7 @@ export default function Inventory() {
   function handleDownloadStockOutPdf() {
     if (!stockOutFeed.length) return
     const text = buildStockOutText(stockOutFeed)
-    downloadPdf(`stock-out-${new Date().toISOString().slice(0, 10)}.pdf`, buildTextPdf(text))
+    downloadPdf(`stock-out-${localDateKey()}.pdf`, buildTextPdf(text))
     flash('Stock-out PDF downloaded.')
   }
 

@@ -6,6 +6,7 @@ import { IconDownload, IconList, IconSearch } from '../components/Icons'
 import { api } from '../services/api'
 import { useApi } from '../hooks/useApi'
 import { exportCsv } from '../utils/exportCsv'
+import { localDateKey } from '../utils/localDate'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 
 const actionBadge = {
@@ -212,7 +213,7 @@ export default function ActivityLogs() {
     setExporting(true)
     setExportStatus('Exporting...')
     try {
-      const result = await exportCsv(`activity-logs-${new Date().toISOString().slice(0, 10)}.csv`, [
+      const result = await exportCsv(`activity-logs-${localDateKey()}.csv`, [
       ['Timestamp', 'User', 'User Type', 'Action', 'Details'],
       ...exportPreview.map((log) => [
         new Date(log.time).toLocaleString(),

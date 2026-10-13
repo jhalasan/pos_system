@@ -151,7 +151,7 @@ export default function Analytics() {
     setExportStatus('Exporting...')
     try {
       const safeScope = `${dataSource}-${datePreset === 'custom' ? `${customFrom || 'start'}-${customTo || 'today'}` : datePreset}`
-      const result = await exportCsv(`analytics-${analyticsTab}-${safeScope}-${new Date().toISOString().slice(0, 10)}.csv`, [
+      const result = await exportCsv(`analytics-${analyticsTab}-${safeScope}-${localDateKey()}.csv`, [
         ['Filters', 'Data source', sourceLabel],
         ['Filters', 'Date range', rangeLabel],
         ['KPI', 'Gross sales', stats.totalRevenue],
