@@ -195,6 +195,11 @@ function cashMovementStamp(value) {
 // made on a shift that was already open before itemized entries were saved) is
 // shown as one "Earlier entries" line so the section always adds up.
 function cashMovementDetailLines(movements, totalAmount, title, fallbackLabel) {
+  // undefined means the caller has no itemized entries at all (e.g. the admin
+  // Audit page rebuilding a past Z-read from its log text), as opposed to []
+  // meaning "known: none recorded" -- print nothing rather than a misleading
+  // "Earlier entries" block for a report whose entries simply aren't available.
+  if (movements === undefined) return []
   const entries = (Array.isArray(movements) ? movements : []).filter((movement) => Number(movement?.amount) > 0)
   const total = Number(totalAmount) || 0
   if (!entries.length && !(total > 0)) return []
@@ -238,8 +243,8 @@ export function buildShiftCloseReceiptText({
   gcashSales,
   cashIn,
   cashOut,
-  cashInMovements = [],
-  cashOutMovements = [],
+  cashInMovements,
+  cashOutMovements,
   expectedCash,
   actualCash,
   variance,

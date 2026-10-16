@@ -303,3 +303,52 @@ test('adjustInventoryCount (Stock Count) always applies the counted value as-is,
 
   await adminDb.delete()
 })
+
+// Item History shows who made each stock change. The desktop admin queues a
+// stock-in / stock-out / count adjustment offline and the sync worker writes
+// the stock_movements row later, so the acting admin's id has to ride along on
+// the queued op and be stamped on that row. Before this, user_id was always
+// left blank for these three actions.
+for (const { type, payload, expectedType } of [
+  { type: 'scanInventory', payload: { qty: 5, barcode: '4806504613212' }, expectedType: 'stock_in' },
+  { type: 'stockOutInventory', payload: { qty: 5, barcode: '4806504613212', reason: 'damaged', note: 'dropped' }, expectedType: 'stock_out' },
+  { type: 'adjustInventoryCount', payload: { countedQty: 60, reason: 'cycle-count', note: 'monthly' }, expectedType: 'adjustment' },
+]) {
+  test(`a queued ${type} op stamps the acting admin on its stock movement`, { concurrency: false }, async () => {
+    await adminDb.delete()
+    await initializeAdminDb()
+    resetPocketBaseRateLimit()
+
+    const { pb, calls } = makeFakePb({ productRecord: baseProductRecord({ quantity: 100 }) })
+    const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+    const op = stockOp({ id: `op-attr-${type}`, type, payload: { ...payload, userId: 'admin-user-1' } })
+    await adminDb.pendingOps.put(op)
+
+    await engine.uploadOperation(op)
+
+    assert.equal(calls.movementCreates.length, 1)
+    assert.equal(calls.movementCreates[0].movement_type, expectedType)
+    assert.equal(calls.movementCreates[0].user_id, 'admin-user-1', 'the movement must record which admin made the change')
+
+    await adminDb.delete()
+  })
+}
+
+test('an op queued before this change (no userId) still syncs, with a blank user rather than an error', { concurrency: false }, async () => {
+  await adminDb.delete()
+  await initializeAdminDb()
+  resetPocketBaseRateLimit()
+
+  const { pb, calls } = makeFakePb({ productRecord: baseProductRecord({ quantity: 100 }) })
+  const engine = new AdminSyncEngine({ baseUrl: 'http://127.0.0.1:8090', pb })
+  const op = stockOp({ id: 'op-legacy', type: 'scanInventory', payload: { qty: 5, barcode: '4806504613212' } })
+  await adminDb.pendingOps.put(op)
+
+  await engine.uploadOperation(op)
+
+  assert.equal(calls.movementCreates.length, 1)
+  assert.equal(calls.movementCreates[0].user_id, '')
+  assert.equal(await adminDb.pendingOps.get(op.id), undefined, 'the old queued op is still cleared normally')
+
+  await adminDb.delete()
+})

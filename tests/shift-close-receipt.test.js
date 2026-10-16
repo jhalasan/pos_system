@@ -221,3 +221,13 @@ test('Z-read cash-in section shows an "Earlier entries" line for un-itemized cas
   const none = buildShiftCloseReceiptText({ ...zReadBase, cashIn: 0, cashOut: 0 });
   assert.doesNotMatch(none, /CASH IN DETAILS/);
 });
+
+// The admin Audit page rebuilds a past Z-read from log text and has no
+// itemized entries to give. Omitting them must print no detail section at all,
+// not a misleading "Earlier entries" block (an empty array, by contrast, means
+// "known: none recorded").
+test('Z-read rebuilt without itemized entries prints no cash-movement detail sections', () => {
+  const receipt = buildShiftCloseReceiptText({ ...zReadBase, cashIn: 300, cashOut: 700 });
+  assert.doesNotMatch(receipt, /CASH IN DETAILS|CASH OUT DETAILS|Earlier entries/);
+  assert.match(receipt, /Cash Out\s+700\.00/, 'the totals still print');
+});
