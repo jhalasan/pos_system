@@ -6,12 +6,15 @@ import Modal from '../components/Modal'
 import { IconDollar, IconDownload, IconList, IconSearch, IconUsers } from '../components/Icons'
 import { api, peso } from '../services/api'
 import { useApi } from '../hooks/useApi'
+import { useWindowedApi } from '../hooks/useWindowedApi'
+import { computeAuditLogWindow } from '../utils/auditLogWindow'
 import { loadRetainedCompletedSales } from '../../cashier-pos/utils/cashSales'
 import { exportCsv } from '../utils/exportCsv'
 import { exportLocationKeys, getExportLocation } from '../utils/exportSettings'
 import { currentAdminUser } from '../auth'
 import { buildShiftCloseReceiptText } from '../../cashier-pos/services/receiptPrinter'
 import { localDateKey } from '../utils/localDate'
+import { ITEM_REMOVED_ACTION, parseItemRemovalLog } from '../../utils/itemRemovalLog'
 
 const AUDIT_REVIEW_KEY = 'nexa_reviewed_cash_audits'
 const PAGE_SIZE = 10
@@ -253,19 +256,7 @@ function loadReviewedAudits() {
 
 export default function Audit() {
   const { data: receipts, loading: receiptsLoading } = useApi(api.receipts, [])
-  const { data: logs, loading: logsLoading } = useApi(api.activityLogs, [])
   const { data: currentCashiers, loading: cashiersLoading } = useApi(api.cashiers, [])
-  const effectiveLogs = useMemo(() => {
-    const cloudLogs = logs || []
-    const fallbackLogs = [...localCashCountLogs(), ...localSessionEndLogs()]
-    const localLogs = fallbackLogs.filter((localLog) => !cloudLogs.some((cloudLog) => (
-      cloudLog.action === localLog.action
-      && Math.abs(new Date(cloudLog.time) - new Date(localLog.time)) < 60000
-      && parseCashCountLog(cloudLog)?.cashierName === parseCashCountLog(localLog)?.cashierName
-      && parseCashCountLog(cloudLog)?.actual === parseCashCountLog(localLog)?.actual
-    )))
-    return [...cloudLogs, ...localLogs]
-  }, [logs])
   const [subTab, setSubTab] = useState('summary')
   const [dateRange, setDateRange] = useState('today')
   const [query, setQuery] = useState('')
@@ -300,6 +291,37 @@ export default function Audit() {
     return (!logFromTime || time >= logFromTime) && (!logToTime || time <= logToTime)
   }, [logFromTime, logToTime])
 
+  // The summary and the Audit Logs tab each have their own date range but read
+  // the same activity logs, so fetch the union of the two -- not the whole
+  // collection, which is ~60,000 rows and growing ~900 a day. Either side
+  // being open-ended ("All dates", or a custom range with one end) leaves that
+  // end of the fetch open too, so the data is never narrower than what the
+  // page filters on.
+  const logWindow = useMemo(
+    () => computeAuditLogWindow({ fromTime, toTime, logFromTime, logToTime }),
+    [fromTime, toTime, logFromTime, logToTime],
+  )
+  const loadLogs = useCallback(
+    () => api.activityLogs({ fromDate: logWindow.from || undefined, toDate: logWindow.to || undefined }),
+    [logWindow],
+  )
+  const { data: logs, loading: logsLoading, stale: logsStale, error: logsError } = useWindowedApi(
+    loadLogs,
+    `${logWindow.from}|${logWindow.to}`,
+    [],
+  )
+  const effectiveLogs = useMemo(() => {
+    const cloudLogs = logs || []
+    const fallbackLogs = [...localCashCountLogs(), ...localSessionEndLogs()]
+    const localLogs = fallbackLogs.filter((localLog) => !cloudLogs.some((cloudLog) => (
+      cloudLog.action === localLog.action
+      && Math.abs(new Date(cloudLog.time) - new Date(localLog.time)) < 60000
+      && parseCashCountLog(cloudLog)?.cashierName === parseCashCountLog(localLog)?.cashierName
+      && parseCashCountLog(cloudLog)?.actual === parseCashCountLog(localLog)?.actual
+    )))
+    return [...cloudLogs, ...localLogs]
+  }, [logs])
+
   const auditRows = useMemo(() => {
     const rows = new Map()
     const ensure = (name) => {
@@ -322,6 +344,8 @@ export default function Audit() {
           registerOpens: 0,
           cashFlowEntries: 0,
           securityAlerts: 0,
+          itemRemovals: 0,
+          itemRemovalValue: 0,
           sessionEnded: false,
           entries: [],
           latestShiftAuditTime: 0,
@@ -418,6 +442,18 @@ export default function Audit() {
           ...log,
           amount: amountAfter('cash out', log.detail) || amountAfter('cash in', log.detail) || 0,
           category: 'Drawer open',
+          device: deviceFromDetail(log.detail),
+        })
+      }
+      if (log.action === ITEM_REMOVED_ACTION) {
+        const removal = parseItemRemovalLog(log)
+        const row = ensure(cashierNameFromDetail(log.detail, log.user || 'Cashier'))
+        row.itemRemovals += 1
+        row.itemRemovalValue += removal?.value || 0
+        row.entries.push({
+          ...log,
+          amount: removal?.value || 0,
+          category: 'Item removed',
           device: deviceFromDetail(log.detail),
         })
       }
@@ -654,6 +690,8 @@ export default function Audit() {
     <>
       <PageHeader title="Audit" subtitle="Cash flow, shift reconciliation, and cashier variance review.">
         <span className="badge badge-neutral">{selectedDateLabel}</span>
+        {logsStale && <span className="badge badge-warning">Updating logs…</span>}
+        {logsError && !logsStale && <span className="badge badge-danger" title={logsError}>Activity logs could not load</span>}
         {reviewed && <span className="badge badge-success">Reviewed {formatDate(reviewed.reviewedAt)}</span>}
         <button className="btn btn-outline" onClick={markReviewed} disabled={filteredAuditRows.length === 0}>
           Mark Reviewed
@@ -814,6 +852,7 @@ export default function Audit() {
                 <th>Net Flow</th>
                 <th>Register Opens</th>
                 <th>Security Alerts</th>
+                <th>Items Removed</th>
                 <th>Flags</th>
               </tr>
             </thead>
@@ -826,11 +865,12 @@ export default function Audit() {
                   <td><strong>{peso(row.cashIn - row.cashOut)}</strong></td>
                   <td>{row.registerOpens}</td>
                   <td>{row.securityAlerts}</td>
+                  <td>{row.itemRemovals ? `${row.itemRemovals} (${peso(row.itemRemovalValue)})` : <span className="muted">0</span>}</td>
                   <td>{row.flags.length ? row.flags.join(', ') : <span className="muted">None</span>}</td>
                 </tr>
               ))}
               {filteredAuditRows.length === 0 && (
-                <tr><td colSpan="7" className="muted">No cash flow matches the selected filters.</td></tr>
+                <tr><td colSpan="8" className="muted">No cash flow matches the selected filters.</td></tr>
               )}
             </tbody>
           </table>

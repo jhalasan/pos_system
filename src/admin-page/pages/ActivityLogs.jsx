@@ -18,6 +18,7 @@ const actionBadge = {
   Cashier: 'badge-info',
   Sync: 'badge-info',
   'Transaction Void': 'badge-danger',
+  'Item Removed': 'badge-warning',
   'Transaction Refund': 'badge-warning',
   'Transaction Exchange': 'badge-warning',
   Refund: 'badge-warning',
@@ -44,6 +45,7 @@ const actionBadge = {
 const baseActionTypes = [
   'Discounts',
   'Transaction Void',
+  'Item Removed',
   'Transaction Refund',
   'Transaction Exchange',
   'Receipt Lookup',

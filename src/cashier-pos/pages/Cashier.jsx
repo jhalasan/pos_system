@@ -23,6 +23,7 @@ import { reservedQuantityDetail } from '../utils/cartReservation';
 import { shouldClearStaleDiscount } from '../utils/discountStaleness';
 import { addDays, isToday, toDateInputValue, dateInputValueToDate } from '../utils/historyDateRange';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
+import { buildItemRemovalLog } from '../../utils/itemRemovalLog';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import { isCatalogActive } from '../../utils/productLifecycle';
 import styles from '../styles/Cashier.module.css';
@@ -3011,8 +3012,34 @@ const Cashier = ({ onLogout, user }) => {
     }
   };
 
+  // Removing a line (or lowering its quantity) before payment needs no
+  // manager -- but it must leave a trace, otherwise the manager-approved
+  // "Void this transaction" is trivially bypassed by deleting lines one at a
+  // time. Fire-and-forget: a logging failure must never block the cashier.
+  const logCartRemoval = (item, { removedQty, toQty }) => {
+    if (!item || !(removedQty > 0)) return;
+    const entry = buildItemRemovalLog({
+      cashierName: user?.name || user?.email || 'Cashier',
+      name: item.name,
+      removedQty,
+      unitPrice: item.price,
+      fromQty: item.quantity,
+      toQty,
+      transactionNo: activeTxn.transactionNo,
+    });
+    cashierApi.logActivity({
+      cashierId: user?.id,
+      action: entry.action,
+      detail: withDevice(entry.detail),
+    }).catch(() => {});
+  };
+
   const handleRemoveItem = (id) => {
     if (isLockedTxn) return;
+    logCartRemoval(cartItems.find((item) => item.id === id), {
+      removedQty: cartItems.find((item) => item.id === id)?.quantity,
+      toQty: 0,
+    });
     updateActiveTransaction({ cartItems: cartItems.filter((item) => item.id !== id) });
   };
 
@@ -3061,7 +3088,24 @@ const Cashier = ({ onLogout, user }) => {
   const adjustQuantity = (id, delta) => {
     const item = cartItems.find((cartItem) => cartItem.id === id);
     if (!item) return;
+    if (!isLockedTxn && delta < 0 && item.quantity + delta > 0) {
+      logCartRemoval(item, { removedQty: -delta, toQty: item.quantity + delta });
+    }
     handleQuantityChange(id, item.quantity + delta);
+  };
+
+  // Typing a new quantity fires handleQuantityChange on every keystroke
+  // (5 -> 1 -> 12), so a reduction is only logged once the field is left,
+  // comparing the final value to what it held when it was focused.
+  const quantityAtFocusRef = useRef(new Map());
+  const handleQuantityBlur = (item, rawValue) => {
+    const before = quantityAtFocusRef.current.get(item.id);
+    quantityAtFocusRef.current.delete(item.id);
+    const finalQty = Number(rawValue || 1);
+    if (!isLockedTxn && Number.isFinite(before) && Number.isFinite(finalQty) && finalQty > 0 && finalQty < before) {
+      logCartRemoval({ ...item, quantity: before }, { removedQty: quantizeQty(before - finalQty), toQty: finalQty });
+    }
+    handleQuantityChange(item.id, rawValue || 1);
   };
 
   const completeActiveTransaction = async ({
@@ -4037,8 +4081,9 @@ const Cashier = ({ onLogout, user }) => {
                           step={item.fractional ? '0.001' : '1'}
                           max={maxQty}
                           value={item.quantity}
+                          onFocus={() => quantityAtFocusRef.current.set(item.id, item.quantity)}
                           onChange={(e) => handleQuantityChange(item.id, e.target.value)}
-                          onBlur={(e) => handleQuantityChange(item.id, e.target.value || 1)}
+                          onBlur={(e) => handleQuantityBlur(item, e.target.value)}
                           onWheel={(e) => {
                             e.preventDefault();
                             e.currentTarget.blur();
