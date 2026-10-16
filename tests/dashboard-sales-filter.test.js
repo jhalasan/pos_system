@@ -5,7 +5,8 @@ import { buildDashboardSalesFilter } from '../src/admin-page/utils/dashboardSale
 test('buildDashboardSalesFilter with both bounds', () => {
   const { filter, params } = buildDashboardSalesFilter({ fromISO: '2026-08-01T00:00:00.000Z', toISO: '2026-08-31T23:59:59.999Z' })
   assert.equal(filter, 'created_at >= {:from} && created_at <= {:to}')
-  assert.deepEqual(params, { from: '2026-08-01T00:00:00.000Z', to: '2026-08-31T23:59:59.999Z' })
+  // PocketBase's stored date format (space, not "T") -- see src/utils/pocketBaseDate.js.
+  assert.deepEqual(params, { from: '2026-08-01 00:00:00.000Z', to: '2026-08-31 23:59:59.999Z' })
 })
 
 test('buildDashboardSalesFilter with no bounds ("All Time") returns an empty filter', () => {

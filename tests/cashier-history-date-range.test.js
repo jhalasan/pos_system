@@ -160,8 +160,9 @@ test('buildSalesHistoryFilter combines cashierId and a date range with AND', () 
   assert.equal(filter, 'cashier_id = {:cashierId} && created_at >= {:from} && created_at <= {:to}')
   assert.deepEqual(params, {
     cashierId: 'cashier-1',
-    from: '2026-08-27T00:00:00.000Z',
-    to: '2026-08-27T23:59:59.999Z',
+    // PocketBase's stored date format (space, not "T") -- see src/utils/pocketBaseDate.js.
+    from: '2026-08-27 00:00:00.000Z',
+    to: '2026-08-27 23:59:59.999Z',
   })
 });
 

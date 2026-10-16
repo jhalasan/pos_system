@@ -1,4 +1,5 @@
 import { desktopAdminApi } from './desktopApi'
+import { buildActivityLogQuery } from '../../utils/activityLogRange'
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 // Prefer the compile-time target, but also recognize the native runtime. This
@@ -168,7 +169,7 @@ const webApi = {
   createStaff: (data) => request('/cashiers', { method: 'POST', body: cashierBody(data) }),
   updateStaff: (id, data) => request(`/cashiers/${id}`, { method: 'PATCH', body: cashierBody(data) }),
   deleteStaff: (id) => request(`/cashiers/${id}`, { method: 'DELETE' }),
-  activityLogs: () => request('/activity-logs'),
+  activityLogs: (range = {}) => request(`/activity-logs${buildActivityLogQuery(range)}`),
   markAuditReviewed: (data) => request('/audit-reviews', {
     method: 'POST',
     body: JSON.stringify(data),

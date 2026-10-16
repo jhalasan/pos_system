@@ -5,13 +5,14 @@ import { buildActivityLogsFilter } from '../src/admin-page/utils/activityLogsFil
 test('buildActivityLogsFilter with both bounds', () => {
   const { filter, params } = buildActivityLogsFilter({ fromISO: '2026-09-01T00:00:00.000Z', toISO: '2026-09-05T23:59:59.999Z' })
   assert.equal(filter, 'timestamp >= {:from} && timestamp <= {:to}')
-  assert.deepEqual(params, { from: '2026-09-01T00:00:00.000Z', to: '2026-09-05T23:59:59.999Z' })
+  // Bounds are sent in PocketBase's stored format (space, not "T") -- see src/utils/pocketBaseDate.js.
+  assert.deepEqual(params, { from: '2026-09-01 00:00:00.000Z', to: '2026-09-05 23:59:59.999Z' })
 })
 
 test('buildActivityLogsFilter with only a lower bound', () => {
   const { filter, params } = buildActivityLogsFilter({ fromISO: '2026-09-01T00:00:00.000Z' })
   assert.equal(filter, 'timestamp >= {:from}')
-  assert.deepEqual(params, { from: '2026-09-01T00:00:00.000Z' })
+  assert.deepEqual(params, { from: '2026-09-01 00:00:00.000Z' })
 })
 
 test('buildActivityLogsFilter with no bounds returns an empty filter', () => {

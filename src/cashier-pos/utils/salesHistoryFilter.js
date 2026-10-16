@@ -8,6 +8,8 @@
 // dateField defaults to `sales`' own business timestamp (`created_at`);
 // `sale_items` has no such field and must pass `dateField: 'created'` (its
 // PocketBase system autodate field) instead.
+import { toPocketBaseDate } from '../../utils/pocketBaseDate.js'
+
 export function buildSalesHistoryFilter({ cashierId, fromISO, toISO, dateField = 'created_at' } = {}) {
   const clauses = []
   const params = {}
@@ -17,11 +19,11 @@ export function buildSalesHistoryFilter({ cashierId, fromISO, toISO, dateField =
   }
   if (fromISO) {
     clauses.push(`${dateField} >= {:from}`)
-    params.from = fromISO
+    params.from = toPocketBaseDate(fromISO)
   }
   if (toISO) {
     clauses.push(`${dateField} <= {:to}`)
-    params.to = toISO
+    params.to = toPocketBaseDate(toISO)
   }
   return { filter: clauses.join(' && '), params }
 }

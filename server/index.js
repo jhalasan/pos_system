@@ -11,6 +11,9 @@ import { netSaleAmount, refundedUnitsBySaleAndProduct } from '../src/utils/saleT
 import { deriveApprovalHash, randomSaltHex } from '../src/utils/managerApprovalHash.js'
 import { accountDeletionError } from '../src/utils/accountDeletionGuard.js'
 import { isSameHost } from '../src/utils/corsOrigin.js'
+import { ACTIVITY_LOG_FIELDS, parseActivityLogRange } from '../src/utils/activityLogRange.js'
+import { toPocketBaseDate } from '../src/utils/pocketBaseDate.js'
+import { buildActivityLogsFilter } from '../src/admin-page/utils/activityLogsFilter.js'
 import { getProductBarcodes, isCatalogActive, isSellable } from '../src/utils/productLifecycle.js'
 import {
   authenticateAdminUser,
@@ -358,8 +361,8 @@ function saleItemPrice(item, product) {
 // bound applies to this legacy row" avoids silently excluding it.
 function buildCreatedAtRangeFilter(from, to) {
   const parts = []
-  if (from) parts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: from.toISOString() }))
-  if (to) parts.push(pb.filter('(created_at <= {:to} || created_at = "")', { to: to.toISOString() }))
+  if (from) parts.push(pb.filter('(created_at >= {:from} || created_at = "")', { from: toPocketBaseDate(from) }))
+  if (to) parts.push(pb.filter('(created_at <= {:to} || created_at = "")', { to: toPocketBaseDate(to) }))
   return parts.join(' && ')
 }
 
@@ -2129,8 +2132,24 @@ app.delete('/api/cashiers/:id', asyncRoute(async (req, res) => {
   res.status(204).end()
 }))
 
-app.get('/api/activity-logs', asyncRoute(async (_req, res) => {
-  const records = await listRecords('activity_logs', '?sort=-timestamp,-created&expand=user_id&perPage=500')
+// Bounded by ?fromDate=&toDate= (ISO instants, either side optional). With no
+// range this still returns everything, for callers that explicitly mean "all
+// dates" -- but every in-app reader now passes the window it needs, since the
+// full collection is far past Vercel's ~4.5 MB response limit.
+app.get('/api/activity-logs', asyncRoute(async (req, res) => {
+  let range
+  try {
+    range = parseActivityLogRange({ fromDate: req.query?.fromDate, toDate: req.query?.toDate })
+  } catch (error) {
+    return res.status(400).json({ error: error.message })
+  }
+  const { filter, params } = buildActivityLogsFilter({ fromISO: range.fromISO, toISO: range.toISO })
+  const records = await (await pbCollection('activity_logs')).getFullList({
+    sort: '-timestamp,-created',
+    expand: 'user_id',
+    fields: ACTIVITY_LOG_FIELDS,
+    ...(filter ? { filter: pb.filter(filter, params) } : {}),
+  })
   res.json(records.map(toActivityLog))
 }))
 

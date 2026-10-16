@@ -33,7 +33,9 @@ import { getProductBarcodes, isCatalogActive } from '../../utils/productLifecycl
 import { refundedAmountAndUnits, localAdjustmentsNotYetSynced } from '../../utils/localSaleAdjustments'
 import { accountDeletionError } from '../../utils/accountDeletionGuard'
 import { buildActivityLogsFilter } from '../utils/activityLogsFilter'
+import { ACTIVITY_LOG_FIELDS } from '../../utils/activityLogRange'
 import { buildDashboardSalesFilter } from '../utils/dashboardSalesFilter'
+import { shouldPruneLocalCompletedSale } from '../utils/localSalePruning'
 
 const baseUrl = import.meta.env.VITE_POCKETBASE_URL
 
@@ -738,14 +740,16 @@ async function fetchReceiptRecords(filters = {}) {
   // predicate below is safe today because it only drops rows already
   // reconciled against the cloud and not pending sync -- any future loosening
   // of it must account for this coupling.
+  //
+  // That "safe today" claim was only true for an unbounded fetch: this is a
+  // WINDOWED fetch, and "absent from the window" says nothing about a row
+  // outside it. shouldPruneLocalCompletedSale only prunes rows inside the
+  // window just loaded (and not brand new), so viewing an older date range
+  // mid-shift can no longer delete that shift's own synced sales.
   if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+    const pruneContext = { pendingIds, pendingTransactionNos, cloudIds, cloudTransactionNos, fromISO, toISO, now: Date.now() }
     await cashierDb.completedSales
-      .filter((sale) => (
-        !pendingIds.has(String(sale.clientSaleId || ''))
-        && !pendingTransactionNos.has(String(sale.transactionNo || ''))
-        && !cloudIds.has(String(sale.clientSaleId || ''))
-        && !cloudTransactionNos.has(String(sale.transactionNo || ''))
-      ))
+      .filter((sale) => shouldPruneLocalCompletedSale(sale, pruneContext))
       .delete()
   }
   const merged = new Map()
@@ -2912,6 +2916,7 @@ export const desktopAdminApi = {
         records = await pb.collection('activity_logs').getFullList({
           sort: '-timestamp,-created',
           expand: 'user_id',
+          fields: ACTIVITY_LOG_FIELDS,
           ...(filter ? { filter: pb.filter(filter, params) } : {}),
           requestKey: null,
         })
