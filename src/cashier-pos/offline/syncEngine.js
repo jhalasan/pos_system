@@ -376,6 +376,33 @@ function isCorroboratedSaleMatch(found, sale) {
   return amountMatches && withinOneDay
 }
 
+// payload.cashierId is whoever PRESSED Void/Refund; the sale belongs to
+// saleCashierId. A manager-approved void of another cashier's receipt is a
+// normal workflow, and looking the sale up under the voiding cashier found
+// nothing, so the cloud kept it "completed" with its stock still deducted while
+// this terminal already showed it voided. Operations queued before saleCashierId
+// existed only carry the voiding cashier, so on a 404 fall back to the
+// transaction number alone -- sales.transaction_no is unique (idx_sales_transaction_no),
+// so that is still exactly one sale. Any other error, and a genuine 404 on both
+// lookups, still propagate.
+async function findCloudSaleForAdjustment(pb, payload) {
+  try {
+    return await pb.collection('sales').getFirstListItem(
+      pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
+        transactionNo: payload.transactionNo,
+        cashierId: payload.saleCashierId || payload.cashierId,
+      }),
+      { requestKey: null },
+    )
+  } catch (error) {
+    if (error?.status !== 404) throw error
+  }
+  return pb.collection('sales').getFirstListItem(
+    pb.filter('transaction_no = {:transactionNo}', { transactionNo: payload.transactionNo }),
+    { requestKey: null },
+  )
+}
+
 async function findExistingCloudSale(pb, sale) {
   const filters = [
     pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
@@ -930,13 +957,7 @@ export class CashierSyncEngine extends EventTarget {
         )
       }
     } else if (op.type === 'voidCompletedSale' || op.type === 'adjustCompletedSale') {
-      const sale = await this.pb.collection('sales').getFirstListItem(
-        this.pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
-          transactionNo: payload.transactionNo,
-          cashierId: payload.cashierId,
-        }),
-        { requestKey: null },
-      )
+      const sale = await findCloudSaleForAdjustment(this.pb, payload)
       for (const item of (op.type === 'adjustCompletedSale' && payload.restock === false) ? [] : (payload.items || [])) {
           const productId = String(item.productId || item.id || '')
           if (!productId) continue

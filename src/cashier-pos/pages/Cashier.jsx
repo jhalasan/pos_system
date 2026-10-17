@@ -24,6 +24,7 @@ import { shouldClearStaleDiscount } from '../utils/discountStaleness';
 import { addDays, isToday, toDateInputValue, dateInputValueToDate } from '../utils/historyDateRange';
 import { quantizeQty, floorQty, roundMoney, discountedUnitPrice, formatQty, pluralizeUnit, isFractional } from '../../utils/quantity';
 import { buildItemRemovalLog } from '../../utils/itemRemovalLog';
+import { CLOUD_ONLY_RECEIPT_MESSAGE, voidAvailability } from '../utils/voidPolicy';
 import { normalizeSellingUnits as normalizeBaseSellingUnits } from '../../utils/sellingUnits';
 import { isCatalogActive } from '../../utils/productLifecycle';
 import styles from '../styles/Cashier.module.css';
@@ -2208,6 +2209,29 @@ const Cashier = ({ onLogout, user }) => {
     selectedLookupReturnItems().reduce((sum, item) => sum + (Number(item.quantity) * Number(item.price || 0)), 0)
   );
 
+  // Why the current lookup action can't proceed ('' when it can). A void must be
+  // today's (or this open shift's) sale on this terminal; a refund/exchange
+  // just needs this terminal to hold the sale.
+  const lookupBlockedReason = () => {
+    if (!lookupSale || lookupMode === 'verify') return '';
+    if (lookupMode === 'void') {
+      const check = voidAvailability(lookupSale, { shiftOpenedAt: shiftSession?.openedAt });
+      return check.allowed ? '' : check.reason;
+    }
+    return lookupSale.fromCloud ? CLOUD_ONLY_RECEIPT_MESSAGE : '';
+  };
+
+  // Recent Transactions -> Void: open the same Receipt Lookup void screen
+  // (same manager approval and reason) already loaded with this receipt.
+  const handleHistoryVoid = (sale) => {
+    setShowHistory(false);
+    setShowReceiptLookup(true);
+    setLookupQuery(sale.transactionNo);
+    setLookupReturnQty({});
+    resetLookupApproval();
+    void handleReceiptLookup(sale.transactionNo, { mode: 'void' });
+  };
+
   const handleOpenReceiptLookup = () => {
     setShowReceiptLookup(true);
     setLookupQuery('');
@@ -2218,8 +2242,8 @@ const Cashier = ({ onLogout, user }) => {
     resetLookupApproval();
   };
 
-  const handleReceiptLookup = async () => {
-    const transactionNo = lookupQuery.trim();
+  const handleReceiptLookup = async (transactionNoOverride, { mode = 'verify' } = {}) => {
+    const transactionNo = String(typeof transactionNoOverride === 'string' ? transactionNoOverride : lookupQuery).trim();
     if (!transactionNo) {
       setLookupError('Scan or enter a transaction number.');
       return;
@@ -2231,7 +2255,7 @@ const Cashier = ({ onLogout, user }) => {
     try {
       const sale = await cashierApi.saleLookup({ transactionNo });
       setLookupSale(sale);
-      setLookupMode('verify');
+      setLookupMode(mode);
       setLookupReturnQty({});
       resetLookupApproval();
       cashierApi.logActivity({
@@ -2389,6 +2413,11 @@ const Cashier = ({ onLogout, user }) => {
 
   const handleLookupApprovalAction = async (override = {}) => {
     if (!lookupSale) return;
+    const blockedReason = lookupBlockedReason();
+    if (blockedReason) {
+      lookupApproval.setError(blockedReason);
+      return;
+    }
     const requiredCapability = lookupMode === 'void' ? 'voids' : lookupMode === 'exchange' ? 'exchanges' : 'refunds';
     if (!can(requiredCapability)) {
       lookupApproval.setError(`Your account does not have permission to request ${lookupMode}.`);
@@ -5268,6 +5297,11 @@ const Cashier = ({ onLogout, user }) => {
                     >
                       {historyReprintingId === (sale.id || sale.transactionNo) ? 'Printing...' : 'Reprint Receipt'}
                     </Button>
+                    {can('voids') && voidAvailability(sale, { shiftOpenedAt: shiftSession?.openedAt }).allowed && (
+                      <Button variant="danger" size="sm" onClick={() => handleHistoryVoid(sale)}>
+                        Void
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -5291,7 +5325,7 @@ const Cashier = ({ onLogout, user }) => {
               <button
                 className={`btn ${lookupMode === 'void' ? 'btn-danger' : 'btn-primary'}`}
                 onClick={handleLookupApprovalAction}
-                disabled={lookupActionLoading || lookupSale.rawStatus === 'voided'}
+                disabled={lookupActionLoading || lookupSale.rawStatus === 'voided' || Boolean(lookupBlockedReason())}
               >
                 {lookupActionLoading
                   ? 'Processing...'
@@ -5315,7 +5349,7 @@ const Cashier = ({ onLogout, user }) => {
             }}
             disabled={lookupLoading}
           />
-          <Button variant="primary" onClick={handleReceiptLookup} disabled={lookupLoading}>
+          <Button variant="primary" onClick={() => handleReceiptLookup()} disabled={lookupLoading}>
             {lookupLoading ? 'Searching...' : 'Search'}
           </Button>
         </div>
@@ -5427,7 +5461,9 @@ const Cashier = ({ onLogout, user }) => {
                 <strong>
                   {lookupSale.rawStatus === 'voided' || lookupSale.status === 'Voided'
                     ? 'Receipt found, but this transaction is voided.'
-                    : 'Valid receipt. Transaction exists in this terminal.'}
+                    : (lookupSale.fromCloud
+                      ? 'Receipt found in the cloud (made on another terminal). It can be reprinted here.'
+                      : 'Valid receipt. Transaction exists in this terminal.')}
                 </strong>
                 {lookupSale.adjustments?.length > 0 && (
                   <span>
@@ -5486,7 +5522,11 @@ const Cashier = ({ onLogout, user }) => {
               })}
             </div>
 
-            {(lookupMode === 'void' || lookupMode === 'refund' || lookupMode === 'exchange') && (
+            {(lookupMode === 'void' || lookupMode === 'refund' || lookupMode === 'exchange') && lookupBlockedReason() && (
+              <div className={styles['lookup-error']}>{lookupBlockedReason()}</div>
+            )}
+
+            {(lookupMode === 'void' || lookupMode === 'refund' || lookupMode === 'exchange') && !lookupBlockedReason() && (
               <div className={styles['lookup-approval']}>
                 {lookupMode !== 'void' && (
                   <div className={styles['lookup-adjust-total']}>
@@ -5522,6 +5562,13 @@ const Cashier = ({ onLogout, user }) => {
                     onChange={(e) => setLookupNote(e.target.value)}
                     disabled={lookupActionLoading}
                   />
+                )}
+                {/* Every other approval screen shows its error; this one never
+                    did, so a failed Confirm (missing reason, no item selected,
+                    a rejected barcode, a signed-out session) looked like the
+                    button simply did nothing. */}
+                {lookupApproval.error && (
+                  <div className={styles['lookup-error']} role="alert">{lookupApproval.error}</div>
                 )}
               </div>
             )}

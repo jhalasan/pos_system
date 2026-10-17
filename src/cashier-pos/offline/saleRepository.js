@@ -419,6 +419,7 @@ export async function adjustLocalSale(clientSaleId, adjustment = {}) {
     payload: {
       transactionNo: sale.transactionNo,
       cashierId: entry.cashierId || sale.cashierId,
+      saleCashierId: sale.cashierId || entry.cashierId,
       approverId: String(adjustment.approverId || ''),
       type: entry.type,
       items: entry.items,

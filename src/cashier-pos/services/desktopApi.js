@@ -31,6 +31,8 @@ import { startOfLocalDay, endOfLocalDay } from '../utils/historyDateRange'
 import { buildSalesHistoryFilter } from '../utils/salesHistoryFilter'
 import { findApprovalHashMatch } from '../../utils/managerApprovalHash'
 import { toCashierSale, toCashierCloudSale, cloudSaleItemToLocal } from '../utils/cashierSaleMapping'
+import { managerApprovalRoute, OFFLINE_PASSWORD_APPROVAL_MESSAGE } from '../utils/managerApprovalRoute'
+import { needsServerRenewal } from '../utils/sessionRenewal'
 
 let runtimePromise
 
@@ -350,6 +352,37 @@ async function cacheCashierSyncAuth(activeRuntime, user) {
   return true
 }
 
+// Swaps a barcode login's non-refreshable session for a fresh one (see
+// utils/sessionRenewal.js). Best-effort: on any failure the current, still
+// valid session is kept and the next 30-minute refresh tries again. A token
+// for a different account is never accepted.
+async function renewBarcodeSession(activeRuntime, record) {
+  const currentId = activeRuntime.pb.authStore.record?.id || record?.id
+  try {
+    const result = await cashierApiRequest('/cashier/auth/renew', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${activeRuntime.pb.authStore.token}` },
+    })
+    const renewed = result?.user
+    if (!renewed?.token || !currentId || renewed.id !== currentId) return record
+    const renewedRecord = { ...renewed }
+    delete renewedRecord.token
+    const previousToken = activeRuntime.pb.authStore.token
+    const previousRecord = activeRuntime.pb.authStore.record
+    activeRuntime.pb.authStore.save(renewed.token, renewedRecord)
+    if (!activeRuntime.pb.authStore.isValid) {
+      activeRuntime.pb.authStore.save(previousToken, previousRecord)
+      return record
+    }
+    await initializeCashierDb()
+    await cacheCashierSyncAuth(activeRuntime, renewedRecord)
+    return renewedRecord
+  } catch (error) {
+    rememberPocketBaseRateLimit(error)
+    return record
+  }
+}
+
 async function restoreCashierSyncAuth(activeRuntime, cashierId) {
   if (!cashierId) return false
   const credential = await cashierDb.settings.get(`cashierSyncAuth:${cashierId}`)
@@ -491,16 +524,22 @@ async function authorizeManagerApproval(authorization = {}) {
 
   const offline = Boolean(globalThis.navigator) && !globalThis.navigator.onLine
   const rateLimited = isPocketBaseRateLimited()
+  const activeRuntime = await runtime().catch(() => null)
+  const staffToken = activeRuntime?.pb.authStore.token || ''
+  // Without a valid cloud session the server answers every approval with 401
+  // ("Authentication is required") -- see managerApprovalRoute for why that
+  // must not be shown as the manager's approval failing.
+  const sessionAuthorized = Boolean(staffToken) && Boolean(activeRuntime?.pb.authStore.isValid)
+  const approvalRoute = managerApprovalRoute({ offline, rateLimited, sessionAuthorized, usePassword })
+  if (approvalRoute.route === 'error') throw new Error(approvalRoute.message)
 
-  if (!offline && !rateLimited) {
+  if (approvalRoute.route === 'online') {
     const requestBody = usePassword ? { email, password } : { code }
     try {
-      const activeRuntime = await runtime()
-      const staffToken = activeRuntime.pb.authStore.token
       const result = await cashierApiRequest('/cashier/authorize-void', {
         method: 'POST',
         body: JSON.stringify(requestBody),
-        headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : {},
+        headers: { Authorization: `Bearer ${staffToken}` },
       })
       // A successful online approval is also a good moment to refresh the
       // offline cache -- best-effort, never blocks the approval that just
@@ -521,15 +560,15 @@ async function authorizeManagerApproval(authorization = {}) {
   // connectivity -- caching a verifiable hash of a manager's actual login
   // password offline is a materially different risk than a low-entropy
   // barcode and was not part of what was asked for here.
-  if (!useBarcode) {
-    throw new Error('Manager approval by email and password requires an internet connection. Use a manager barcode instead, or reconnect.')
-  }
+  if (!useBarcode) throw new Error(OFFLINE_PASSWORD_APPROVAL_MESSAGE)
   const cachedEntries = await cachedManagerApprovalHashes()
   const match = await findApprovalHashMatch(code, cachedEntries)
   if (!match) {
     throw new Error(cachedEntries.length
       ? 'Manager barcode was not found or is inactive.'
-      : 'Manager approval is not available offline yet on this terminal -- connect to the internet at least once so approval data can be cached.')
+      : (!offline && !sessionAuthorized
+        ? 'Manager approval data is not saved on this terminal yet, and this cashier is not signed in to the cloud. Sign out, sign in again with the cashier email and password, then try again.'
+        : 'Manager approval is not available offline yet on this terminal -- connect to the internet at least once so approval data can be cached.'))
   }
   return {
     id: match.approverId,
@@ -575,6 +614,9 @@ export const desktopCashierApi = {
       record = await activeRuntime.pb.collection('users').authRefresh({ requestKey: null })
         .then((auth) => auth.record)
         .catch(() => record)
+      if (needsServerRenewal(activeRuntime.pb.authStore.token)) {
+        record = await renewBarcodeSession(activeRuntime, record)
+      }
     }
     return record ? { ...record, imageUrl: cashierProfileImageUrl(record, activeRuntime.pb) } : null
   },
@@ -927,7 +969,12 @@ export const desktopCashierApi = {
     if (fetchedCloudSales.length) await cashierDb.receiptCache.bulkPut(fetchedCloudSales.map((sale) => ({ ...sale, id: sale.id || sale.saleId || sale.transactionNo })))
     const merged = new Map()
 
-    for (const sale of [...cachedCloudSales, ...cloudSales, ...localSales]) {
+    // Cloud copies first, tagged: a row only this terminal can void is one it
+    // also has locally, and the local copy (untagged) replaces the cloud one.
+    for (const sale of [...cachedCloudSales, ...cloudSales]) {
+      merged.set(sale.transactionNo || sale.id, { ...sale, fromCloud: true })
+    }
+    for (const sale of localSales) {
       merged.set(sale.transactionNo || sale.id, sale)
     }
 
@@ -947,10 +994,10 @@ export const desktopCashierApi = {
         if (!itemsFetchFailed) {
           await cashierDb.receiptCache.put({ ...cloudSale, id: cloudSale.id || cloudSale.saleId || cloudSale.transactionNo })
         }
-        return cloudSale
+        return { ...cloudSale, fromCloud: true }
       }
       const cachedCloudSale = await cashierDb.receiptCache.filter((record) => record.transactionNo === transactionNo).first()
-      if (cachedCloudSale) return cachedCloudSale
+      if (cachedCloudSale) return { ...cachedCloudSale, fromCloud: true }
       throw new Error(`No completed transaction found for "${transactionNo}".`)
     }
     const pendingSales = await getPendingSales()
@@ -1138,6 +1185,7 @@ export const desktopCashierApi = {
       await queueCashierOperation('voidCompletedSale', {
         transactionNo: localSale.transactionNo,
         cashierId: cashierId || localSale.cashierId,
+        saleCashierId: localSale.cashierId || cashierId,
         approverId: approver.id || '',
         reason: String(reason || ''),
         items: localSale.items || [],

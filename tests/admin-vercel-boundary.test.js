@@ -75,6 +75,18 @@ test('remote admin deployment still answers the offline manager-approval hash en
   assert.equal(response.status, 401)
 })
 
+test('remote admin deployment answers barcode-session renewal, but only with a cashier token', async () => {
+  // Terminals renew a barcode login's non-refreshable session here; without
+  // a bearer token the auth gate must refuse it (401), never 404.
+  const response = await fetch(`${baseUrl}/api/cashier/auth/renew`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  assert.notEqual(response.status, 404)
+  assert.equal(response.status, 401)
+})
+
 test('remote admin deployment does not expose the development PocketBase proxy', async () => {
   const response = await fetch(`${baseUrl}/api/pocketbase/health`)
   assert.equal(response.status, 401)

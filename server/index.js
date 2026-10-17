@@ -988,7 +988,7 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
 // same story for offline-capable manager approval: it hands out only
 // salted one-way hashes (never the real barcode), so exposing it here
 // carries the same reasoning as the other three.
-const cashierVercelAllowlist = new Set(['/auth/barcode', '/authorize-void', '/quick-login-accounts', '/manager-approval-hashes'])
+const cashierVercelAllowlist = new Set(['/auth/barcode', '/auth/renew', '/authorize-void', '/quick-login-accounts', '/manager-approval-hashes'])
 app.use('/api/cashier', (req, res, next) => {
   if (!isVercelAdminPortal || cashierVercelAllowlist.has(req.path)) {
     next()
@@ -1086,6 +1086,27 @@ app.use('/api', asyncRoute(async (req, res, next) => {
   req.adminUser = await authenticateAdminToken(token)
   res.setHeader('Cache-Control', 'private, no-store')
   next()
+}))
+
+// Barcode login's impersonated session is NOT refreshable: PocketBase's
+// authRefresh hands back the very same token with no extra time, so every
+// barcode login used to die CASHIER_TOKEN_DURATION_SECONDS after sign-in --
+// mid-shift in a store that is open 24 hours -- leaving the terminal on
+// "Login required" with its sales queued and not uploading. The terminal
+// calls this while its current session is still valid (the middleware above
+// has already verified the token, and authRefresh re-read the account, so a
+// deactivated cashier is refused here) to get a fresh one.
+app.post('/api/cashier/auth/renew', asyncRoute(async (req, res) => {
+  if (req.cashierUser?.role !== 'cashier') {
+    return res.status(403).json({ error: 'Only cashier sessions can be renewed here.' })
+  }
+  const usersCollection = await pbCollection('users')
+  const user = await usersCollection.getOne(req.cashierUser.id, { requestKey: null })
+  if (user.role !== 'cashier' || user.status === 'inactive') {
+    return res.status(403).json({ error: 'This account is inactive.' })
+  }
+  const impersonated = await usersCollection.impersonate(user.id, CASHIER_TOKEN_DURATION_SECONDS)
+  res.json({ ok: true, user: { ...user, token: impersonated.authStore.token } })
 }))
 
 app.get('/api/products', asyncRoute(async (_req, res) => {
