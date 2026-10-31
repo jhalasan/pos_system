@@ -1,6 +1,12 @@
 import Dexie from 'dexie'
 
-export const cashierDb = new Dexie('pos_cashier')
+// 'strict': a transaction only completes once its data is flushed to disk.
+// Chromium (WebView2, which runs this app) defaults to 'relaxed', which reports
+// a write as saved before it is on disk -- so a power cut right after a sale
+// (the store has brownouts before the generator starts) could lose the last
+// few seconds of writes: the sale, its stock deduction and its receipt number.
+// Every sale, queued upload and counter lives in this database.
+export const cashierDb = new Dexie('pos_cashier', { chromeTransactionDurability: 'strict' })
 
 cashierDb.version(1).stores({
   products: '&id, &barcode, name, category, updated',

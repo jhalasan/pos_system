@@ -1,6 +1,8 @@
 import Dexie from 'dexie'
 
-export const adminDb = new Dexie('pos_admin')
+// 'strict': see src/cashier-pos/offline/db.js. Queued Stock In / Stock Count
+// operations live here until they upload, so they get the same power-cut safety.
+export const adminDb = new Dexie('pos_admin', { chromeTransactionDurability: 'strict' })
 
 adminDb.version(1).stores({
   products: '&id, &barcode, name, category, updated, pendingSync',

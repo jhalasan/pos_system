@@ -33,6 +33,8 @@ import { findApprovalHashMatch } from '../../utils/managerApprovalHash'
 import { toCashierSale, toCashierCloudSale, cloudSaleItemToLocal } from '../utils/cashierSaleMapping'
 import { managerApprovalRoute, OFFLINE_PASSWORD_APPROVAL_MESSAGE } from '../utils/managerApprovalRoute'
 import { needsServerRenewal } from '../utils/sessionRenewal'
+import { LAN_BARCODE_LOGIN_PATH, requestBarcodeSession } from '../utils/barcodeSessionRequest'
+import { createSessionHealer } from '../utils/sessionHealer'
 
 let runtimePromise
 
@@ -46,10 +48,26 @@ const API_URL = import.meta.env.VITE_API_URL || '/api'
 // existing Express /api/cashier/* endpoints, which use the server's own
 // PocketBase credentials and never hand back the underlying code list.
 async function cashierApiRequest(path, options = {}) {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-  })
+  // `timeoutMs` is optional and only used by background retries; a normal call
+  // keeps the old behavior of waiting for the server.
+  const { timeoutMs, ...fetchOptions } = options
+  const controller = timeoutMs > 0 ? new AbortController() : null
+  const timeoutId = controller ? globalThis.setTimeout(() => controller.abort(), timeoutMs) : null
+  let res
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...fetchOptions,
+      ...(controller ? { signal: controller.signal } : {}),
+      headers: { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) },
+    })
+  } catch (error) {
+    if (controller?.signal.aborted) {
+      throw Object.assign(new Error('The request timed out.'), { status: 0, cause: error })
+    }
+    throw error
+  } finally {
+    if (timeoutId !== null) globalThis.clearTimeout(timeoutId)
+  }
   const text = await res.text().catch(() => '')
   let payload
   try {
@@ -383,6 +401,119 @@ async function renewBarcodeSession(activeRuntime, record) {
   }
 }
 
+// Verifies a cashier barcode: the store's own PocketBase first (needs only the
+// local network), then the cloud API -- see utils/barcodeSessionRequest.js.
+// Background retries pass { background: true }, which keeps them under the cloud
+// route's shared 8-attempts-per-5-minutes limit (at most one cloud try / 3 min).
+const CLOUD_BARCODE_BACKGROUND_MIN_INTERVAL_MS = 3 * 60_000
+const CLOUD_BARCODE_BACKGROUND_TIMEOUT_MS = 15_000
+let lastBackgroundCloudBarcodeAttemptAt = 0
+
+function verifyBarcodeSession(activeRuntime, code, { background = false } = {}) {
+  return requestBarcodeSession({
+    barcode: code,
+    allowCloud: !background || Date.now() - lastBackgroundCloudBarcodeAttemptAt >= CLOUD_BARCODE_BACKGROUND_MIN_INTERVAL_MS,
+    lan: (barcode) => activeRuntime.pb.send(LAN_BARCODE_LOGIN_PATH, {
+      method: 'POST',
+      body: { barcode },
+      requestKey: null,
+    }),
+    cloud: (barcode) => {
+      if (background) lastBackgroundCloudBarcodeAttemptAt = Date.now()
+      return cashierApiRequest('/cashier/auth/barcode', {
+        method: 'POST',
+        body: JSON.stringify({ barcode }),
+        ...(background ? { timeoutMs: CLOUD_BARCODE_BACKGROUND_TIMEOUT_MS } : {}),
+      })
+    },
+  })
+}
+
+// One background attempt to give a cashier who has no cloud session a real one.
+// Returns 'healed' | 'stop' | 'retry' (see utils/sessionHealer.js).
+async function attemptCashierSessionHeal({ cashierId, barcode }, { isCurrent }) {
+  if (globalThis.navigator && !globalThis.navigator.onLine) return 'retry'
+  if (isPocketBaseRateLimited()) return 'retry'
+
+  const activeRuntime = await runtime()
+  const store = activeRuntime.pb.authStore
+  // Somebody (the password popup, a later login) already fixed it.
+  if (store.isValid) return store.record?.id === cashierId ? 'healed' : 'stop'
+
+  let verified
+  try {
+    verified = await verifyBarcodeSession(activeRuntime, barcode, { background: true })
+  } catch (error) {
+    // 401: the server looked this barcode up and it is not an active cashier.
+    if (Number(error?.status) === 401) return 'stop'
+    rememberPocketBaseRateLimit(error)
+    return 'retry'
+  }
+
+  const record = verified?.result?.user
+  if (!record?.token) return 'retry'
+  // The barcode now belongs to a different account, or the account changed role/status.
+  if (record.id !== cashierId || record.role !== 'cashier' || record.status === 'inactive') return 'stop'
+  // Logged out / switched cashier while the request was on the network: do not install it.
+  if (!isCurrent()) return 'stop'
+
+  const sessionRecord = { ...record }
+  delete sessionRecord.token
+  store.save(record.token, sessionRecord)
+  if (!store.isValid) {
+    store.clear()
+    return 'retry'
+  }
+  await cacheCashierSyncAuth(activeRuntime, sessionRecord)
+  // The cashier logged out in the instant the session was being saved: do not
+  // announce a restore (or log one) for a session that no longer exists.
+  if (!isCurrent() || !store.isValid) return 'stop'
+  globalThis.dispatchEvent?.(new CustomEvent('nexa-cashier-session-restored', { detail: { cashierId } }))
+  void createCloudActivityLog({
+    cashierId,
+    action: 'Session Restored',
+    detail: 'Cloud session restored automatically after it could not be verified at sign-in; queued sales are uploading.',
+  }).catch(() => {})
+  void retryPendingCashierSync(activeRuntime).catch(() => {})
+  return 'healed'
+}
+
+const sessionHealer = createSessionHealer({
+  attempt: attemptCashierSessionHeal,
+  schedule: (callback, delayMs) => globalThis.setTimeout(callback, delayMs),
+  cancel: (timerId) => globalThis.clearTimeout(timerId),
+})
+
+async function cachedCashierBarcode(cashierId) {
+  await initializeCashierDb()
+  const quickLogin = await cashierDb.quickLoginAccounts.get(cashierId).catch(() => null)
+  const fromQuickLogin = String(quickLogin?.cashierBarcode || '').trim()
+  if (fromQuickLogin) return fromQuickLogin
+  try {
+    await initializeAdminDb()
+    const adminUser = await adminDb.users.get(cashierId)
+    return String(adminUser?.cashierBarcode || adminUser?.void_barcode || '').trim()
+  } catch {
+    return ''
+  }
+}
+
+// Starts repairing a cashier's cloud session, if it has none. Never throws:
+// a login or a sync tick must not fail because the repair could not start.
+async function beginSessionRecovery(cashierId, { barcode = '', immediate = false, force = false } = {}) {
+  try {
+    const id = String(cashierId || '').trim()
+    if (!id) return false
+    const activeRuntime = await runtime()
+    if (activeRuntime.pb.authStore.isValid) return false
+    const code = String(barcode || '').trim() || await cachedCashierBarcode(id)
+    if (!code) return false
+    return sessionHealer.start({ cashierId: id, barcode: code }, { immediate, force })
+  } catch {
+    return false
+  }
+}
+
 async function restoreCashierSyncAuth(activeRuntime, cashierId) {
   if (!cashierId) return false
   const credential = await cashierDb.settings.get(`cashierSyncAuth:${cashierId}`)
@@ -623,6 +754,8 @@ export const desktopCashierApi = {
 
   async login(email, password) {
     const activeRuntime = await runtime()
+    // A new sign-in supersedes any repair still running for a previous one.
+    sessionHealer.stop()
     let auth
     if (globalThis.navigator && !globalThis.navigator.onLine) {
       const cachedUser = await cachedCashierLogin(email, password)
@@ -660,7 +793,13 @@ export const desktopCashierApi = {
     } else {
       await restoreCashierSyncAuth(activeRuntime, auth.record.id)
     }
-    if (activeRuntime.pb.authStore.isValid) void retryPendingCashierSync(activeRuntime)
+    if (activeRuntime.pb.authStore.isValid) {
+      void retryPendingCashierSync(activeRuntime)
+    } else {
+      // Offline password login whose saved cloud session has expired: keep
+      // trying to get a real one in the background (see utils/sessionHealer.js).
+      void beginSessionRecovery(auth.record.id, { barcode: auth.record.void_barcode || auth.record.cashierBarcode, force: true })
+    }
     await createCloudActivityLog({
       cashierId: auth.record.id,
       action: 'Login',
@@ -682,6 +821,8 @@ export const desktopCashierApi = {
     const code = String(barcode || '').trim()
     if (!code) throw new Error('Cashier barcode is required.')
     await initializeCashierDb()
+    // A new sign-in supersedes any repair still running for a previous one.
+    sessionHealer.stop()
 
     let account = await cashierDb.quickLoginAccounts
       .filter((record) => record.role === 'cashier' && record.status === 'active' && String(record.cashierBarcode || '').trim() === code)
@@ -710,13 +851,12 @@ export const desktopCashierApi = {
     if ((!globalThis.navigator || globalThis.navigator.onLine) && !isPocketBaseRateLimited()) {
       const activeRuntime = await runtime()
       let cloudChecked = false
-      // Verified server-side (POST /api/cashier/auth/barcode), not by
-      // listing `users` with this terminal's own token — that collection is
-      // admin-only now (see scripts/configure-pocketbase-rules.mjs).
-      const record = await cashierApiRequest('/cashier/auth/barcode', {
-        method: 'POST',
-        body: JSON.stringify({ barcode: code }),
-      }).then((result) => {
+      // Verified server-side, not by listing `users` with this terminal's own
+      // token — that collection is admin-only now (see
+      // scripts/configure-pocketbase-rules.mjs). The store's own PocketBase is
+      // asked first (works without internet), then the cloud API
+      // (POST /api/cashier/auth/barcode) -- see utils/barcodeSessionRequest.js.
+      const record = await verifyBarcodeSession(activeRuntime, code).then(({ result }) => {
         cloudChecked = true
         return result?.user || null
       }).catch((error) => {
@@ -785,7 +925,17 @@ export const desktopCashierApi = {
     } else {
       await restoreCashierSyncAuth(activeRuntime, user.id)
     }
-    if (activeRuntime.pb.authStore.isValid) void retryPendingCashierSync(activeRuntime)
+    if (activeRuntime.pb.authStore.isValid) {
+      void retryPendingCashierSync(activeRuntime)
+    } else {
+      // No server could verify this barcode (no internet AND no store-server
+      // route, or both down). The cashier can sell -- sales queue on this
+      // terminal -- but nothing uploads until there is a real cloud session.
+      // Keep verifying the same barcode in the background and install the
+      // session the moment a server answers (see utils/sessionHealer.js),
+      // instead of waiting for someone to type an email and password.
+      void beginSessionRecovery(user.id, { barcode: code, force: true })
+    }
 
     await createCloudActivityLog({
       cashierId: user.id,
@@ -798,8 +948,17 @@ export const desktopCashierApi = {
   },
 
   async logout() {
+    sessionHealer.stop()
     const activeRuntime = await runtime()
     activeRuntime.logout()
+  },
+
+  // Called by the cashier screen whenever sync reports "no cloud authorization"
+  // (including a live session that expired mid-shift). Starts the same
+  // background repair using the cashier's cached barcode. Safe to call every
+  // minute: an already-running repair keeps its schedule.
+  async startSessionRecovery(cashierId) {
+    return beginSessionRecovery(cashierId, { immediate: true })
   },
 
   async quickLoginAccounts() {
@@ -1071,6 +1230,7 @@ export const desktopCashierApi = {
       value: { hash: await cashierPasswordHash(normalizedEmail, password), user: auth.record },
     })
     await cacheCashierSyncAuth(activeRuntime, auth.record)
+    sessionHealer.stop()
     return retryPendingCashierSync(activeRuntime)
   },
 

@@ -1957,6 +1957,11 @@ const Cashier = ({ onLogout, user }) => {
     function handleSyncStatus(event) {
       const detail = event.detail || {};
       if (detail.scope !== 'cashier' || detail.state !== 'auth-required') return;
+      // Start repairing the session in the background no matter what the popup
+      // below is doing (open, cancelled, cooling down): a barcode sign-in that
+      // could not be verified fixes itself once a server answers, so the
+      // cashier does not have to type a password. Repeated calls are harmless.
+      void cashierApi.startSessionRecovery?.(user?.id);
       if (showCloudAuth || Date.now() < cloudAuthCooldownUntilRef.current) return;
       setCloudAuthEmail(user?.email || '');
       setCloudAuthPassword('');
@@ -1965,7 +1970,24 @@ const Cashier = ({ onLogout, user }) => {
     }
     globalThis.addEventListener?.('nexa-sync-status', handleSyncStatus);
     return () => globalThis.removeEventListener?.('nexa-sync-status', handleSyncStatus);
-  }, [showCloudAuth, user?.email]);
+  }, [showCloudAuth, user?.email, user?.id]);
+
+  // The background repair above succeeded: the cloud session is back and the
+  // queued sales are uploading, so the "Connect Cashier to Cloud" popup (if it
+  // is still open) has nothing left to ask for.
+  useEffect(() => {
+    function handleSessionRestored(event) {
+      const restoredId = event.detail?.cashierId;
+      if (restoredId && user?.id && String(restoredId) !== String(user.id)) return;
+      setShowCloudAuth(false);
+      setCloudAuthPassword('');
+      setCloudAuthError('');
+      cloudAuthCooldownUntilRef.current = 0;
+      showNotification('Cloud connection restored. Waiting sales are uploading.');
+    }
+    globalThis.addEventListener?.('nexa-cashier-session-restored', handleSessionRestored);
+    return () => globalThis.removeEventListener?.('nexa-cashier-session-restored', handleSessionRestored);
+  }, [user?.id]);
 
   // The backlog drain that connectCashierToCloud awaits (see its own
   // comment) can take a while on a terminal that queued up a real backlog --
