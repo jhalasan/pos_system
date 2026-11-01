@@ -49,13 +49,64 @@ export async function mintTransactionNumber(now = new Date()) {
   const terminalId = getTerminalId()
   const key = counterSettingsKey(now, terminalId)
   const existing = await cashierDb.settings.get(key)
-  const nextCount = (Number(existing?.value) || 0) + 1
-  await cashierDb.settings.put({ key, value: nextCount })
-
   const day = dateKey(now)
   const ordinal = String(terminalOrdinal(terminalId)).padStart(6, '0')
+  // The counter lives in one settings row. If that row is ever lost or rolled
+  // back (a power cut can undo the last writes) while the day's sales survive,
+  // restarting from 1 reissues numbers the cloud already holds -- on 2026-10-30
+  // that left about 90 sales unable to upload. The sales themselves are the
+  // second record of how far the counter got, so never mint at or below them.
+  const issued = await highestIssuedCounter(`${day}${ordinal}`)
+  const nextCount = Math.max(Number(existing?.value) || 0, issued) + 1
+  await cashierDb.settings.put({ key, value: nextCount })
+
   const counter = String(nextCount).padStart(5, '0')
   return `${day}${ordinal}${counter}`
+}
+
+// Replacement numbers for sales whose original number turned out to be taken
+// in the cloud live in a range ordinary counters never reach (a store would
+// need 90,000 receipts from one terminal in one day), so a replacement can
+// never collide with a number minted later, and is ignored when working out
+// how far the ordinary counter got.
+export const REPLACEMENT_COUNTER_START = 90_000
+const MAX_COUNTER = 99_999
+
+function counterOf(transactionNo) {
+  const text = String(transactionNo || '')
+  if (!/^\d{19}$/.test(text)) return 0
+  const value = Number(text.slice(14))
+  return value < REPLACEMENT_COUNTER_START ? value : 0
+}
+
+async function highestIssuedCounter(prefix) {
+  let highest = 0
+  if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+    const numbers = await cashierDb.completedSales.where('transactionNo').startsWith(prefix).keys()
+    for (const number of numbers) highest = Math.max(highest, counterOf(number))
+  }
+  const queued = await cashierDb.pendingSales
+    .filter((sale) => String(sale.transactionNo || '').startsWith(prefix))
+    .toArray()
+  for (const sale of queued) highest = Math.max(highest, counterOf(sale.transactionNo))
+  return highest
+}
+
+// Claims the next replacement number for a sale made at `createdAt` on this
+// terminal. It is only a claim on the counter: the caller still has to check
+// the number is free (here and in the cloud) and call again if it is not.
+export async function claimReplacementTransactionNumber(createdAt) {
+  const terminalId = getTerminalId()
+  const when = new Date(createdAt)
+  const at = Number.isNaN(when.getTime()) ? new Date() : when
+  const key = `txnReplacement:${dateKey(at)}:${terminalId}`
+  const existing = await cashierDb.settings.get(key)
+  const nextCount = Math.max(Number(existing?.value) || 0, REPLACEMENT_COUNTER_START) + 1
+  if (nextCount > MAX_COUNTER) throw new Error('No replacement receipt numbers are left for this day.')
+  await cashierDb.settings.put({ key, value: nextCount })
+
+  const ordinal = String(terminalOrdinal(terminalId)).padStart(6, '0')
+  return `${dateKey(at)}${ordinal}${String(nextCount).padStart(5, '0')}`
 }
 
 // Read-only estimate for UI display before a sale is actually finalized
@@ -69,10 +120,11 @@ export async function peekNextTransactionNumber(now = new Date()) {
   const terminalId = getTerminalId()
   const key = counterSettingsKey(now, terminalId)
   const existing = await cashierDb.settings.get(key)
-  const nextCount = (Number(existing?.value) || 0) + 1
-
   const day = dateKey(now)
   const ordinal = String(terminalOrdinal(terminalId)).padStart(6, '0')
+  const issued = await highestIssuedCounter(`${day}${ordinal}`)
+  const nextCount = Math.max(Number(existing?.value) || 0, issued) + 1
+
   const counter = String(nextCount).padStart(5, '0')
   return `${day}${ordinal}${counter}`
 }

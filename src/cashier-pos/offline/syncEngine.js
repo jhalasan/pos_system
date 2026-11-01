@@ -16,6 +16,8 @@ import { quantizeQty } from '../../utils/quantity'
 import { createPacedPocketBase } from '../../utils/pacedPocketBase'
 import { sharedGovernor } from '../../utils/pocketbaseGovernorInstance'
 import { isPrivateNetworkHost } from '../../utils/privateNetworkHost'
+import { toPocketBaseDate } from '../../utils/pocketBaseDate'
+import { claimReplacementTransactionNumber } from './transactionNumber'
 
 const DEFAULT_INTERVAL_MS = 60_000
 const PRODUCT_REFRESH_INTERVAL_MS = 5 * 60_000
@@ -246,7 +248,31 @@ async function ensureCloudSaleItems(pb, sale, cloudSale) {
 // gives every line its own correctly-chained stock_movements audit row), and
 // reconcileProductStock runs once per distinct product touched, not once per
 // line.
-async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
+// A Stock Count written after `since` is an absolute declaration of what was
+// on the shelf, taken after the sale already happened -- so it already
+// reflects the goods this sale took. The reconciler adds every movement that
+// arrives after a count on top of it, so a late-arriving sale movement would
+// take the same goods off a second time.
+async function findStockCountAfter(pb, productId, since) {
+  try {
+    return await pb.collection('stock_movements').getFirstListItem(
+      pb.filter('product_id = {:productId} && movement_type = "adjustment" && created > {:since}', {
+        productId,
+        since: toPocketBaseDate(since),
+      }),
+      { requestKey: null },
+    )
+  } catch (error) {
+    if (error?.status === 404) return null
+    throw error
+  }
+}
+
+// `countedAfter`: set only for a sale being rescued after sitting stuck for a
+// long time (see renumberCollidingSale). Products with a Stock Count taken
+// since the sale are left alone; their ids are returned as `alreadyCounted`.
+async function ensureCloudStockDeduction(pb, sale, cloudSaleItems, { countedAfter = '' } = {}) {
+  const alreadyCounted = []
   // A line with no productId of its own (resolved instead via the barcode
   // fallback in ensureCloudSaleItems) used to be skipped here entirely --
   // this read item.productId directly off the raw sale data, which is still
@@ -282,7 +308,7 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
       return { item, productId, lineKey, movementReference: `sale:${sale.clientSaleId}:${lineKey}` }
     })
 
-  if (!lineEntries.length) return
+  if (!lineEntries.length) return { alreadyCounted }
 
   const existingMovementsByReference = await findExistingStockMovementsByReference(
     pb,
@@ -308,6 +334,10 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
   }
 
   for (const [productId, entries] of pendingByProduct) {
+    if (countedAfter && await findStockCountAfter(pb, productId, countedAfter)) {
+      alreadyCounted.push(productId)
+      continue
+    }
     const product = await pb.collection('products').getOne(productId, { requestKey: null })
     let runningQuantity = quantizeQty(product.quantity)
 
@@ -356,6 +386,8 @@ async function ensureCloudStockDeduction(pb, sale, cloudSaleItems) {
     reconciledProductIds.add(productId)
     await reconcileProductStock(pb, productId)
   }
+
+  return { alreadyCounted }
 }
 
 // A transaction_no + cashier_id match alone used to be accepted as "this is
@@ -403,6 +435,26 @@ async function findCloudSaleForAdjustment(pb, payload) {
   )
 }
 
+// Same receipt number, cashier, amount and day still is not proof of the same
+// sale: after a terminal's receipt counter restarted, two different sales of
+// equal value could line up that way, and adopting the other one filed this
+// sale's goods under somebody else's receipt. Each cloud line item carries the
+// line id of the cart line it came from, so a match whose lines are all
+// someone else's is not this sale. A match with no lines yet (an interrupted
+// earlier attempt) or with lines that predate line ids cannot be told apart,
+// and is accepted as before. A failed lookup propagates -- never guess.
+async function cloudSaleBelongsToQueuedSale(pb, cloudSale, sale) {
+  const ours = new Set(sale.items.map((item) => item.lineId).filter(Boolean))
+  if (!ours.size) return true
+  const cloudItems = await pb.collection('sale_items').getFullList({
+    filter: pb.filter('sale_id = {:saleId}', { saleId: cloudSale.id }),
+    requestKey: null,
+  })
+  const labelled = cloudItems.filter((item) => item.line_id)
+  if (!labelled.length) return true
+  return labelled.some((item) => ours.has(item.line_id))
+}
+
 async function findExistingCloudSale(pb, sale) {
   const filters = [
     pb.filter('transaction_no = {:transactionNo} && cashier_id = {:cashierId}', {
@@ -415,10 +467,35 @@ async function findExistingCloudSale(pb, sale) {
     const found = await pb.collection('sales').getFirstListItem(filter, {
       requestKey: null,
     }).catch(() => null)
-    if (found && isCorroboratedSaleMatch(found, sale)) return found
+    if (found && isCorroboratedSaleMatch(found, sale) && await cloudSaleBelongsToQueuedSale(pb, found, sale)) return found
   }
 
   return null
+}
+
+// PocketBase's answer when sales.transaction_no is already used by a sale.
+function isTransactionNoTaken(error) {
+  return Number(error?.status) === 400 && error?.response?.data?.transaction_no?.code === 'validation_not_unique'
+}
+
+async function cloudHasTransactionNo(pb, transactionNo) {
+  try {
+    await pb.collection('sales').getFirstListItem(
+      pb.filter('transaction_no = {:transactionNo}', { transactionNo }),
+      { requestKey: null },
+    )
+    return true
+  } catch (error) {
+    if (error?.status === 404) return false
+    throw error
+  }
+}
+
+async function localHasTransactionNo(transactionNo) {
+  if (cashierDb.tables.some((table) => table.name === 'completedSales')) {
+    if (await cashierDb.completedSales.get({ transactionNo })) return true
+  }
+  return Boolean(await cashierDb.pendingSales.filter((queued) => queued.transactionNo === transactionNo).first())
 }
 
 export class CashierSyncEngine extends EventTarget {
@@ -1109,6 +1186,59 @@ export class CashierSyncEngine extends EventTarget {
     }
   }
 
+  // Gives a queued sale a receipt number nothing else uses, and records it on
+  // every local copy BEFORE the upload is retried, so a crash between the two
+  // steps still finds the sale under its new number. The sale keeps its old
+  // number in `originalTransactionNo` (the customer's paper receipt shows it).
+  async renumberCollidingSale(sale) {
+    const oldNumber = sale.transactionNo
+    for (let attempt = 0; attempt < 25; attempt += 1) {
+      const candidate = await claimReplacementTransactionNumber(sale.createdAt)
+      if (await localHasTransactionNo(candidate)) continue
+      if (await cloudHasTransactionNo(this.pb, candidate)) continue
+
+      const originalTransactionNo = sale.originalTransactionNo || oldNumber
+      const tables = [cashierDb.pendingSales, cashierDb.pendingOps]
+      const hasCompleted = cashierDb.tables.some((table) => table.name === 'completedSales')
+      if (hasCompleted) tables.push(cashierDb.completedSales)
+      await cashierDb.transaction('rw', ...tables, async () => {
+        await cashierDb.pendingSales.update(sale.clientSaleId, { transactionNo: candidate, originalTransactionNo })
+        if (hasCompleted) {
+          await cashierDb.completedSales.update(sale.clientSaleId, { transactionNo: candidate, originalTransactionNo })
+        }
+        // A void or refund already queued for this sale names it by receipt number.
+        await cashierDb.pendingOps
+          .filter((op) => op.entityId === sale.clientSaleId && op.payload?.transactionNo === oldNumber)
+          .modify((op) => { op.payload.transactionNo = candidate })
+      })
+      return { ...sale, transactionNo: candidate, originalTransactionNo }
+    }
+    throw new Error(`Could not find a free receipt number to replace ${oldNumber}.`)
+  }
+
+  async logRenumberedSale(sale, alreadyCounted) {
+    const names = sale.items
+      .filter((item) => alreadyCounted.includes(String(item.productId || '')))
+      .map((item) => item.name)
+      .filter(Boolean)
+    const description = `Receipt ${sale.originalTransactionNo} was already used by another sale, so this sale was saved as ${sale.transactionNo}.`
+      + (names.length ? ` Stock not deducted again (a Stock Count was taken afterwards): ${[...new Set(names)].join(', ')}.` : '')
+    const existing = await this.pb.collection('activity_logs').getFirstListItem(
+      this.pb.filter('user_id = {:cashierId} && action_type = "Receipt Renumbered" && description = {:description}', {
+        cashierId: sale.cashierId,
+        description,
+      }),
+      { requestKey: null },
+    ).catch(() => null)
+    if (existing) return
+    await this.pb.collection('activity_logs').create({
+      user_id: sale.cashierId,
+      action_type: 'Receipt Renumbered',
+      description,
+      timestamp: new Date().toISOString(),
+    }, { requestKey: `renumbered:${sale.clientSaleId}` }).catch(() => null)
+  }
+
   async uploadSale(sale) {
     if (sale.voidPending) {
       // Voided before this tick ever attempted to upload it -- nothing
@@ -1118,18 +1248,26 @@ export class CashierSyncEngine extends EventTarget {
     }
 
     const cashierId = await this.resolveCashierId(sale.cashierId)
-    const resolvedSale = cashierId === sale.cashierId ? sale : { ...sale, cashierId }
+    let resolvedSale = cashierId === sale.cashierId ? sale : { ...sale, cashierId }
     let cloudSale
-    try {
-      cloudSale = await this.pb.collection('sales').create(cloudSalePayload(resolvedSale), {
-        requestKey: `sale:${resolvedSale.clientSaleId}`,
-      })
-    } catch (error) {
-      if (error?.status !== 400 && error?.status !== 409) throw error
+    for (let renumbered = 0; ; renumbered += 1) {
+      try {
+        cloudSale = await this.pb.collection('sales').create(cloudSalePayload(resolvedSale), {
+          requestKey: `sale:${resolvedSale.clientSaleId}`,
+        })
+        break
+      } catch (error) {
+        if (error?.status !== 400 && error?.status !== 409) throw error
 
-      cloudSale = await findExistingCloudSale(this.pb, resolvedSale)
+        cloudSale = await findExistingCloudSale(this.pb, resolvedSale)
+        if (cloudSale) break
 
-      if (!cloudSale) throw error
+        // The number belongs to a different sale, so this one can never be
+        // filed under it. Retrying forever left sales stuck for a day; give it
+        // a number that is free instead of leaving the sale stranded.
+        if (!isTransactionNoTaken(error) || renumbered >= 2) throw error
+        resolvedSale = await this.renumberCollidingSale(resolvedSale)
+      }
     }
 
     const { items: cloudSaleItems } = await ensureCloudSaleItems(this.pb, resolvedSale, cloudSale)
@@ -1137,7 +1275,15 @@ export class CashierSyncEngine extends EventTarget {
     // the sale and line items but failed before deducting inventory. The
     // movement reference check inside ensureCloudStockDeduction keeps retries
     // idempotent and applies the converted base-unit quantity exactly once.
-    await ensureCloudStockDeduction(this.pb, resolvedSale, cloudSaleItems)
+    // A renumbered sale has by definition been waiting a long time, so goods
+    // already covered by a later Stock Count are not deducted a second time.
+    const { alreadyCounted } = await ensureCloudStockDeduction(this.pb, resolvedSale, cloudSaleItems, {
+      countedAfter: resolvedSale.originalTransactionNo ? resolvedSale.createdAt : '',
+    })
+
+    if (resolvedSale.originalTransactionNo) {
+      await this.logRenumberedSale(resolvedSale, alreadyCounted)
+    }
 
     const detail = saleActivityDetail(resolvedSale)
     const existingLog = await this.pb.collection('activity_logs').getFirstListItem(
