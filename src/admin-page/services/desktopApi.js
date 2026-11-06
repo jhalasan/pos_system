@@ -131,7 +131,7 @@ const adminRuntime = createRetryableRuntime(async () => {
   syncEngine.start()
 
   await initializeCashierDb()
-  cashierQueueSyncEngine = new CashierSyncEngine({ pb })
+  cashierQueueSyncEngine = new CashierSyncEngine({ pb, announceAuthRequired: false })
   cashierQueueSyncEngine.addEventListener('syncerror', (event) => console.error(event.detail.error))
   cashierQueueSyncEngine.start()
 

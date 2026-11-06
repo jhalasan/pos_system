@@ -503,6 +503,7 @@ export class CashierSyncEngine extends EventTarget {
     baseUrl = import.meta.env.VITE_POCKETBASE_URL,
     pb,
     intervalMs = DEFAULT_INTERVAL_MS,
+    announceAuthRequired = true,
   } = {}) {
     super()
     if (!pb && !baseUrl) {
@@ -511,6 +512,15 @@ export class CashierSyncEngine extends EventTarget {
 
     this.pb = pb || createPacedPocketBase(new PocketBase(baseUrl), sharedGovernor)
     this.pb.autoCancellation(false)
+    // "Cloud login required" is announced to the cashier screen, which answers
+    // it with the "Connect Cashier to Cloud" popup. That popup signs in the
+    // CASHIER's own connection. The admin runtime runs a second engine over the
+    // admin's connection (to upload queued cashier work from Sync Center);
+    // once the admin has signed out that connection has no login, so its every
+    // tick re-announced the need -- and signing in through the popup could never
+    // satisfy it, so the popup kept coming back even while the cashier's own
+    // sales were uploading fine. That engine passes false and stays quiet.
+    this.announceAuthRequired = announceAuthRequired
     this.intervalMs = intervalMs
     this.timer = null
     this.syncPromise = null
@@ -619,7 +629,7 @@ export class CashierSyncEngine extends EventTarget {
     }
 
     if ((queuedSales.length > 0 || queuedOps.length > 0) && this.pb.authStore && !this.pb.authStore.isValid) {
-      emitSyncStatus('auth-required', CLOUD_AUTH_REQUIRED_MESSAGE)
+      if (this.announceAuthRequired) emitSyncStatus('auth-required', CLOUD_AUTH_REQUIRED_MESSAGE)
       return {
         uploaded: 0,
         failed: 0,
@@ -771,6 +781,10 @@ export class CashierSyncEngine extends EventTarget {
     this.dispatchEvent(new CustomEvent('synccomplete', {
       detail: { uploaded, failed, warnings },
     }))
+    // Same reason as above: a quiet engine reports nothing about a missing login.
+    if (catalogRefreshAuthFailed && !this.announceAuthRequired) {
+      return { uploaded, failed, products, warnings, pending }
+    }
     emitSyncStatus(
       catalogRefreshAuthFailed
         ? 'auth-required'
