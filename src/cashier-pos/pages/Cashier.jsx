@@ -15,7 +15,7 @@ import { normalizeBarcode } from '../utils/barcodeUtils';
 import { buildShiftCloseReceiptText, cancelReceiptPrinterJob, getReceiptPrinterStatus, openCashDrawer, printCompletedReceipt, printReceiptPdf, printShiftCloseReceipt } from '../services/receiptPrinter';
 import { getStoredTheme, saveTheme, THEMES } from '../../utils/themeSettings';
 import { getDeveloperModeSettings } from '../../utils/developerMode';
-import { getAvailableStockUnits } from '../offline/stockUtils';
+import { chooseSellableUnit, getAvailableStockUnits } from '../offline/stockUtils';
 import { getPostChangeFlowStep } from '../utils/paymentFlow';
 import { getCashSalesAmountFromSources, getGcashSalesAmountFromSources, loadRetainedCompletedSales, saveRetainedCompletedSales } from '../utils/cashSales';
 import { restoreCashierTransactions } from '../utils/transactionRestore';
@@ -2828,7 +2828,15 @@ const Cashier = ({ onLogout, user }) => {
   };
 
   const openInitialQuantityPrompt = (product, preferredUnit = null) => {
-    const selectedUnit = preferredUnit || findSellingUnit(product)
+    // A scanned barcode names its unit (preferredUnit) and is honoured as is.
+    // A plain click starts from the item's first unit, but when less than one
+    // of those is left (e.g. 15 pieces of a ream-sized item) it moves to a
+    // unit that still has stock, so the loose pieces can be added by hand.
+    const selectedUnit = preferredUnit || chooseSellableUnit(
+      { ...product, qty: stockForProduct(product) },
+      normalizeSellingUnits(product),
+      findSellingUnit(product),
+    )
     const availableQty = getAvailableStockUnits({ ...product, qty: stockForProduct(product) }, selectedUnit)
 
     if (availableQty <= 0) {
